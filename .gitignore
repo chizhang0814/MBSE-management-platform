@@ -1,0 +1,16 @@
+node_modules/
+server/node_modules/
+client/node_modules/
+.env
+*.log
+server/*.db
+server/uploads/
+*.xlsx
+*.xls
+.DS_Store
+client/dist/
+client/build/
+.idea/
+.vscode/
+
+
