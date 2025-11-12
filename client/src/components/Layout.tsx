@@ -20,7 +20,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           <div className="flex justify-between h-16">
             <div className="flex">
               <Link to="/" className="flex items-center">
-                <span className="text-xl font-bold text-blue-600">EICD检查验证平台</span>
+                <span className="text-xl font-bold text-blue-600">MBSE综合管理平台</span>
               </Link>
               <div className="hidden sm:ml-6 sm:flex sm:space-x-8">
                 <Link
@@ -84,7 +84,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                   <span className={`px-2 py-1 rounded text-xs font-semibold ${
                     user?.role === 'admin' ? 'bg-purple-100 text-purple-800' : 'bg-blue-100 text-blue-800'
                   }`}>
-                    {user?.role === 'admin' ? '管理员' : '审查员'}
+                    {user?.role === 'admin' ? '管理员' : '普通用户'}
                   </span>
                 </div>
                 <button

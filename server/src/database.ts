@@ -91,6 +91,33 @@ export class Database {
           )
         `);
 
+        // 启用外键约束
+        this.db.run(`PRAGMA foreign_keys = ON`);
+        
+        // 创建表元数据表（记录每个表的connection编号、Unique ID、设备、连接器、针孔号）
+        this.db.run(`
+          CREATE TABLE IF NOT EXISTS table_metadata (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            table_name TEXT NOT NULL,
+            metadata_type TEXT NOT NULL,
+            value TEXT NOT NULL,
+            parent_value TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(table_name, metadata_type, value)
+          )
+        `);
+        
+        // 创建索引以提高查询性能
+        this.db.run(`
+          CREATE INDEX IF NOT EXISTS idx_table_metadata_table_type 
+          ON table_metadata(table_name, metadata_type)
+        `);
+        
+        this.db.run(`
+          CREATE INDEX IF NOT EXISTS idx_table_metadata_parent 
+          ON table_metadata(table_name, metadata_type, parent_value)
+        `);
+
         // 执行数据库迁移和初始化
         this.runMigrationsAndInit().then(() => resolve()).catch(reject);
       });
@@ -137,6 +164,19 @@ export class Database {
       console.log('Migration: change_logs table check:', error.message);
     }
 
+    try {
+      // 检查并添加 users 表的 permissions 列（用于普通用户的权限列表）
+      const columns = await this.query('PRAGMA table_info(users)');
+      const hasPermissions = columns.some((col: any) => col.name === 'permissions');
+      
+      if (!hasPermissions) {
+        await this.run('ALTER TABLE users ADD COLUMN permissions TEXT DEFAULT \'[]\'');
+        console.log('Database migration: added permissions column to users table');
+      }
+    } catch (error: any) {
+      console.log('Migration: users table check:', error.message);
+    }
+
     // 初始化默认用户（不再创建示例数据）
     await this.initDefaultData();
   }
@@ -148,7 +188,7 @@ export class Database {
 
     // 创建默认用户
     const adminPassword = await bcrypt.hash('admin123', 10);
-    const reviewerPassword = await bcrypt.hash('reviewer123', 10);
+    const userPassword = await bcrypt.hash('user123', 10);
 
     await this.run(
       'INSERT INTO users (username, password, role) VALUES (?, ?, ?)',
@@ -157,12 +197,12 @@ export class Database {
     
     await this.run(
       'INSERT INTO users (username, password, role) VALUES (?, ?, ?)',
-      ['reviewer1', reviewerPassword, 'reviewer']
+      ['user1', userPassword, 'user']
     );
 
     await this.run(
       'INSERT INTO users (username, password, role) VALUES (?, ?, ?)',
-      ['reviewer2', reviewerPassword, 'reviewer']
+      ['user2', userPassword, 'user']
     );
 
     // 不再创建示例数据

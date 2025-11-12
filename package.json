@@ -1,7 +1,7 @@
 {
   "name": "eicd-platform",
   "version": "1.0.0",
-  "description": "EICD检查验证平台",
+  "description": "MBSE综合管理平台",
   "scripts": {
     "dev": "concurrently \"npm run server\" \"npm run client\"",
     "server": "cd server && npm run dev",

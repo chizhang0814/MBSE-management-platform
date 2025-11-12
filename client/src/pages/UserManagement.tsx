@@ -2,10 +2,17 @@ import { useState, useEffect } from 'react';
 import Layout from '../components/Layout';
 import { useAuth } from '../context/AuthContext';
 
+interface Permission {
+  table_name: string;
+  project_role: string;
+  reserved: string;
+}
+
 interface User {
   id: number;
   username: string;
   role: string;
+  permissions?: Permission[];
   created_at: string;
 }
 
@@ -15,15 +22,31 @@ export default function UserManagement() {
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
+  const [availableTables, setAvailableTables] = useState<string[]>([]);
   const [formData, setFormData] = useState({
     username: '',
     password: '',
-    role: 'reviewer',
+    role: 'user',
+    permissions: [] as Permission[],
   });
 
   useEffect(() => {
     fetchUsers();
+    fetchTables();
   }, []);
+  
+  const fetchTables = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch('http://localhost:3000/api/data/tables', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const result = await response.json();
+      setAvailableTables(result.tables || []);
+    } catch (error) {
+      console.error(error);
+    }
+  };
 
   const fetchUsers = async () => {
     try {
@@ -47,13 +70,15 @@ export default function UserManagement() {
         username: user.username,
         password: '',
         role: user.role,
+        permissions: user.permissions || [],
       });
     } else {
       setEditingUser(null);
       setFormData({
         username: '',
         password: '',
-        role: 'reviewer',
+        role: 'user',
+        permissions: [],
       });
     }
     setShowModal(true);
@@ -65,7 +90,8 @@ export default function UserManagement() {
     setFormData({
       username: '',
       password: '',
-      role: 'reviewer',
+      role: 'user',
+      permissions: [],
     });
   };
 
@@ -91,6 +117,10 @@ export default function UserManagement() {
 
       if (formData.password) {
         body.password = formData.password;
+      }
+      
+      if (formData.role === 'user' && formData.permissions) {
+        body.permissions = formData.permissions;
       }
 
       const response = await fetch(url, {
@@ -212,6 +242,9 @@ export default function UserManagement() {
                   角色
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  权限
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   创建时间
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -230,8 +263,27 @@ export default function UserManagement() {
                         user.role === 'admin' ? 'bg-purple-100 text-purple-800' : 'bg-blue-100 text-blue-800'
                       }`}
                     >
-                      {user.role === 'admin' ? '管理员' : '审查员'}
+                      {user.role === 'admin' ? '管理员' : '普通用户'}
                     </span>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    {user.role === 'admin' ? (
+                      <span className="text-gray-400">不适用</span>
+                    ) : (
+                      <div className="space-y-1">
+                        {user.permissions && user.permissions.length > 0 ? (
+                          user.permissions.map((perm, idx) => (
+                            <div key={idx} className="text-xs">
+                              <span className="font-medium">{perm.table_name}</span>
+                              {' → '}
+                              <span>{perm.project_role}</span>
+                            </div>
+                          ))
+                        ) : (
+                          <span className="text-gray-400 text-xs">无权限</span>
+                        )}
+                      </div>
+                    )}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                     {new Date(user.created_at).toLocaleString()}
@@ -325,10 +377,124 @@ export default function UserManagement() {
                       }
                       className="w-full border border-gray-300 rounded-lg px-3 py-2"
                     >
-                      <option value="reviewer">审查员</option>
                       <option value="admin">管理员</option>
+                      <option value="user">普通用户</option>
                     </select>
                   </div>
+
+                  {formData.role === 'user' && (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        权限管理
+                      </label>
+                      <div className="space-y-3">
+                        {formData.permissions.map((perm, idx) => (
+                          <div key={idx} className="flex space-x-2 items-end">
+                            <div className="flex-1">
+                              <label className="block text-xs text-gray-600 mb-1">数据表名</label>
+                              <select
+                                value={perm.table_name}
+                                onChange={(e) => {
+                                  const newValue = e.target.value;
+                                  const newPerms = [...formData.permissions];
+                                  
+                                  // 检查是否重复
+                                  const isDuplicate = newPerms.some((p, i) => 
+                                    i !== idx && 
+                                    p.table_name === newValue && 
+                                    p.project_role === newPerms[idx].project_role
+                                  );
+                                  
+                                  if (isDuplicate) {
+                                    alert('该权限已存在，不能重复添加');
+                                    return;
+                                  }
+                                  
+                                  newPerms[idx] = { ...newPerms[idx], table_name: newValue };
+                                  setFormData({ ...formData, permissions: newPerms });
+                                }}
+                                className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                              >
+                                <option value="">选择数据表</option>
+                                {availableTables.map((table) => (
+                                  <option key={table} value={table}>
+                                    {table}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                            <div className="flex-1">
+                              <label className="block text-xs text-gray-600 mb-1">项目角色</label>
+                              <select
+                                value={perm.project_role}
+                                onChange={(e) => {
+                                  const newValue = e.target.value;
+                                  const newPerms = [...formData.permissions];
+                                  
+                                  // 检查是否重复
+                                  const isDuplicate = newPerms.some((p, i) => 
+                                    i !== idx && 
+                                    p.table_name === newPerms[idx].table_name && 
+                                    p.project_role === newValue
+                                  );
+                                  
+                                  if (isDuplicate) {
+                                    alert('该权限已存在，不能重复添加');
+                                    return;
+                                  }
+                                  
+                                  newPerms[idx] = { ...newPerms[idx], project_role: newValue };
+                                  setFormData({ ...formData, permissions: newPerms });
+                                }}
+                                className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                              >
+                                <option value="">选择角色</option>
+                                <option value="一级包长">一级包长</option>
+                                <option value="二级包长">二级包长</option>
+                                <option value="设备管理员">设备管理员</option>
+                              </select>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const newPerms = formData.permissions.filter((_, i) => i !== idx);
+                                setFormData({ ...formData, permissions: newPerms });
+                              }}
+                              className="px-3 py-2 bg-red-500 text-white rounded text-sm hover:bg-red-600"
+                            >
+                              删除
+                            </button>
+                          </div>
+                        ))}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            // 添加新权限时，检查是否所有必填字段都已填充
+                            const hasEmptyPermissions = formData.permissions.some(
+                              (p) => !p.table_name || !p.project_role
+                            );
+                            
+                            if (hasEmptyPermissions) {
+                              alert('请先完成已添加权限的填写（数据表名和项目角色）');
+                              return;
+                            }
+                            
+                            // 添加新的空权限
+                            setFormData({
+                              ...formData,
+                              permissions: [
+                                ...formData.permissions,
+                                { table_name: '', project_role: '', reserved: '' },
+                              ],
+                            });
+                          }}
+                          className="w-full py-2 border-2 border-dashed border-gray-300 rounded text-gray-600 hover:border-blue-500 hover:text-blue-500 text-sm"
+                        >
+                          + 添加权限
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex space-x-3 mt-6">

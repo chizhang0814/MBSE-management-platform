@@ -2,7 +2,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { AuthProvider } from './context/AuthContext';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
-import DataTable from './pages/DataTable';
+import DataTableV2 from './pages/DataTableV2';
 import Tasks from './pages/Tasks';
 import Admin from './pages/Admin';
 import UserManagement from './pages/UserManagement';
@@ -17,7 +17,7 @@ function App() {
           <Route path="/login" element={<Login />} />
           <Route element={<PrivateRoute />}>
             <Route path="/" element={<Dashboard />} />
-            <Route path="/data" element={<DataTable />} />
+            <Route path="/data" element={<DataTableV2 />} />
             <Route path="/tasks" element={<Tasks />} />
             <Route path="/admin" element={<Admin />} />
             <Route path="/users" element={<UserManagement />} />

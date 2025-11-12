@@ -247,7 +247,7 @@ export default function Tasks() {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">物品编码</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">物品名称</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                    {user?.role === 'admin' ? '审查员' : '管理员'}
+                    指派人
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">状态</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">创建时间</th>
