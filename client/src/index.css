@@ -16,15 +16,5 @@ code {
     monospace;
 }
 
-/* Fixed horizontal divider lines for DataTableV2 frozen columns */
-.frozen-row-divider {
-  position: absolute;
-  height: 1px;
-  background-color: #e5e7eb;
-  left: 0;
-  right: 0;
-  pointer-events: none;
-  z-index: 5;
-}
 
 

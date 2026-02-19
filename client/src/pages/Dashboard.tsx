@@ -5,14 +5,21 @@ import { useAuth } from '../context/AuthContext';
 
 interface TableStat {
   tableName: string;
+  displayName: string;
+  projectName: string;
+  projectId: number;
+  tableType?: string;
   rowCount: number;
+  deviceCount?: number;
+  componentCount?: number;
+  interfaceCount?: number;
 }
 
 export default function Dashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [stats, setStats] = useState({
-    totalData: 0,
+    totalProjects: 0,
     pendingTasks: 0,
     completedTasks: 0,
   });
@@ -26,23 +33,27 @@ export default function Dashboard() {
     try {
       const token = localStorage.getItem('token');
       
-      const [tasksRes, tableStatsRes] = await Promise.all([
-        fetch('http://localhost:3000/api/tasks', {
+      const [tasksRes, tableStatsRes, projectsRes] = await Promise.all([
+        fetch('/api/tasks', {
           headers: { Authorization: `Bearer ${token}` },
         }),
-        fetch('http://localhost:3000/api/data/tables/stats', {
+        fetch('/api/data/tables/stats', {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+        fetch('/api/projects', {
           headers: { Authorization: `Bearer ${token}` },
         }),
       ]);
 
       const tasks = await tasksRes.json();
       const tableStatsData = await tableStatsRes.json();
+      const projectsData = await projectsRes.json();
 
-      // 计算总数据量：所有表的行数之和
-      const totalData = tableStatsData.tableStats?.reduce((sum: number, stat: TableStat) => sum + stat.rowCount, 0) || 0;
+      // 根据用户角色获取项目数
+      const projectCount = projectsData.projects?.length || 0;
 
       setStats({
-        totalData,
+        totalProjects: projectCount,
         pendingTasks: tasks.tasks?.filter((t: any) => t.status === 'pending').length || 0,
         completedTasks: tasks.tasks?.filter((t: any) => t.status === 'completed').length || 0,
       });
@@ -71,10 +82,10 @@ export default function Dashboard() {
                 <div className="ml-5 w-0 flex-1">
                   <dl>
                     <dt className="text-sm font-medium text-gray-500 truncate">
-                      总数据量
+                      {user?.role === 'admin' ? '总项目数' : '参与项目数'}
                     </dt>
                     <dd className="text-lg font-medium text-gray-900">
-                      {stats.totalData}
+                      {stats.totalProjects}
                     </dd>
                   </dl>
                 </div>
@@ -142,35 +153,95 @@ export default function Dashboard() {
                   <thead className="bg-gray-50">
                     <tr>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        项目名称
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         数据表名称
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         数据行数
                       </th>
+                      {user?.role === 'user' && (
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          负责数量
+                        </th>
+                      )}
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         操作
                       </th>
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
-                    {tableStats.map((stat: TableStat, index: number) => (
-                      <tr key={index} className="hover:bg-gray-50">
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                          {stat.tableName}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {stat.rowCount.toLocaleString()} 行
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm">
-                          <button
-                            onClick={() => navigate(`/data?table=${stat.tableName}`)}
-                            className="text-blue-600 hover:text-blue-800 font-medium"
-                          >
-                            查看数据表格
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                    {(() => {
+                      // 按项目分组
+                      const groupedByProject: { [key: string]: TableStat[] } = {};
+                      tableStats.forEach((stat) => {
+                        if (!groupedByProject[stat.projectName]) {
+                          groupedByProject[stat.projectName] = [];
+                        }
+                        groupedByProject[stat.projectName].push(stat);
+                      });
+
+                      // 生成表格行
+                      const rows: JSX.Element[] = [];
+                      const projectNames = Object.keys(groupedByProject);
+                      
+                      projectNames.forEach((projectName, projectIndex) => {
+                        const tables = groupedByProject[projectName];
+                        const isLastProject = projectIndex === projectNames.length - 1;
+                        
+                        tables.forEach((stat, tableIndex) => {
+                          const isFirstRow = tableIndex === 0;
+                          const isLastRow = tableIndex === tables.length - 1;
+                          const rowspan = isFirstRow ? tables.length : undefined;
+                          // 所有项目的最后一行都显示分隔线
+                          const showBorder = isLastRow;
+                          
+                          rows.push(
+                            <tr 
+                              key={`${stat.projectId}-${stat.tableName}`} 
+                              className={`hover:bg-gray-50 ${showBorder ? 'border-b-2 border-gray-300' : ''}`}
+                            >
+                              {isFirstRow && (
+                                <td 
+                                  rowSpan={rowspan}
+                                  className={`px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 align-middle ${showBorder ? 'border-b-2 border-gray-300' : ''}`}
+                                >
+                                  {stat.projectName}
+                                </td>
+                              )}
+                              <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                                {stat.displayName}
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {stat.rowCount.toLocaleString()} 行
+                              </td>
+                              {user?.role === 'user' && (
+                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                  {stat.tableType === 'ata_device' && stat.deviceCount !== undefined
+                                    ? stat.deviceCount.toLocaleString()
+                                    : stat.tableType === 'device_component' && stat.componentCount !== undefined
+                                    ? stat.componentCount.toLocaleString()
+                                    : stat.tableType === 'electrical_interface' && stat.interfaceCount !== undefined
+                                    ? stat.interfaceCount.toLocaleString()
+                                    : '-'}
+                                </td>
+                              )}
+                              <td className="px-6 py-4 whitespace-nowrap text-sm">
+                                <button
+                                  onClick={() => navigate(`/project-data?projectId=${stat.projectId}&tableName=${encodeURIComponent(stat.tableName)}&fromDashboard=true`)}
+                                  className="text-blue-600 hover:text-blue-800 font-medium"
+                                >
+                                  查看项目数据
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        });
+                      });
+
+                      return rows;
+                    })()}
                   </tbody>
                 </table>
               </div>
@@ -178,32 +249,6 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div className="mt-8 bg-white shadow rounded-lg">
-          <div className="p-6">
-            <h2 className="text-xl font-bold mb-4">快速指南</h2>
-            <div className="space-y-3">
-              <p className="text-gray-700">
-                <strong>作为{user?.role === 'admin' ? '管理员' : '审查员'}，您可以：</strong>
-              </p>
-              <ul className="list-disc list-inside space-y-2 text-gray-600">
-                {user?.role === 'admin' ? (
-                  <>
-                    <li>在"数据表格"页面查看和管理所有EICD数据</li>
-                    <li>指派审查任务给审查员</li>
-                    <li>确认或拒绝审查员提交的修改</li>
-                    <li>查看变更记录</li>
-                  </>
-                ) : (
-                  <>
-                    <li>在"任务管理"页面查看被指派的任务</li>
-                    <li>审查数据并决定是否需要修改</li>
-                    <li>提交修改建议给管理员确认</li>
-                  </>
-                )}
-              </ul>
-            </div>
-          </div>
-        </div>
       </div>
     </Layout>
   );

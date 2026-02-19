@@ -7,6 +7,18 @@ export class Database {
 
   constructor() {
     this.db = new sqlite3.Database(process.env.DB_PATH || './eicd.db');
+    
+    // 启用WAL模式以提升并发性能（适合10-20人团队使用）
+    // WAL模式允许多个读取者同时访问数据库，写入性能也更好
+    this.db.run('PRAGMA journal_mode = WAL;');
+    // 使用NORMAL同步模式，在性能和安全性之间取得平衡
+    this.db.run('PRAGMA synchronous = NORMAL;');
+    // 增加缓存大小以提升查询性能（10MB缓存）
+    this.db.run('PRAGMA cache_size = -10000;');
+    // 启用外键约束
+    this.db.run('PRAGMA foreign_keys = ON;');
+    // 设置忙等待超时（5秒），避免写入冲突时立即失败
+    this.db.configure('busyTimeout', 5000);
   }
 
   async init() {
@@ -90,9 +102,6 @@ export class Database {
             FOREIGN KEY (created_by) REFERENCES users(id)
           )
         `);
-
-        // 启用外键约束
-        this.db.run(`PRAGMA foreign_keys = ON`);
         
         // 创建表元数据表（记录每个表的connection编号、Unique ID、设备、连接器、针孔号）
         this.db.run(`
@@ -116,6 +125,100 @@ export class Database {
         this.db.run(`
           CREATE INDEX IF NOT EXISTS idx_table_metadata_parent 
           ON table_metadata(table_name, metadata_type, parent_value)
+        `);
+
+        // 模板表（用于定义三类表的列模板）
+        this.db.run(`
+          CREATE TABLE IF NOT EXISTS templates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            table_type TEXT NOT NULL,
+            columns TEXT NOT NULL,
+            description TEXT,
+            created_by INTEGER NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (created_by) REFERENCES users(id)
+          )
+        `);
+
+        // 项目表
+        this.db.run(`
+          CREATE TABLE IF NOT EXISTS projects (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            description TEXT,
+            created_by INTEGER NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (created_by) REFERENCES users(id)
+          )
+        `);
+
+        // 项目数据表关联表
+        this.db.run(`
+          CREATE TABLE IF NOT EXISTS project_tables (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER NOT NULL,
+            table_type TEXT NOT NULL,
+            table_name TEXT NOT NULL UNIQUE,
+            template_id INTEGER,
+            display_name TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+            FOREIGN KEY (template_id) REFERENCES templates(id)
+          )
+        `);
+
+        // SysML v2 同步状态表
+        this.db.run(`
+          CREATE TABLE IF NOT EXISTS sysml_sync_status (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER NOT NULL UNIQUE,
+            sysml_project_id TEXT NOT NULL,
+            last_commit_id TEXT,
+            last_sync_at DATETIME,
+            status TEXT DEFAULT 'never',
+            error_message TEXT,
+            FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+          )
+        `);
+
+        // SysML v2 元素映射表（EICD行 ↔ SysML元素UUID）
+        this.db.run(`
+          CREATE TABLE IF NOT EXISTS sysml_element_map (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER NOT NULL,
+            eicd_table TEXT NOT NULL,
+            eicd_row_id INTEGER NOT NULL,
+            sysml_element_id TEXT NOT NULL,
+            element_type TEXT NOT NULL,
+            element_name TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+            UNIQUE(project_id, eicd_table, eicd_row_id, element_type)
+          )
+        `);
+
+        // 创建索引
+        this.db.run(`
+          CREATE INDEX IF NOT EXISTS idx_templates_table_type
+          ON templates(table_type)
+        `);
+
+        this.db.run(`
+          CREATE INDEX IF NOT EXISTS idx_project_tables_project
+          ON project_tables(project_id)
+        `);
+
+        this.db.run(`
+          CREATE INDEX IF NOT EXISTS idx_sysml_element_map_project
+          ON sysml_element_map(project_id)
+        `);
+
+        this.db.run(`
+          CREATE INDEX IF NOT EXISTS idx_sysml_sync_status_project
+          ON sysml_sync_status(project_id)
         `);
 
         // 执行数据库迁移和初始化

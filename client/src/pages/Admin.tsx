@@ -403,7 +403,7 @@ export default function Admin() {
         <div className="bg-white shadow rounded-lg p-6 mb-6">
           <h2 className="text-xl font-semibold mb-4">创建空白表格</h2>
           <p className="text-gray-600 mb-4">
-            创建一个新的空白数据表格，可以手动添加列定义。创建后可以在"数据表格"页面查看和管理。
+            创建一个新的空白数据表格，可以手动添加列定义。创建后可以在"项目数据"页面查看和管理。
           </p>
 
           <div className="space-y-4">
@@ -635,7 +635,7 @@ export default function Admin() {
                 <br />• <span className="font-bold">每个文件对应一个独立的数据库表</span>
                 <br />• 表名必须唯一，不能与现有表重复
                 <br />• 如果表名已存在，上传将被拒绝
-                <br />• 成功导入后，您可以在"数据表格"页面选择查看"{tableName}"表
+                <br />• 成功导入后，您可以在"项目数据"页面选择查看"{tableName}"表
                 <br />• 表名建议：project_a_2024、module_b_data、test_001
               </p>
             </div>

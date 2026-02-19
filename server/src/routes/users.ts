@@ -6,6 +6,60 @@ import { authenticate, requireRole } from '../middleware/auth.js';
 export function usersRoutes(db: Database) {
   const router = express.Router();
 
+  // 根据项目名称和角色获取用户列表（用于设备负责人搜索）
+  // 注意：这个路由必须在 /:id 路由之前，否则会被 /:id 路由拦截
+  router.get('/by-project-role', authenticate, async (req, res) => {
+    try {
+      const { projectName, projectRole, query } = req.query;
+      
+      if (!projectName || !projectRole) {
+        return res.status(400).json({ error: '缺少必要参数：projectName 和 projectRole' });
+      }
+      
+      // 获取所有用户
+      const users = await db.query('SELECT id, username, role, permissions FROM users');
+      
+      // 筛选出拥有指定项目指定角色的用户
+      const filteredUsers = users.filter((user: any) => {
+        // 管理员拥有所有权限
+        if (user.role === 'admin') {
+          return true;
+        }
+        
+        // 解析权限
+        let permissions: any[] = [];
+        try {
+          permissions = user.permissions ? JSON.parse(user.permissions) : [];
+        } catch (e) {
+          return false;
+        }
+        
+        // 检查是否有匹配的权限
+        return permissions.some((perm: any) => 
+          perm.project_name === projectName && perm.project_role === projectRole
+        );
+      });
+      
+      // 如果有查询关键词，进行模糊搜索
+      let result = filteredUsers.map((user: any) => ({
+        id: user.id,
+        username: user.username
+      }));
+      
+      if (query && typeof query === 'string' && query.trim() !== '') {
+        const searchQuery = query.trim().toLowerCase();
+        result = result.filter((user: any) => 
+          user.username.toLowerCase().includes(searchQuery)
+        );
+      }
+      
+      res.json({ users: result });
+    } catch (error) {
+      console.error('获取用户列表失败:', error);
+      res.status(500).json({ error: '获取用户列表失败' });
+    }
+  });
+
   // 获取所有用户
   router.get('/', authenticate, requireRole('admin'), async (req, res) => {
     try {

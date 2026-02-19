@@ -7,6 +7,8 @@ import { dataRoutes } from './routes/data.js';
 import { taskRoutes } from './routes/tasks.js';
 import { uploadRoutes } from './routes/upload.js';
 import { usersRoutes } from './routes/users.js';
+import { templateRoutes } from './routes/templates.js';
+import { projectRoutes } from './routes/projects.js';
 import path from 'path';
 
 dotenv.config();
@@ -34,6 +36,8 @@ app.use('/api/data', dataRoutes(db));
 app.use('/api/tasks', taskRoutes(db));
 app.use('/api/upload', uploadRoutes(db));
 app.use('/api/users', usersRoutes(db));
+app.use('/api/templates', templateRoutes(db));
+app.use('/api/projects', projectRoutes(db));
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' });

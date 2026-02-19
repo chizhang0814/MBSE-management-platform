@@ -3,7 +3,7 @@ import Layout from '../components/Layout';
 import { useAuth } from '../context/AuthContext';
 
 interface Permission {
-  table_name: string;
+  project_name: string;
   project_role: string;
   reserved: string;
 }
@@ -22,7 +22,7 @@ export default function UserManagement() {
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
-  const [availableTables, setAvailableTables] = useState<string[]>([]);
+  const [availableProjects, setAvailableProjects] = useState<Array<{id: number, name: string}>>([]);
   const [formData, setFormData] = useState({
     username: '',
     password: '',
@@ -32,17 +32,17 @@ export default function UserManagement() {
 
   useEffect(() => {
     fetchUsers();
-    fetchTables();
+    fetchProjects();
   }, []);
   
-  const fetchTables = async () => {
+  const fetchProjects = async () => {
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:3000/api/data/tables', {
+      const response = await fetch('/api/projects', {
         headers: { Authorization: `Bearer ${token}` },
       });
       const result = await response.json();
-      setAvailableTables(result.tables || []);
+      setAvailableProjects(result.projects || []);
     } catch (error) {
       console.error(error);
     }
@@ -51,7 +51,7 @@ export default function UserManagement() {
   const fetchUsers = async () => {
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:3000/api/users', {
+      const response = await fetch('/api/users', {
         headers: { Authorization: `Bearer ${token}` },
       });
       const result = await response.json();
@@ -106,8 +106,8 @@ export default function UserManagement() {
     try {
       const token = localStorage.getItem('token');
       const url = editingUser
-        ? `http://localhost:3000/api/users/${editingUser.id}`
-        : 'http://localhost:3000/api/users';
+        ? `/api/users/${editingUser.id}`
+        : '/api/users';
       const method = editingUser ? 'PUT' : 'POST';
 
       const body: any = {
@@ -154,7 +154,7 @@ export default function UserManagement() {
 
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`http://localhost:3000/api/users/${userId}`, {
+      const response = await fetch(`/api/users/${userId}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -183,7 +183,7 @@ export default function UserManagement() {
 
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`http://localhost:3000/api/users/${userId}/reset-password`, {
+      const response = await fetch(`/api/users/${userId}/reset-password`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -274,7 +274,7 @@ export default function UserManagement() {
                         {user.permissions && user.permissions.length > 0 ? (
                           user.permissions.map((perm, idx) => (
                             <div key={idx} className="text-xs">
-                              <span className="font-medium">{perm.table_name}</span>
+                              <span className="font-medium">{perm.project_name}</span>
                               {' → '}
                               <span>{perm.project_role}</span>
                             </div>
@@ -391,9 +391,9 @@ export default function UserManagement() {
                         {formData.permissions.map((perm, idx) => (
                           <div key={idx} className="flex space-x-2 items-end">
                             <div className="flex-1">
-                              <label className="block text-xs text-gray-600 mb-1">数据表名</label>
+                              <label className="block text-xs text-gray-600 mb-1">项目名称</label>
                               <select
-                                value={perm.table_name}
+                                value={perm.project_name}
                                 onChange={(e) => {
                                   const newValue = e.target.value;
                                   const newPerms = [...formData.permissions];
@@ -401,7 +401,7 @@ export default function UserManagement() {
                                   // 检查是否重复
                                   const isDuplicate = newPerms.some((p, i) => 
                                     i !== idx && 
-                                    p.table_name === newValue && 
+                                    p.project_name === newValue && 
                                     p.project_role === newPerms[idx].project_role
                                   );
                                   
@@ -410,15 +410,15 @@ export default function UserManagement() {
                                     return;
                                   }
                                   
-                                  newPerms[idx] = { ...newPerms[idx], table_name: newValue };
+                                  newPerms[idx] = { ...newPerms[idx], project_name: newValue };
                                   setFormData({ ...formData, permissions: newPerms });
                                 }}
                                 className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
                               >
-                                <option value="">选择数据表</option>
-                                {availableTables.map((table) => (
-                                  <option key={table} value={table}>
-                                    {table}
+                                <option value="">选择项目</option>
+                                {availableProjects.map((project) => (
+                                  <option key={project.id} value={project.name}>
+                                    {project.name}
                                   </option>
                                 ))}
                               </select>
@@ -434,7 +434,7 @@ export default function UserManagement() {
                                   // 检查是否重复
                                   const isDuplicate = newPerms.some((p, i) => 
                                     i !== idx && 
-                                    p.table_name === newPerms[idx].table_name && 
+                                    p.project_name === newPerms[idx].project_name && 
                                     p.project_role === newValue
                                   );
                                   
@@ -471,11 +471,11 @@ export default function UserManagement() {
                           onClick={() => {
                             // 添加新权限时，检查是否所有必填字段都已填充
                             const hasEmptyPermissions = formData.permissions.some(
-                              (p) => !p.table_name || !p.project_role
+                              (p) => !p.project_name || !p.project_role
                             );
                             
                             if (hasEmptyPermissions) {
-                              alert('请先完成已添加权限的填写（数据表名和项目角色）');
+                              alert('请先完成已添加权限的填写（项目名称和项目角色）');
                               return;
                             }
                             
@@ -484,7 +484,7 @@ export default function UserManagement() {
                               ...formData,
                               permissions: [
                                 ...formData.permissions,
-                                { table_name: '', project_role: '', reserved: '' },
+                                { project_name: '', project_role: '', reserved: '' },
                               ],
                             });
                           }}

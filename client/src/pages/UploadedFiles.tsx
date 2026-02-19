@@ -6,6 +6,7 @@ interface UploadedFile {
   filename: string;
   original_filename: string;
   table_name?: string;
+  project_name?: string | null;
   uploaded_by_name: string;
   total_rows: number;
   success_count: number | null;
@@ -34,7 +35,7 @@ export default function UploadedFiles() {
     setSyncing(true);
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:3000/api/upload/sync-existing', {
+      const response = await fetch('/api/upload/sync-existing', {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -46,9 +47,9 @@ export default function UploadedFiles() {
       } else {
         alert(data.error || '同步失败');
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
-      alert('同步失败');
+      alert(error.message || '同步失败');
     } finally {
       setSyncing(false);
     }
@@ -57,14 +58,21 @@ export default function UploadedFiles() {
   const fetchFiles = async () => {
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:3000/api/upload/files', {
+      const response = await fetch('/api/upload/files', {
         headers: { Authorization: `Bearer ${token}` },
       });
+      
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || '获取文件列表失败');
+      }
+      
       const result = await response.json();
-      setFiles(result.files);
-    } catch (error) {
+      setFiles(result.files || []);
+    } catch (error: any) {
       console.error(error);
-      alert('获取文件列表失败');
+      alert(error.message || '获取文件列表失败，请检查网络连接');
+      setFiles([]);
     } finally {
       setLoading(false);
     }
@@ -73,14 +81,20 @@ export default function UploadedFiles() {
   const handleViewDetail = async (fileId: number) => {
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`http://localhost:3000/api/upload/files/${fileId}`, {
+      const response = await fetch(`/api/upload/files/${fileId}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
+      
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || '获取文件详情失败');
+      }
+      
       const result = await response.json();
       setSelectedFile(result.file);
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
-      alert('获取文件详情失败');
+      alert(error.message || '获取文件详情失败');
     }
   };
 
@@ -91,7 +105,7 @@ export default function UploadedFiles() {
 
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`http://localhost:3000/api/upload/files/${fileId}`, {
+      const response = await fetch(`/api/upload/files/${fileId}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -99,10 +113,13 @@ export default function UploadedFiles() {
       if (response.ok) {
         alert('文件记录已删除');
         fetchFiles();
+      } else {
+        const error = await response.json();
+        alert(error.error || '删除失败');
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
-      alert('删除失败');
+      alert(error.message || '删除失败');
     }
   };
 
@@ -149,94 +166,105 @@ export default function UploadedFiles() {
             {syncing ? '同步中...' : '同步现有文件'}
           </button>
         </div>
-        <div className="bg-white shadow overflow-hidden sm:rounded-md">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  ID
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  文件名
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  数据表
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  上传者
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  总行数
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  成功/失败
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  状态
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  上传时间
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  操作
-                </th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {files.map((file) => (
-                <tr key={file.id}>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{file.id}</td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm text-gray-900">{file.original_filename}</div>
-                    <div className="text-xs text-gray-500">{formatFileSize(file.file_size)}</div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    <span className="px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs font-mono">
-                      {file.table_name || 'eicd_data'}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{file.uploaded_by_name}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{file.total_rows}</td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm">
-                      {file.status === 'historical' ? (
-                        <span className="text-gray-500 italic">统计未知</span>
-                      ) : (
-                        <>
-                          <span className="text-green-600">{file.success_count}</span>
-                          {' / '}
-                          <span className="text-red-600">{file.error_count}</span>
-                        </>
-                      )}
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${getStatusColor(file.status)}`}>
-                      {getStatusText(file.status)}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {new Date(file.uploaded_at).toLocaleString()}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
-                    <button
-                      onClick={() => handleViewDetail(file.id)}
-                      className="text-blue-600 hover:text-blue-900"
-                    >
-                      详情
-                    </button>
-                    <button
-                      onClick={() => handleDelete(file.id)}
-                      className="text-red-600 hover:text-red-900"
-                    >
-                      删除
-                    </button>
-                  </td>
+        {files.length === 0 ? (
+          <div className="bg-white shadow rounded-lg p-8 text-center">
+            <p className="text-gray-500 text-lg">暂无上传文件</p>
+            <p className="text-gray-400 text-sm mt-2">上传的文件将显示在这里</p>
+          </div>
+        ) : (
+          <div className="bg-white shadow overflow-hidden sm:rounded-md">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    ID
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    文件名
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    项目名称
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    上传者
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    总行数
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    成功/失败
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    状态
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    上传时间
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    操作
+                  </th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {files.map((file) => (
+                  <tr key={file.id}>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{file.id}</td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm text-gray-900">{file.original_filename}</div>
+                      <div className="text-xs text-gray-500">{formatFileSize(file.file_size)}</div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm">
+                      {file.project_name ? (
+                        <span className="px-2 py-1 bg-green-100 text-green-800 rounded text-xs">
+                          {file.project_name}
+                        </span>
+                      ) : (
+                        <span className="text-gray-400 italic text-xs">未关联项目</span>
+                      )}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{file.uploaded_by_name}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{file.total_rows}</td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm">
+                        {file.status === 'historical' ? (
+                          <span className="text-gray-500 italic">统计未知</span>
+                        ) : (
+                          <>
+                            <span className="text-green-600">{file.success_count}</span>
+                            {' / '}
+                            <span className="text-red-600">{file.error_count}</span>
+                          </>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${getStatusColor(file.status)}`}>
+                        {getStatusText(file.status)}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {new Date(file.uploaded_at).toLocaleString()}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
+                      <button
+                        onClick={() => handleViewDetail(file.id)}
+                        className="text-blue-600 hover:text-blue-900"
+                      >
+                        详情
+                      </button>
+                      <button
+                        onClick={() => handleDelete(file.id)}
+                        className="text-red-600 hover:text-red-900"
+                      >
+                        删除
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
 
         {/* 文件详情对话框 */}
         {selectedFile && (
@@ -263,8 +291,8 @@ export default function UploadedFiles() {
                     <p className="font-semibold">{formatFileSize(selectedFile.file_size)}</p>
                   </div>
                   <div>
-                    <p className="text-sm text-gray-500">数据表名</p>
-                    <p className="font-semibold font-mono text-blue-600">{selectedFile.table_name || 'eicd_data'}</p>
+                    <p className="text-sm text-gray-500">项目名称</p>
+                    <p className="font-semibold text-green-600">{selectedFile.project_name || '未关联项目'}</p>
                   </div>
                   <div>
                     <p className="text-sm text-gray-500">上传者</p>

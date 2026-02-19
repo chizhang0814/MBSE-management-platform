@@ -16,7 +16,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen bg-gray-50">
       <nav className="bg-white shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="w-full px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16">
             <div className="flex">
               <Link to="/" className="flex items-center">
@@ -32,12 +32,12 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                   仪表盘
                 </Link>
                 <Link
-                  to="/data"
+                  to="/project-data"
                   className={`${
-                    isActive('/data') ? 'border-blue-500 text-gray-900' : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
+                    isActive('/project-data') ? 'border-blue-500 text-gray-900' : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
                   } inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium`}
                 >
-                  数据表格
+                  项目数据
                 </Link>
                 <Link
                   to="/tasks"
@@ -50,12 +50,20 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 {user?.role === 'admin' && (
                   <>
                     <Link
-                      to="/admin"
+                      to="/templates"
                       className={`${
-                        isActive('/admin') ? 'border-blue-500 text-gray-900' : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
+                        isActive('/templates') ? 'border-blue-500 text-gray-900' : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
                       } inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium`}
                     >
-                      导入数据
+                      模板管理
+                    </Link>
+                    <Link
+                      to="/projects"
+                      className={`${
+                        isActive('/projects') ? 'border-blue-500 text-gray-900' : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
+                      } inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium`}
+                    >
+                      项目管理
                     </Link>
                     <Link
                       to="/files"
@@ -99,7 +107,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         </div>
       </nav>
 
-      <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
+      <main className="w-full py-6">
         {children}
       </main>
     </div>

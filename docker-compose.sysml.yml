@@ -1,0 +1,41 @@
+# SysML v2 API Services — 模型仓库
+#
+# 首次使用前需构建 API 镜像：
+#   cd ../SysML2-server-api && docker build ./docker_images -t sysml-v2-api
+#
+# 启动: docker compose -f docker-compose.sysml.yml up -d
+# 停止: docker compose -f docker-compose.sysml.yml down
+# API:  http://localhost:9000/
+
+services:
+  postgresdbserver:
+    image: postgres:15-alpine
+    container_name: sysml-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: mysecretpassword
+      POSTGRES_DB: sysml2
+    volumes:
+      - sysml-pg-data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d sysml2"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  sysml-api:
+    image: sysml-v2-api
+    container_name: sysml-api
+    stdin_open: true
+    tty: true
+    depends_on:
+      postgresdbserver:
+        condition: service_healthy
+    ports:
+      - "9000:9000"
+    restart: unless-stopped
+
+volumes:
+  sysml-pg-data:

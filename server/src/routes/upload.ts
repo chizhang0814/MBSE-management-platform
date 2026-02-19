@@ -9,17 +9,112 @@ import path from 'path';
 export function uploadRoutes(db: Database) {
   const router = express.Router();
 
+  // 辅助函数：修复文件名编码
+  const fixFilenameEncoding = (filename: string): string => {
+    if (!filename) return filename;
+    
+    // 尝试多种编码方式修复
+    try {
+      // 检查是否包含乱码字符（常见的latin1误编码特征）
+      // 如果包含这些字符，可能是UTF-8被误读为latin1
+      const hasGarbledChars = /[èéêëìíîïòóôõöùúûüýÿàáâãäåæç]/.test(filename);
+      
+      if (hasGarbledChars) {
+        // 方法1: 尝试从latin1转换回UTF-8
+        try {
+          const fixed = Buffer.from(filename, 'latin1').toString('utf8');
+          // 验证转换后的结果是否包含中文字符或其他有效字符
+          if (/[\u4e00-\u9fa5]/.test(fixed) || fixed.length > 0) {
+            // 检查转换后的字符串是否看起来更合理（不包含明显的乱码）
+            if (!/[èéêëìíîïòóôõöùúûüýÿàáâãäåæç]/.test(fixed)) {
+              return fixed;
+            }
+          }
+        } catch (e) {
+          // 转换失败，继续尝试其他方法
+        }
+      }
+      
+      // 如果已经是正确的UTF-8，直接返回
+      return filename;
+    } catch (e) {
+      return filename;
+    }
+  };
+
   // 配置multer用于文件上传
   const storage = multer.diskStorage({
     destination: (req, file, cb) => {
       cb(null, 'uploads/');
     },
     filename: (req, file, cb) => {
-      cb(null, Date.now() + '-' + file.originalname);
+      // 确保正确处理中文文件名
+      let originalName = file.originalname;
+      
+      // 尝试从Content-Disposition头获取原始文件名（更可靠）
+      const contentDisposition = req.headers['content-disposition'];
+      if (contentDisposition) {
+        const filenameMatch = contentDisposition.match(/filename\*?=['"]?([^'";]+)['"]?/i);
+        if (filenameMatch) {
+          let extractedName = filenameMatch[1];
+          // 处理RFC 5987编码（UTF-8''格式）
+          if (extractedName.startsWith("UTF-8''")) {
+            extractedName = decodeURIComponent(extractedName.substring(7));
+          } else {
+            // 尝试URL解码
+            try {
+              extractedName = decodeURIComponent(extractedName);
+            } catch (e) {
+              // 如果解码失败，尝试latin1转utf8
+              extractedName = Buffer.from(extractedName, 'latin1').toString('utf8');
+            }
+          }
+          originalName = extractedName;
+        }
+      }
+      
+      // 如果还是乱码，尝试修复
+      originalName = fixFilenameEncoding(originalName);
+      
+      cb(null, Date.now() + '-' + originalName);
     },
   });
 
-  const upload = multer({ storage });
+  const upload = multer({ 
+    storage,
+    // 确保正确处理文件名编码
+    fileFilter: (req, file, cb) => {
+      // 修复文件名编码
+      if (file.originalname) {
+        // 尝试从Content-Disposition头获取
+        const contentDisposition = req.headers['content-disposition'];
+        if (contentDisposition) {
+          const filenameMatch = contentDisposition.match(/filename\*?=['"]?([^'";]+)['"]?/i);
+          if (filenameMatch) {
+            let extractedName = filenameMatch[1];
+            // 处理RFC 5987编码
+            if (extractedName.startsWith("UTF-8''")) {
+              extractedName = decodeURIComponent(extractedName.substring(7));
+            } else {
+              try {
+                extractedName = decodeURIComponent(extractedName);
+              } catch (e) {
+                extractedName = Buffer.from(extractedName, 'latin1').toString('utf8');
+              }
+            }
+            file.originalname = extractedName;
+          } else {
+            // 如果没有从header获取到，尝试修复现有文件名
+            file.originalname = fixFilenameEncoding(file.originalname);
+          }
+        } else {
+          // 如果没有Content-Disposition头，尝试修复现有文件名
+          file.originalname = fixFilenameEncoding(file.originalname);
+        }
+      }
+      cb(null, true);
+    }
+  });
 
   // 动态创建表的辅助函数
   const createDynamicTable = async (tableName: string, userId: number, originalColumns: string[]) => {
@@ -324,12 +419,14 @@ export function uploadRoutes(db: Database) {
 
         // 记录上传文件信息
         const fileSize = fs.statSync(req.file.path).size;
+        // 确保original_filename是正确编码的UTF-8字符串
+        const originalFilename = fixFilenameEncoding(req.file.originalname);
         const uploadResult = await db.run(
           `INSERT INTO uploaded_files (filename, original_filename, table_name, uploaded_by, total_rows, success_count, error_count, file_size, status)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             req.file.filename,
-            req.file.originalname,
+            originalFilename,
             tableName,
             (req as AuthRequest).user!.id,
             jsonData.length,
@@ -378,12 +475,52 @@ export function uploadRoutes(db: Database) {
   router.get('/files', authenticate, requireRole('admin'), async (req, res) => {
     try {
       const files = await db.query(
-        `SELECT uf.*, u.username as uploaded_by_name 
+        `SELECT uf.*, u.username as uploaded_by_name
          FROM uploaded_files uf
          JOIN users u ON uf.uploaded_by = u.id
          ORDER BY uf.uploaded_at DESC`
       );
-      res.json({ files });
+      
+      // 为每个文件查找对应的项目名称
+      const filesWithProject = await Promise.all(
+        files.map(async (file: any) => {
+          let projectName = null;
+          
+          if (file.table_name) {
+            // 如果 table_name 是 project_X 格式，提取 projectId
+            const projectMatch = file.table_name.match(/^project_(\d+)$/);
+            if (projectMatch) {
+              const projectId = parseInt(projectMatch[1]);
+              const project = await db.get('SELECT name FROM projects WHERE id = ?', [projectId]);
+              if (project) {
+                projectName = project.name;
+              }
+            } else {
+              // 如果 table_name 是 project_X_xxx 格式，通过 project_tables 查找
+              const projectTable = await db.get(
+                `SELECT p.name as project_name
+                 FROM project_tables pt
+                 JOIN projects p ON pt.project_id = p.id
+                 WHERE pt.table_name = ?`,
+                [file.table_name]
+              );
+              if (projectTable) {
+                projectName = projectTable.project_name;
+              }
+            }
+          }
+          
+          return {
+            ...file,
+            original_filename: fixFilenameEncoding(file.original_filename || ''),
+            project_name: projectName
+          };
+        })
+      );
+      
+      // 确保响应使用UTF-8编码
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.json({ files: filesWithProject });
     } catch (error) {
       console.error(error);
       res.status(500).json({ error: '获取文件列表失败' });
@@ -394,7 +531,7 @@ export function uploadRoutes(db: Database) {
   router.get('/files/:id', authenticate, requireRole('admin'), async (req, res) => {
     try {
       const file = await db.get(
-        `SELECT uf.*, u.username as uploaded_by_name 
+        `SELECT uf.*, u.username as uploaded_by_name
          FROM uploaded_files uf
          JOIN users u ON uf.uploaded_by = u.id
          WHERE uf.id = ?`,
@@ -405,15 +542,50 @@ export function uploadRoutes(db: Database) {
         return res.status(404).json({ error: '文件不存在' });
       }
 
+      // 查找对应的项目名称
+      let projectName = null;
+      if (file.table_name) {
+        // 如果 table_name 是 project_X 格式，提取 projectId
+        const projectMatch = file.table_name.match(/^project_(\d+)$/);
+        if (projectMatch) {
+          const projectId = parseInt(projectMatch[1]);
+          const project = await db.get('SELECT name FROM projects WHERE id = ?', [projectId]);
+          if (project) {
+            projectName = project.name;
+          }
+        } else {
+          // 如果 table_name 是 project_X_xxx 格式，通过 project_tables 查找
+          const projectTable = await db.get(
+            `SELECT p.name as project_name
+             FROM project_tables pt
+             JOIN projects p ON pt.project_id = p.id
+             WHERE pt.table_name = ?`,
+            [file.table_name]
+          );
+          if (projectTable) {
+            projectName = projectTable.project_name;
+          }
+        }
+      }
+
+      // 修复文件名编码
+      const fixedFile = {
+        ...file,
+        original_filename: fixFilenameEncoding(file.original_filename || ''),
+        project_name: projectName
+      };
+
       // 尝试获取文件内容预览
       let filePath = '';
       let fileExists = false;
-      if (file.filename) {
-        filePath = path.join('uploads', file.filename);
+      if (fixedFile.filename) {
+        filePath = path.join('uploads', fixedFile.filename);
         fileExists = fs.existsSync(filePath);
       }
 
-      res.json({ file: { ...file, fileExists, filePath } });
+      // 确保响应使用UTF-8编码
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.json({ file: { ...fixedFile, fileExists, filePath } });
     } catch (error) {
       console.error(error);
       res.status(500).json({ error: '获取文件详情失败' });
