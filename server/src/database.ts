@@ -542,6 +542,53 @@ export class Database {
       console.log('Migration: 信号方向 signal-level:', e.message);
     }
 
+    // 为 users 表添加 display_name 和 department 列
+    try {
+      const userCols = await this.query('PRAGMA table_info(users)');
+      const userColNames = userCols.map((c: any) => c.name);
+      if (!userColNames.includes('display_name')) {
+        await this.run('ALTER TABLE users ADD COLUMN display_name TEXT');
+        console.log('Database migration: added display_name column to users table');
+      }
+      if (!userColNames.includes('department')) {
+        await this.run('ALTER TABLE users ADD COLUMN department TEXT');
+        console.log('Database migration: added department column to users table');
+      }
+    } catch (e: any) {
+      console.log('Migration: users display_name/department:', e.message);
+    }
+
+    // 创建权限申请表
+    try {
+      await this.run(`
+        CREATE TABLE IF NOT EXISTS permission_requests (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER NOT NULL,
+          project_name TEXT NOT NULL,
+          project_role TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending',
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          reviewed_at DATETIME,
+          reviewed_by INTEGER,
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+          FOREIGN KEY (reviewed_by) REFERENCES users(id)
+        )
+      `);
+    } catch (e: any) {
+      console.log('Migration: permission_requests table:', e.message);
+    }
+
+    // 为 signals 表添加 created_by 列（信号创建人）
+    try {
+      const sigCols2 = await this.query('PRAGMA table_info(signals)');
+      if (!sigCols2.some((c: any) => c.name === 'created_by')) {
+        await this.run('ALTER TABLE signals ADD COLUMN created_by TEXT');
+        console.log('Database migration: added created_by column to signals');
+      }
+    } catch (e: any) {
+      console.log('Migration: signals created_by:', e.message);
+    }
+
     // 初始化默认用户（不再创建示例数据）
     await this.initDefaultData();
   }

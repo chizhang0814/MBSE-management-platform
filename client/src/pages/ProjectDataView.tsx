@@ -35,6 +35,7 @@ interface PinRow {
 
 interface SignalRow {
   id: number; project_id: number;
+  created_by?: string;
   unique_id?: string; 信号名称摘要?: string; 连接类型?: string; 信号方向?: string;
   信号架次有效性?: string;
   推荐导线线规?: string; 推荐导线线型?: string;
@@ -45,10 +46,12 @@ interface SignalRow {
   成品线长度?: string; 成品线载流量?: string; 成品线线路压降?: string; 成品线标识?: string;
   成品线与机上线束对接方式?: string; 成品线安装责任?: string; 备注?: string;
   endpoint_summary?: string;
+  can_edit?: boolean;
 }
 
 interface SignalEndpoint {
   id?: number; signal_id?: number; endpoint_index?: number;
+  device_id?: number; connector_id?: number;
   设备编号: string; 连接器号: string; 针孔号: string;
   信号方向?: string; 屏蔽类型?: string; 端接尺寸?: string; 信号名称?: string; 信号定义?: string;
   设备端元器件编号?: string; 设备中文名称?: string;
@@ -181,8 +184,8 @@ export default function ProjectDataView() {
   const [editingSignal, setEditingSignal] = useState<SignalRow | null>(null);
   const [signalForm, setSignalForm] = useState<Partial<SignalRow>>({});
   const [signalEndpoints, setSignalEndpoints] = useState<SignalEndpoint[]>([
-    { 设备编号: '', 连接器号: '', 针孔号: '', 端接尺寸: '', 信号名称: '', 信号定义: '' },
-    { 设备编号: '', 连接器号: '', 针孔号: '', 端接尺寸: '', 信号名称: '', 信号定义: '' },
+    { 设备编号: '', 连接器号: '', 针孔号: '', 信号名称: '', 信号定义: '' },
+    { 设备编号: '', 连接器号: '', 针孔号: '', 信号名称: '', 信号定义: '' },
   ]);
   // 端点搜索
   const [epDeviceSearch, setEpDeviceSearch] = useState<string[]>(['', '']);
@@ -190,10 +193,19 @@ export default function ProjectDataView() {
   const [epConnectorOptions, setEpConnectorOptions] = useState<ConnectorRow[][]>([[], []]);
   const [epPinOptions, setEpPinOptions] = useState<PinRow[][]>([[], []]);
 
+  // ── 权限状态 ──
+  const [myPermissions, setMyPermissions] = useState<Array<{ project_name: string; project_role: string }>>([]);
+
   // ── 初始化 ────────────────────────────────────────────────
 
   useEffect(() => {
     loadProjects();
+    if (user?.role !== 'admin') {
+      fetch('/api/auth/profile', { headers: API_HEADERS() })
+        .then(r => r.json())
+        .then(d => setMyPermissions(d.user?.permissions || []))
+        .catch(() => {});
+    }
     return () => {
       if (heartbeatRef.current) clearInterval(heartbeatRef.current);
       if (lockRefreshRef.current) clearInterval(lockRefreshRef.current);
@@ -288,8 +300,8 @@ export default function ProjectDataView() {
     } catch (e) { console.error('加载连接器失败', e); }
   };
 
-  const loadPins = async (deviceId: number, connectorId: number) => {
-    if (pins[connectorId]) return;
+  const loadPins = async (deviceId: number, connectorId: number, force = false) => {
+    if (!force && pins[connectorId]) return;
     try {
       const res = await fetch(`/api/devices/${deviceId}/connectors/${connectorId}/pins`, { headers: API_HEADERS() });
       const data = await res.json();
@@ -310,7 +322,7 @@ export default function ProjectDataView() {
 
   const openAddDevice = () => {
     setEditingDevice(null);
-    setDeviceForm({});
+    setDeviceForm({ '设备负责人': user?.username || '' });
     setShowDeviceModal(true);
   };
 
@@ -356,6 +368,9 @@ export default function ProjectDataView() {
 
   const saveDevice = async () => {
     if (!selectedProjectId || !deviceForm['设备编号']) { alert('设备编号不能为空'); return; }
+    const ata = (deviceForm as any)['设备所属ATA'] || '';
+    if (!ata) { alert('设备所属ATA 不能为空'); return; }
+    if (ata !== '其他' && !/^\d{2}-\d{2}$/.test(ata)) { alert('设备所属ATA 格式不正确，应为 XX-XX（X为0-9数字）或"其他"'); return; }
     try {
       const url = editingDevice ? `/api/devices/${editingDevice.id}` : '/api/devices';
       const method = editingDevice ? 'PUT' : 'POST';
@@ -426,6 +441,7 @@ export default function ProjectDataView() {
 
   const saveConnector = async () => {
     if (!connectorTargetDeviceId || !connectorForm['连接器号']) { alert('连接器号不能为空'); return; }
+    if (!(connectorForm as any)['设备端元器件编号']) { alert('设备端元器件编号不能为空'); return; }
     try {
       const url = editingConnector
         ? `/api/devices/${connectorTargetDeviceId}/connectors/${editingConnector.id}`
@@ -433,6 +449,11 @@ export default function ProjectDataView() {
       const method = editingConnector ? 'PUT' : 'POST';
       const res = await fetch(url, { method, headers: API_JSON_HEADERS(), body: JSON.stringify(connectorForm) });
       if (!res.ok) throw new Error((await res.json()).error || '保存失败');
+      if (!editingConnector) {
+        setDevices(prev => prev.map(d =>
+          d.id === connectorTargetDeviceId ? { ...d, connector_count: (d.connector_count ?? 0) + 1 } : d
+        ));
+      }
       await loadConnectors(connectorTargetDeviceId!, true);
       await closeConnectorModal();
     } catch (e: any) { alert(e.message || '保存失败'); }
@@ -443,6 +464,9 @@ export default function ProjectDataView() {
     try {
       const res = await fetch(`/api/devices/${deviceId}/connectors/${connector.id}`, { method: 'DELETE', headers: API_HEADERS() });
       if (!res.ok) throw new Error((await res.json()).error || '删除失败');
+      setDevices(prev => prev.map(d =>
+        d.id === deviceId ? { ...d, connector_count: Math.max(0, (d.connector_count ?? 0) - 1) } : d
+      ));
       await loadConnectors(deviceId, true);
     } catch (e: any) { alert(e.message || '删除失败'); }
   };
@@ -506,8 +530,7 @@ export default function ProjectDataView() {
       const method = editingPin ? 'PUT' : 'POST';
       const res = await fetch(url, { method, headers: API_JSON_HEADERS(), body: JSON.stringify(pinForm) });
       if (!res.ok) throw new Error((await res.json()).error || '保存失败');
-      setPins(prev => { const n = { ...prev }; delete n[pinTargetConnectorId!]; return n; });
-      await loadPins(connectorTargetDeviceId, pinTargetConnectorId);
+      await loadPins(connectorTargetDeviceId, pinTargetConnectorId, true);
       await closePinModal();
     } catch (e: any) { alert(e.message || '保存失败'); }
   };
@@ -517,8 +540,7 @@ export default function ProjectDataView() {
     try {
       const res = await fetch(`/api/devices/${deviceId}/connectors/${connectorId}/pins/${pin.id}`, { method: 'DELETE', headers: API_HEADERS() });
       if (!res.ok) throw new Error((await res.json()).error || '删除失败');
-      setPins(prev => { const n = { ...prev }; delete n[connectorId]; return n; });
-      await loadPins(deviceId, connectorId);
+      await loadPins(deviceId, connectorId, true);
     } catch (e: any) { alert(e.message || '删除失败'); }
   };
 
@@ -528,8 +550,8 @@ export default function ProjectDataView() {
     setEditingSignal(null);
     setSignalForm({});
     setSignalEndpoints([
-      { 设备编号: '', 连接器号: '', 针孔号: '', 端接尺寸: '', 信号名称: '', 信号定义: '' },
-      { 设备编号: '', 连接器号: '', 针孔号: '', 端接尺寸: '', 信号名称: '', 信号定义: '' },
+      { 设备编号: '', 连接器号: '', 针孔号: '', 信号名称: '', 信号定义: '' },
+      { 设备编号: '', 连接器号: '', 针孔号: '', 信号名称: '', 信号定义: '' },
     ]);
     setEpDeviceSearch(['', '']);
     setEpDeviceResults([[], []]);
@@ -547,6 +569,9 @@ export default function ProjectDataView() {
       });
       if (!lockRes.ok) { const d = await lockRes.json(); alert(d.error || '获取锁失败'); return; }
     } catch { alert('获取锁失败'); return; }
+
+    // 立即在本地锁状态中添加，无需等待下次轮询
+    setSignalLockMap(prev => ({ ...prev, [signal.id]: { lockedBy: user?.username || '', expiresAt: '' } }));
 
     // 直接从 API 获取最新数据，不依赖可能过时的缓存状态
     let freshSignal: any = { ...signal };
@@ -568,16 +593,34 @@ export default function ProjectDataView() {
           设备编号: e.设备编号 || '',
           连接器号: e.连接器号 || '',
           针孔号: e.针孔号 || '',
-          端接尺寸: e.端接尺寸 || '',
+
           信号名称: e.信号名称 || '',
           信号定义: e.信号定义 || '',
         }))
-      : [{ 设备编号: '', 连接器号: '', 针孔号: '', 端接尺寸: '', 信号名称: '', 信号定义: '' }];
+      : [{ 设备编号: '', 连接器号: '', 针孔号: '', 信号名称: '', 信号定义: '' }];
     setSignalEndpoints(epList);
     setEpDeviceSearch(epList.map(e => e.设备编号));
     setEpDeviceResults(epList.map(() => []));
-    setEpConnectorOptions(epList.map(() => []));
-    setEpPinOptions(epList.map(() => []));
+
+    // 预加载每个端点的连接器列表和针孔列表
+    const connOpts: ConnectorRow[][] = epList.map(() => []);
+    const pinOpts: PinRow[][] = epList.map(() => []);
+    await Promise.all(freshEndpoints.map(async (e: any, idx: number) => {
+      if (e.device_id) {
+        try {
+          const cRes = await fetch(`/api/devices/${e.device_id}/connectors`, { headers: API_HEADERS() });
+          if (cRes.ok) connOpts[idx] = (await cRes.json()).connectors || [];
+        } catch { }
+      }
+      if (e.device_id && e.connector_id) {
+        try {
+          const pRes = await fetch(`/api/devices/${e.device_id}/connectors/${e.connector_id}/pins`, { headers: API_HEADERS() });
+          if (pRes.ok) pinOpts[idx] = (await pRes.json()).pins || [];
+        } catch { }
+      }
+    }));
+    setEpConnectorOptions(connOpts);
+    setEpPinOptions(pinOpts);
     setShowSignalModal(true);
 
     if (heartbeatRef.current) clearInterval(heartbeatRef.current);
@@ -592,12 +635,15 @@ export default function ProjectDataView() {
 
   const closeSignalModal = async () => {
     if (editingSignal) {
+      const releasedId = editingSignal.id;
       await fetch('/api/data/lock', {
         method: 'DELETE',
         headers: API_JSON_HEADERS(),
-        body: JSON.stringify({ table_name: 'signals', row_id: editingSignal.id })
+        body: JSON.stringify({ table_name: 'signals', row_id: releasedId })
       }).catch(() => {});
       if (heartbeatRef.current) { clearInterval(heartbeatRef.current); heartbeatRef.current = null; }
+      // 立即从本地锁状态中移除，无需等待下次轮询
+      setSignalLockMap(prev => { const next = { ...prev }; delete next[releasedId]; return next; });
     }
     setShowSignalModal(false);
     setEditingSignal(null);
@@ -606,6 +652,10 @@ export default function ProjectDataView() {
 
   const saveSignal = async () => {
     if (!selectedProjectId) return;
+    const sf = signalForm as any;
+    if (!editingSignal && !sf.unique_id?.trim()) { alert('Unique ID 不能为空'); return; }
+    if (!sf['信号方向']) { alert('信号方向不能为空'); return; }
+    if (!sf['连接类型']) { alert('连接类型不能为空'); return; }
     try {
       const validEndpoints = signalEndpoints.filter(ep => ep.设备编号 && ep.连接器号 && ep.针孔号);
       const body: any = { project_id: selectedProjectId, ...signalForm, endpoints: validEndpoints };
@@ -675,6 +725,16 @@ export default function ProjectDataView() {
     } catch { }
   };
 
+  // ── 权限辅助 ─────────────────────────────────────────────
+
+  const isAdmin = user?.role === 'admin';
+  const selectedProjectName = projects.find(p => p.id === selectedProjectId)?.name;
+  const myProjectRole = myPermissions.find(p => p.project_name === selectedProjectName)?.project_role;
+  const canManageDevices = isAdmin || myProjectRole === '设备管理员';
+  const canManageSignals = isAdmin || myProjectRole === '设备管理员';
+  const isDeviceOwner = (device: DeviceRow) => isAdmin || device.设备负责人 === user?.username;
+  const canDeleteSignal = (signal: SignalRow) => isAdmin || signal.created_by === user?.username;
+
   // ── 渲染：设备视图 ────────────────────────────────────────
 
   const renderDeviceView = () => (
@@ -683,7 +743,7 @@ export default function ProjectDataView() {
         <h2 className="text-lg font-semibold">
           设备列表（{devices.length} 台 / 连接器共 {devices.reduce((s, d) => s + (d.connector_count ?? 0), 0)} 个）
         </h2>
-        {user?.role === 'admin' && (
+        {canManageDevices && (
           <button onClick={openAddDevice} className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700">
             + 添加设备
           </button>
@@ -706,13 +766,14 @@ export default function ProjectDataView() {
                 <th className="px-4 py-2 text-left text-xs text-gray-500">DAL</th>
                 <th className="px-4 py-2 text-left text-xs text-gray-500">设备负责人</th>
                 <th className="px-4 py-2 text-left text-xs text-gray-500">连接器数</th>
-                {user?.role === 'admin' && <th className="px-4 py-2 text-left text-xs text-gray-500">操作</th>}
+                {(isAdmin || devices.some(d => isDeviceOwner(d))) && <th className="px-4 py-2 text-left text-xs text-gray-500">操作</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {devices.map(device => {
                 const isExpanded = expandedDeviceId === device.id;
                 const lock = lockMap[device.id];
+                const canEditDevice = isDeviceOwner(device);
                 return (
                   <React.Fragment key={device.id}>
                     <tr className={`hover:bg-gray-50 ${hasTodo(device) ? 'bg-orange-100' : isExpanded ? 'bg-blue-50' : ''}`}>
@@ -733,16 +794,16 @@ export default function ProjectDataView() {
                       <td className="px-4 py-2 text-gray-600">{device.设备DAL || '-'}</td>
                       <td className="px-4 py-2 text-gray-600">{device.设备负责人 || '-'}</td>
                       <td className="px-4 py-2 text-gray-600">{device.connector_count ?? 0}</td>
-                      {user?.role === 'admin' && (
+                      {(isAdmin || devices.some(d => isDeviceOwner(d))) && (
                         <td className="px-4 py-2 space-x-2">
-                          {lock ? (
+                          {canEditDevice && (lock ? (
                             <span className="text-xs text-amber-600">🔒{lock.lockedBy}</span>
                           ) : (
                             <>
                               <button onClick={() => openEditDevice(device)} className="text-blue-600 hover:text-blue-800 text-xs">编辑</button>
                               <button onClick={() => deleteDevice(device)} className="text-red-600 hover:text-red-800 text-xs">删除</button>
                             </>
-                          )}
+                          ))}
                         </td>
                       )}
                     </tr>
@@ -750,11 +811,11 @@ export default function ProjectDataView() {
                     {/* 连接器展开 */}
                     {isExpanded && (
                       <tr key={`${device.id}-connectors`}>
-                        <td colSpan={user?.role === 'admin' ? 8 : 7} className="px-0 py-0 bg-blue-50">
+                        <td colSpan={(isAdmin || devices.some(d => isDeviceOwner(d))) ? 8 : 7} className="px-0 py-0 bg-blue-50">
                           <div className="pl-8 pr-4 py-2">
                             <div className="flex justify-between items-center mb-1">
                               <span className="text-xs font-semibold text-blue-700">连接器列表</span>
-                              {user?.role === 'admin' && (
+                              {isDeviceOwner(device) && (
                                 <button onClick={() => openAddConnector(device.id)} className="text-xs text-blue-600 hover:text-blue-800">+ 添加连接器</button>
                               )}
                             </div>
@@ -771,7 +832,7 @@ export default function ProjectDataView() {
                                     <th className="px-2 py-1 text-left text-gray-600">元器件编号</th>
                                     <th className="px-2 py-1 text-left text-gray-600">元器件名称</th>
                                     <th className="px-2 py-1 text-left text-gray-600">针孔数</th>
-                                    {user?.role === 'admin' && <th className="px-2 py-1 text-left text-gray-600">操作</th>}
+                                    {isDeviceOwner(device) && <th className="px-2 py-1 text-left text-gray-600">操作</th>}
                                   </tr>
                                 </thead>
                                 <tbody>
@@ -795,7 +856,7 @@ export default function ProjectDataView() {
                                           <td className="px-2 py-1">{conn.设备端元器件编号 || '-'}</td>
                                           <td className="px-2 py-1">{conn.元器件名称及类型 || '-'}</td>
                                           <td className="px-2 py-1">{conn.pin_count ?? 0}</td>
-                                          {user?.role === 'admin' && (
+                                          {isDeviceOwner(device) && (
                                             <td className="px-2 py-1 space-x-1">
                                               {connectorLockMap[conn.id] ? (
                                                 <span className="text-xs text-amber-600">🔒{connectorLockMap[conn.id].lockedBy}</span>
@@ -812,11 +873,11 @@ export default function ProjectDataView() {
                                         {/* 针孔展开 */}
                                         {connExpanded && (
                                           <tr key={`${conn.id}-pins`}>
-                                            <td colSpan={user?.role === 'admin' ? 6 : 5} className="px-0 py-0">
+                                            <td colSpan={isDeviceOwner(device) ? 6 : 5} className="px-0 py-0">
                                               <div className="pl-8 pr-2 py-1 bg-indigo-50">
                                                 <div className="flex justify-between items-center mb-1">
                                                   <span className="text-xs font-semibold text-indigo-600">针孔列表</span>
-                                                  {user?.role === 'admin' && (
+                                                  {isDeviceOwner(device) && (
                                                     <button onClick={() => openAddPin(device.id, conn.id)} className="text-xs text-indigo-600">+ 添加针孔</button>
                                                   )}
                                                 </div>
@@ -831,7 +892,7 @@ export default function ProjectDataView() {
                                                         <th className="px-2 py-1 text-left text-gray-600">针孔号</th>
                                                         <th className="px-2 py-1 text-left text-gray-600">端接尺寸</th>
                                                         <th className="px-2 py-1 text-left text-gray-600">屏蔽类型</th>
-                                                        {user?.role === 'admin' && <th className="px-2 py-1 text-left text-gray-600">操作</th>}
+                                                        {isDeviceOwner(device) && <th className="px-2 py-1 text-left text-gray-600">操作</th>}
                                                       </tr>
                                                     </thead>
                                                     <tbody>
@@ -840,7 +901,7 @@ export default function ProjectDataView() {
                                                           <td className="px-2 py-1">{pin.针孔号}</td>
                                                           <td className="px-2 py-1">{pin.端接尺寸 || '-'}</td>
                                                           <td className="px-2 py-1">{pin.屏蔽类型 || '-'}</td>
-                                                          {user?.role === 'admin' && (
+                                                          {isDeviceOwner(device) && (
                                                             <td className="px-2 py-1 space-x-1">
                                                               <button onClick={() => openEditPin(device.id, conn.id, pin)} className="text-blue-600">编辑</button>
                                                               <button onClick={() => deletePin(device.id, conn.id, pin)} className="text-red-600">删除</button>
@@ -881,9 +942,11 @@ export default function ProjectDataView() {
     <div>
       <div className="flex justify-between items-center mb-3">
         <h2 className="text-lg font-semibold">信号列表（{signals.length}条）</h2>
-        <button onClick={openAddSignal} className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700">
-          + 添加信号
-        </button>
+        {canManageSignals && (
+          <button onClick={openAddSignal} className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700">
+            + 添加信号
+          </button>
+        )}
       </div>
 
       {loading ? (
@@ -932,12 +995,14 @@ export default function ProjectDataView() {
                       <td className="px-4 py-2 text-gray-600 text-xs">{signal.信号方向 || '-'}</td>
                       <td className="px-4 py-2 text-gray-600 text-xs">{signal.endpoint_summary || '-'}</td>
                       <td className="px-4 py-2 space-x-2 text-xs">
-                        {signalLockMap[signal.id] ? (
+                        {canManageSignals && (isAdmin || signal.can_edit) && (signalLockMap[signal.id] ? (
                           <span className="text-amber-600">🔒{signalLockMap[signal.id].lockedBy}</span>
                         ) : (
                           <button onClick={() => openEditSignal(signal)} className="text-blue-600 hover:text-blue-800">编辑</button>
+                        ))}
+                        {canDeleteSignal(signal) && (
+                          <button onClick={() => deleteSignal(signal)} className="text-red-600 hover:text-red-800">删除</button>
                         )}
-                        {user?.role === 'admin' && <button onClick={() => deleteSignal(signal)} className="text-red-600 hover:text-red-800">删除</button>}
                       </td>
                     </tr>
 
@@ -1117,13 +1182,30 @@ export default function ProjectDataView() {
               <div className="grid grid-cols-2 gap-4">
                 {DEVICE_FIELDS.map(f => (
                   <div key={f.key}>
-                    <label className="block text-xs text-gray-600 mb-1">{f.label}{f.key === '设备编号' ? ' *' : ''}</label>
-                    <input
-                      type="text"
-                      value={(deviceForm as any)[f.key] || ''}
-                      onChange={e => setDeviceForm({ ...deviceForm, [f.key]: e.target.value })}
-                      className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
-                    />
+                    <label className="block text-xs text-gray-600 mb-1">{f.label}{(f.key === '设备编号' || f.key === '设备所属ATA') ? ' *' : ''}</label>
+                    {f.key === '设备负责人' && !isAdmin ? (
+                      <div className="w-full border border-gray-200 bg-gray-50 rounded px-2 py-1 text-sm text-gray-700">
+                        {(deviceForm as any)[f.key] || '-'}
+                      </div>
+                    ) : f.key === '设备DAL' ? (
+                      <select
+                        value={(deviceForm as any)[f.key] || ''}
+                        onChange={e => setDeviceForm({ ...deviceForm, [f.key]: e.target.value })}
+                        className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
+                      >
+                        <option value="">请选择</option>
+                        {['A', 'B', 'C', 'D', 'E', '其他'].map(v => (
+                          <option key={v} value={v}>{v}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        type="text"
+                        value={(deviceForm as any)[f.key] || ''}
+                        onChange={e => setDeviceForm({ ...deviceForm, [f.key]: e.target.value })}
+                        className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
+                      />
+                    )}
                   </div>
                 ))}
               </div>
@@ -1142,7 +1224,7 @@ export default function ProjectDataView() {
               <h2 className="text-xl font-bold mb-4">{editingConnector ? '编辑连接器' : '添加连接器'}</h2>
               {[
                 { key: '连接器号', label: '连接器号 *' },
-                { key: '设备端元器件编号', label: '设备端元器件编号' },
+                { key: '设备端元器件编号', label: '设备端元器件编号 *' },
                 { key: '元器件名称及类型', label: '元器件名称及类型' },
                 { key: '元器件件号及类型', label: '元器件件号及类型' },
                 { key: '元器件供应商名称', label: '元器件供应商名称' },
@@ -1156,7 +1238,22 @@ export default function ProjectDataView() {
                   <input
                     type="text"
                     value={(connectorForm as any)[f.key] || ''}
-                    onChange={e => setConnectorForm({ ...connectorForm, [f.key]: e.target.value })}
+                    onChange={e => {
+                      if (f.key === '连接器号' && !editingConnector) {
+                        const device = devices.find(d => d.id === connectorTargetDeviceId);
+                        const prevNo = (connectorForm as any)['连接器号'] || '';
+                        const prevAuto = device ? `${device.设备编号}-${prevNo}` : '';
+                        const curCompId = (connectorForm as any)['设备端元器件编号'] || '';
+                        const shouldSync = curCompId === '' || curCompId === prevAuto;
+                        setConnectorForm({
+                          ...connectorForm,
+                          '连接器号': e.target.value,
+                          ...(shouldSync && device ? { '设备端元器件编号': `${device.设备编号}-${e.target.value}` } : {}),
+                        });
+                      } else {
+                        setConnectorForm({ ...connectorForm, [f.key]: e.target.value });
+                      }
+                    }}
                     className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
                   />
                 </div>
@@ -1208,7 +1305,7 @@ export default function ProjectDataView() {
               <div className="grid grid-cols-2 gap-3 mb-4">
                 {/* Unique ID（编辑时只读显示） */}
                 <div>
-                  <label className="block text-xs text-gray-600 mb-1">Unique ID</label>
+                  <label className="block text-xs text-gray-600 mb-1">Unique ID *</label>
                   {editingSignal ? (
                     <div className="w-full border border-gray-200 bg-gray-50 rounded px-2 py-1 text-sm text-gray-500 font-mono">
                       {(signalForm as any).unique_id || '-'}
@@ -1218,7 +1315,6 @@ export default function ProjectDataView() {
                       type="text"
                       value={(signalForm as any).unique_id || ''}
                       onChange={e => setSignalForm({ ...signalForm, unique_id: e.target.value })}
-                      placeholder="留空自动生成"
                       className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
                     />
                   )}
@@ -1226,13 +1322,35 @@ export default function ProjectDataView() {
                 {/* 其余字段 */}
                 {SIGNAL_FIELDS.filter(f => f.key !== 'unique_id').map(f => (
                   <div key={f.key}>
-                    <label className="block text-xs text-gray-600 mb-1">{f.label}</label>
-                    <input
-                      type="text"
-                      value={(signalForm as any)[f.key] || ''}
-                      onChange={e => setSignalForm({ ...signalForm, [f.key]: e.target.value })}
-                      className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
-                    />
+                    <label className="block text-xs text-gray-600 mb-1">
+                      {f.label}{(f.key === '信号方向' || f.key === '连接类型') ? ' *' : ''}
+                    </label>
+                    {f.key === '信号方向' ? (
+                      <select
+                        value={(signalForm as any)[f.key] || ''}
+                        onChange={e => setSignalForm({ ...signalForm, [f.key]: e.target.value })}
+                        className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
+                      >
+                        <option value="">请选择</option>
+                        {['INPUT', 'OUTPUT', 'BI-Direction', '其他'].map(v => <option key={v} value={v}>{v}</option>)}
+                      </select>
+                    ) : f.key === '连接类型' ? (
+                      <select
+                        value={(signalForm as any)[f.key] || ''}
+                        onChange={e => setSignalForm({ ...signalForm, [f.key]: e.target.value })}
+                        className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
+                      >
+                        <option value="">请选择</option>
+                        {['A429', 'RS485', 'CAN', 'Discrete'].map(v => <option key={v} value={v}>{v}</option>)}
+                      </select>
+                    ) : (
+                      <input
+                        type="text"
+                        value={(signalForm as any)[f.key] || ''}
+                        onChange={e => setSignalForm({ ...signalForm, [f.key]: e.target.value })}
+                        className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
+                      />
+                    )}
                   </div>
                 ))}
               </div>
@@ -1242,7 +1360,7 @@ export default function ProjectDataView() {
                 <div className="flex justify-between items-center mb-3">
                   <h3 className="font-medium text-sm text-gray-700">信号端点</h3>
                   <button
-                    onClick={() => setSignalEndpoints([...signalEndpoints, { 设备编号: '', 连接器号: '', 针孔号: '', 端接尺寸: '', 信号名称: '', 信号定义: '' }])}
+                    onClick={() => setSignalEndpoints([...signalEndpoints, { 设备编号: '', 连接器号: '', 针孔号: '', 信号名称: '', 信号定义: '' }])}
                     className="text-xs text-blue-600 hover:text-blue-800"
                   >
                     + 添加端点
@@ -1305,16 +1423,6 @@ export default function ProjectDataView() {
                           <option value="">选择针孔</option>
                           {(epPinOptions[idx] || []).map(p => <option key={p.id} value={p.针孔号}>{p.针孔号}</option>)}
                         </select>
-                      </div>
-                      {/* 端接尺寸 */}
-                      <div>
-                        <label className="block text-xs text-gray-500 mb-0.5">端接尺寸</label>
-                        <input
-                          type="text"
-                          value={ep.端接尺寸 || ''}
-                          onChange={e => { const newEp = [...signalEndpoints]; newEp[idx] = { ...newEp[idx], 端接尺寸: e.target.value }; setSignalEndpoints(newEp); }}
-                          className="w-full border border-gray-300 rounded px-2 py-1 text-xs"
-                        />
                       </div>
                       {/* 信号名称 */}
                       <div className="col-span-3">

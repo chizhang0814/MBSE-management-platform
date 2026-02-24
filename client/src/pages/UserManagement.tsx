@@ -11,8 +11,20 @@ interface Permission {
 interface User {
   id: number;
   username: string;
+  display_name?: string;
   role: string;
   permissions?: Permission[];
+  created_at: string;
+}
+
+interface PermissionRequest {
+  id: number;
+  user_id: number;
+  username: string;
+  display_name?: string;
+  project_name: string;
+  project_role: string;
+  status: string;
   created_at: string;
 }
 
@@ -29,11 +41,48 @@ export default function UserManagement() {
     role: 'user',
     permissions: [] as Permission[],
   });
+  const [permRequests, setPermRequests] = useState<PermissionRequest[]>([]);
 
   useEffect(() => {
     fetchUsers();
     fetchProjects();
+    fetchPermRequests();
   }, []);
+
+  const fetchPermRequests = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch('/api/users/permission-requests', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setPermRequests(data.requests || []);
+      }
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  const handleReviewRequest = async (id: number, action: 'approve' | 'reject') => {
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`/api/users/permission-requests/${id}`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      });
+      if (res.ok) {
+        fetchPermRequests();
+        fetchUsers();
+      } else {
+        const data = await res.json();
+        alert(data.error || '操作失败');
+      }
+    } catch {
+      alert('网络错误');
+    }
+  };
   
   const fetchProjects = async () => {
     try {
@@ -316,6 +365,55 @@ export default function UserManagement() {
             </tbody>
           </table>
         </div>
+
+        {/* 权限申请审批 */}
+        {permRequests.filter(r => r.status === 'pending').length > 0 && (
+          <div className="mt-8">
+            <h2 className="text-xl font-bold text-gray-900 mb-4">待审批的权限申请</h2>
+            <div className="bg-white shadow rounded-lg overflow-hidden">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">用户</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">申请项目</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">申请角色</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">申请时间</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {permRequests.filter(r => r.status === 'pending').map(req => (
+                    <tr key={req.id}>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {req.display_name || req.username}
+                        <span className="text-gray-400 ml-1">({req.username})</span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{req.project_name}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{req.project_role}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {new Date(req.created_at).toLocaleString()}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
+                        <button
+                          onClick={() => handleReviewRequest(req.id, 'approve')}
+                          className="text-green-600 hover:text-green-900"
+                        >
+                          批准
+                        </button>
+                        <button
+                          onClick={() => handleReviewRequest(req.id, 'reject')}
+                          className="text-red-600 hover:text-red-900"
+                        >
+                          驳回
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
 
         {/* 添加/编辑用户对话框 */}
         {showModal && (

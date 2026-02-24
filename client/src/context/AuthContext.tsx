@@ -3,6 +3,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 interface User {
   id: number;
   username: string;
+  display_name?: string;
   role: string;
 }
 
@@ -10,8 +11,9 @@ interface AuthContextType {
   user: User | null;
   token: string | null;
   isInitialized: boolean;
-  login: (username: string, password: string) => Promise<void>;
+  login: (username: string, password: string) => Promise<User>;
   logout: () => void;
+  updateUser: (patch: Partial<User>) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -68,6 +70,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(data.user);
     localStorage.setItem('token', data.token);
     localStorage.setItem('user', JSON.stringify(data.user));
+    return data.user;
   };
 
   const logout = () => {
@@ -77,8 +80,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.removeItem('user');
   };
 
+  const updateUser = (patch: Partial<User>) => {
+    setUser(prev => {
+      if (!prev) return prev;
+      const updated = { ...prev, ...patch };
+      localStorage.setItem('user', JSON.stringify(updated));
+      return updated;
+    });
+  };
+
   return (
-    <AuthContext.Provider value={{ user, token, isInitialized, login, logout }}>
+    <AuthContext.Provider value={{ user, token, isInitialized, login, logout, updateUser }}>
       {children}
     </AuthContext.Provider>
   );

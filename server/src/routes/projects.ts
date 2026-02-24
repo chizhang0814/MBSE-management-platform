@@ -47,6 +47,16 @@ export function projectRoutes(db: Database) {
     return out;
   }
 
+  // ── 所有项目名称（供权限申请下拉使用，所有登录用户可访问）──
+  router.get('/names', authenticate, async (_req, res) => {
+    try {
+      const projects = await db.query('SELECT id, name FROM projects ORDER BY name');
+      res.json({ projects });
+    } catch (error) {
+      res.status(500).json({ error: '获取项目列表失败' });
+    }
+  });
+
   // ── 获取项目列表 ──────────────────────────────────────────
 
   router.get('/', authenticate, async (req: any, res) => {
@@ -65,15 +75,37 @@ export function projectRoutes(db: Database) {
           ORDER BY p.created_at DESC
         `);
       } else {
-        // 普通用户：通过 devices.设备负责人 过滤
-        projects = await db.query(`
-          SELECT DISTINCT p.*, u.username as created_by_name,
-                 (SELECT COUNT(*) FROM devices d2 WHERE d2.project_id = p.id AND d2.设备负责人 = ?) as device_count
-          FROM projects p
-          JOIN users u ON p.created_by = u.id
-          JOIN devices d ON d.project_id = p.id AND d.设备负责人 = ?
-          ORDER BY p.created_at DESC
-        `, [username, username]);
+        // 普通用户：通过 devices.设备负责人 OR 用户 permissions 字段中的项目名称 过滤
+        const userRow = await db.get('SELECT permissions FROM users WHERE username = ?', [username]);
+        const permissions: Array<{ project_name: string }> = userRow?.permissions
+          ? JSON.parse(userRow.permissions)
+          : [];
+        const permProjectNames = permissions.map((p: any) => p.project_name);
+
+        // 构建 IN 占位符
+        const placeholders = permProjectNames.length > 0
+          ? permProjectNames.map(() => '?').join(', ')
+          : null;
+
+        const sql = placeholders
+          ? `SELECT DISTINCT p.*, u.username as created_by_name,
+                   (SELECT COUNT(DISTINCT d2.id) FROM devices d2 WHERE d2.project_id = p.id) as device_count
+             FROM projects p
+             JOIN users u ON p.created_by = u.id
+             WHERE p.id IN (
+               SELECT DISTINCT d.project_id FROM devices d WHERE d.设备负责人 = ?
+             ) OR p.name IN (${placeholders})
+             ORDER BY p.created_at DESC`
+          : `SELECT DISTINCT p.*, u.username as created_by_name,
+                   (SELECT COUNT(DISTINCT d2.id) FROM devices d2 WHERE d2.project_id = p.id) as device_count
+             FROM projects p
+             JOIN users u ON p.created_by = u.id
+             WHERE p.id IN (
+               SELECT DISTINCT d.project_id FROM devices d WHERE d.设备负责人 = ?
+             )
+             ORDER BY p.created_at DESC`;
+
+        projects = await db.query(sql, [username, ...permProjectNames]);
       }
 
       // 统一返回 table_count 字段供旧前端兼容

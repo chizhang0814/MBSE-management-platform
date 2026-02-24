@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
 export default function Login() {
@@ -9,6 +9,8 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const registerMessage = (location.state as any)?.message;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -16,8 +18,8 @@ export default function Login() {
     setLoading(true);
 
     try {
-      await login(username, password);
-      navigate('/');
+      const loggedInUser = await login(username, password);
+      navigate(loggedInUser.role === 'admin' ? '/' : '/project-data');
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -62,6 +64,12 @@ export default function Login() {
             />
           </div>
 
+          {registerMessage && (
+            <div className="mb-4 p-3 bg-green-100 border border-green-400 text-green-700 rounded">
+              {registerMessage}
+            </div>
+          )}
+
           {error && (
             <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
               {error}
@@ -77,11 +85,12 @@ export default function Login() {
           </button>
         </form>
 
-        <div className="mt-6 text-sm text-gray-600">
-          <p className="font-semibold mb-2">测试账号：</p>
-          <p>管理员：admin / admin123</p>
-          <p>审查员：reviewer1 / reviewer123</p>
-        </div>
+        <p className="mt-6 text-center text-sm text-gray-600">
+          没有账户？
+          <Link to="/register" className="text-blue-500 hover:text-blue-700 font-medium ml-1">
+            立即注册
+          </Link>
+        </p>
       </div>
     </div>
   );

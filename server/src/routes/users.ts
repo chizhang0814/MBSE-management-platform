@@ -76,6 +76,68 @@ export function usersRoutes(db: Database) {
     }
   });
 
+  // 获取所有待审批的权限申请（管理员）
+  // 注意：必须在 /:id 路由之前，否则会被 /:id 拦截
+  router.get('/permission-requests', authenticate, requireRole('admin'), async (req, res) => {
+    try {
+      const requests = await db.query(`
+        SELECT pr.id, pr.user_id, u.username, u.display_name, pr.project_name, pr.project_role,
+               pr.status, pr.created_at, pr.reviewed_at
+        FROM permission_requests pr
+        JOIN users u ON pr.user_id = u.id
+        ORDER BY pr.created_at DESC
+      `);
+      res.json({ requests });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: '获取申请列表失败' });
+    }
+  });
+
+  // 审批权限申请（管理员）
+  router.put('/permission-requests/:id', authenticate, requireRole('admin'), async (req: any, res) => {
+    try {
+      const { action } = req.body; // 'approve' | 'reject'
+      const requestId = req.params.id;
+
+      if (!['approve', 'reject'].includes(action)) {
+        return res.status(400).json({ error: '无效的操作' });
+      }
+
+      const request = await db.get(
+        'SELECT * FROM permission_requests WHERE id = ? AND status = ?',
+        [requestId, 'pending']
+      );
+      if (!request) {
+        return res.status(404).json({ error: '申请不存在或已处理' });
+      }
+
+      const newStatus = action === 'approve' ? 'approved' : 'rejected';
+      await db.run(
+        'UPDATE permission_requests SET status = ?, reviewed_at = CURRENT_TIMESTAMP, reviewed_by = ? WHERE id = ?',
+        [newStatus, req.user.id, requestId]
+      );
+
+      // 若批准，将权限写入用户的 permissions 字段
+      if (action === 'approve') {
+        const user = await db.get('SELECT permissions FROM users WHERE id = ?', [request.user_id]);
+        const perms = user.permissions ? JSON.parse(user.permissions) : [];
+        const exists = perms.some(
+          (p: any) => p.project_name === request.project_name && p.project_role === request.project_role
+        );
+        if (!exists) {
+          perms.push({ project_name: request.project_name, project_role: request.project_role });
+          await db.run('UPDATE users SET permissions = ? WHERE id = ?', [JSON.stringify(perms), request.user_id]);
+        }
+      }
+
+      res.json({ message: action === 'approve' ? '已批准' : '已驳回' });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: '审批失败' });
+    }
+  });
+
   // 获取单个用户
   router.get('/:id', authenticate, requireRole('admin'), async (req, res) => {
     try {

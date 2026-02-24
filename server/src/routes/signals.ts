@@ -1,6 +1,17 @@
 import express from 'express';
 import { Database } from '../database.js';
-import { authenticate, requireRole, AuthRequest } from '../middleware/auth.js';
+import { authenticate, AuthRequest } from '../middleware/auth.js';
+
+/** 检查用户是否为指定项目的设备管理员 */
+async function isProjectDeviceManager(db: Database, username: string, projectId: number): Promise<boolean> {
+  const userRow = await db.get('SELECT permissions FROM users WHERE username = ?', [username]);
+  const perms: Array<{ project_name: string; project_role: string }> = userRow?.permissions
+    ? JSON.parse(userRow.permissions)
+    : [];
+  const projectRow = await db.get('SELECT name FROM projects WHERE id = ?', [projectId]);
+  if (!projectRow) return false;
+  return perms.some(p => p.project_name === projectRow.name && p.project_role === '设备管理员');
+}
 
 export function signalRoutes(db: Database) {
   const router = express.Router();
@@ -77,10 +88,18 @@ export function signalRoutes(db: Database) {
       const username = req.user!.username;
       const userRole = req.user!.role;
 
+      let hasProjectPermission = false;
+      if (userRole === 'user') {
+        const userRow = await db.get('SELECT permissions FROM users WHERE username = ?', [username]);
+        const perms: Array<{ project_name: string }> = userRow?.permissions ? JSON.parse(userRow.permissions) : [];
+        const projectRow = await db.get('SELECT name FROM projects WHERE id = ?', [projectId]);
+        hasProjectPermission = perms.some((p: any) => p.project_name === projectRow?.name);
+      }
+
       let sql = `SELECT s.* FROM signals s WHERE s.project_id = ?`;
       const params: any[] = [projectId];
 
-      if (myDevices || userRole === 'user') {
+      if (myDevices || (userRole === 'user' && !hasProjectPermission)) {
         sql = `
           SELECT DISTINCT s.*
           FROM signals s
@@ -99,10 +118,23 @@ export function signalRoutes(db: Database) {
 
       const signals = await db.query(sql, params);
 
-      // 为每条信号附加端点摘要和信号名称摘要
+      // 为每条信号附加端点摘要、信号名称摘要、can_edit
       const result = await Promise.all(signals.map(async (s: any) => {
         const summaries = await buildSignalSummaries(db, s.id);
-        return { ...s, ...summaries };
+        let can_edit = true;
+        if (userRole !== 'admin') {
+          const ownEp = await db.get(
+            `SELECT se.id FROM signal_endpoints se
+             JOIN pins p ON se.pin_id = p.id
+             JOIN connectors c ON p.connector_id = c.id
+             JOIN devices d ON c.device_id = d.id
+             WHERE se.signal_id = ? AND d.设备负责人 = ?
+             LIMIT 1`,
+            [s.id, username]
+          );
+          can_edit = !!ownEp;
+        }
+        return { ...s, ...summaries, can_edit };
       }));
 
       res.json({ signals: result });
@@ -122,8 +154,8 @@ export function signalRoutes(db: Database) {
       const endpoints = await db.query(
         `SELECT se.*,
                 p.针孔号, p.端接尺寸 as pin_端接尺寸,
-                c.连接器号, c.设备端元器件编号,
-                d.设备编号, d.设备中文名称, d.设备负责人
+                c.id as connector_id, c.连接器号, c.设备端元器件编号,
+                d.id as device_id, d.设备编号, d.设备中文名称, d.设备负责人
          FROM signal_endpoints se
          JOIN pins p ON se.pin_id = p.id
          JOIN connectors c ON p.connector_id = c.id
@@ -146,9 +178,40 @@ export function signalRoutes(db: Database) {
       const { project_id, endpoints, ...signalFields } = req.body;
       if (!project_id) return res.status(400).json({ error: '缺少 project_id' });
 
-      // 自动生成 unique_id（如果没有提供）
-      if (!signalFields.unique_id && signalFields['连接类型']) {
-        signalFields.unique_id = await generateUniqueId(db, project_id, signalFields['连接类型']);
+      if (req.user!.role !== 'admin' && !(await isProjectDeviceManager(db, req.user!.username, project_id))) {
+        return res.status(403).json({ error: '无权限，需要设备管理员角色才能创建信号' });
+      }
+
+      signalFields.created_by = req.user!.username;
+
+      // 非管理员：至少一个端点属于当前用户负责的设备
+      if (req.user!.role !== 'admin' && Array.isArray(endpoints) && endpoints.length > 0) {
+        const username = req.user!.username;
+        const hasOwnEndpoint = await Promise.any(
+          endpoints.map(async (ep: any) => {
+            const row = await db.get(
+              `SELECT d.id FROM devices d WHERE d.project_id = ? AND d.设备编号 = ? AND d.设备负责人 = ?`,
+              [project_id, ep.设备编号, username]
+            );
+            if (!row) throw new Error('not owner');
+            return true;
+          })
+        ).catch(() => false);
+        if (!hasOwnEndpoint) {
+          return res.status(403).json({ error: '创建信号失败：至少需要有一个端点属于您负责的设备' });
+        }
+      }
+
+      // unique_id 必填 + 项目内唯一性校验
+      if (!signalFields.unique_id) {
+        return res.status(400).json({ error: 'Unique ID 不能为空' });
+      }
+      const dupSignal = await db.get(
+        'SELECT id FROM signals WHERE project_id = ? AND unique_id = ?',
+        [project_id, signalFields.unique_id]
+      );
+      if (dupSignal) {
+        return res.status(409).json({ error: `Unique ID "${signalFields.unique_id}" 在本项目中已存在` });
       }
 
       // 构建 INSERT
@@ -200,6 +263,26 @@ export function signalRoutes(db: Database) {
       const signal = await db.get('SELECT * FROM signals WHERE id = ?', [signalId]);
       if (!signal) return res.status(404).json({ error: '信号不存在' });
 
+      if (req.user!.role !== 'admin' && !(await isProjectDeviceManager(db, req.user!.username, signal.project_id))) {
+        return res.status(403).json({ error: '无权限，需要设备管理员角色才能修改信号' });
+      }
+
+      // 非管理员：当前端点中至少有一个属于本人负责的设备
+      if (req.user!.role !== 'admin') {
+        const ownEndpoint = await db.get(
+          `SELECT se.id FROM signal_endpoints se
+           JOIN pins p ON se.pin_id = p.id
+           JOIN connectors c ON p.connector_id = c.id
+           JOIN devices d ON c.device_id = d.id
+           WHERE se.signal_id = ? AND d.设备负责人 = ?
+           LIMIT 1`,
+          [signalId, req.user!.username]
+        );
+        if (!ownEndpoint) {
+          return res.status(403).json({ error: '无权限：该信号的端点中没有您负责的设备' });
+        }
+      }
+
       const { endpoints, version, ...fields } = req.body;
       delete fields.id; delete fields.project_id; delete fields.created_at;
 
@@ -248,9 +331,32 @@ export function signalRoutes(db: Database) {
 
   // ── 删除信号 ─────────────────────────────────────────────
 
-  router.delete('/:id', authenticate, requireRole('admin'), async (req: AuthRequest, res) => {
+  router.delete('/:id', authenticate, async (req: AuthRequest, res) => {
     try {
       const signalId = parseInt(req.params.id);
+      const signal = await db.get('SELECT * FROM signals WHERE id = ?', [signalId]);
+      if (!signal) return res.status(404).json({ error: '信号不存在' });
+
+      if (req.user!.role !== 'admin') {
+        if (signal.created_by !== req.user!.username) {
+          return res.status(403).json({ error: '只能删除自己创建的信号' });
+        }
+        // 检查信号端点是否包含非本人负责的设备
+        const foreignEndpoints = await db.query(
+          `SELECT d.设备编号, d.设备负责人
+           FROM signal_endpoints se
+           JOIN pins p ON se.pin_id = p.id
+           JOIN connectors c ON p.connector_id = c.id
+           JOIN devices d ON c.device_id = d.id
+           WHERE se.signal_id = ? AND d.设备负责人 != ?`,
+          [signalId, req.user!.username]
+        );
+        if (foreignEndpoints.length > 0) {
+          const devList = [...new Set(foreignEndpoints.map((e: any) => e.设备编号))].join('、');
+          return res.status(403).json({ error: `无法删除：信号包含不属于您负责的设备（${devList}）的端点` });
+        }
+      }
+
       await db.run('DELETE FROM signals WHERE id = ?', [signalId]);
       res.json({ success: true });
     } catch (error: any) {

@@ -21,8 +21,12 @@ export default function Dashboard() {
   const [projectStats, setProjectStats] = useState<ProjectStat[]>([]);
 
   useEffect(() => {
+    if (user?.role !== 'admin') {
+      navigate('/project-data', { replace: true });
+      return;
+    }
     fetchStats();
-  }, []);
+  }, [user]);
 
   const fetchStats = async () => {
     try {
