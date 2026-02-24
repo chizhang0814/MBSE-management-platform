@@ -24,22 +24,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const storedToken = localStorage.getItem('token');
     const storedUser = localStorage.getItem('user');
-    
+
     if (storedToken && storedUser) {
-      try {
-        setToken(storedToken);
-        setUser(JSON.parse(storedUser));
-      } catch (error) {
-        console.error('Failed to parse user data:', error);
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
-      }
+      // 向服务端验证 token 是否仍然有效
+      fetch('/api/auth/me', {
+        headers: { Authorization: `Bearer ${storedToken}` },
+      })
+        .then(res => {
+          if (res.ok) {
+            setToken(storedToken);
+            setUser(JSON.parse(storedUser));
+          } else {
+            // token 已过期或无效，清除本地存储
+            localStorage.removeItem('token');
+            localStorage.removeItem('user');
+          }
+        })
+        .catch(() => {
+          // 网络错误时保留 token，避免离线时被强制登出
+          setToken(storedToken);
+          setUser(JSON.parse(storedUser));
+        })
+        .finally(() => setIsInitialized(true));
+    } else {
+      setIsInitialized(true);
     }
-    setIsInitialized(true);
   }, []);
 
   const login = async (username: string, password: string) => {
-    const response = await fetch('http://localhost:3000/api/auth/login', {
+    const response = await fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password }),

@@ -6,6 +6,7 @@ interface UploadedFile {
   filename: string;
   original_filename: string;
   table_name?: string;
+  table_type?: string;
   project_name?: string | null;
   uploaded_by_name: string;
   total_rows: number;
@@ -15,6 +16,8 @@ interface UploadedFile {
   uploaded_at: string;
   status: string;
   fileExists?: boolean;
+  error_details?: string | null;   // JSON 字符串：string[]
+  unmatched_cols?: string | null;  // JSON 字符串：string[]
 }
 
 export default function UploadedFiles() {
@@ -252,6 +255,27 @@ export default function UploadedFiles() {
                       >
                         详情
                       </button>
+                      <a
+                        href={`/api/upload/files/${file.id}/download`}
+                        download
+                        className="text-green-600 hover:text-green-900"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          const token = localStorage.getItem('token');
+                          fetch(`/api/upload/files/${file.id}/download`, {
+                            headers: { Authorization: `Bearer ${token}` },
+                          }).then(res => res.blob()).then(blob => {
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            a.href = url;
+                            a.download = file.original_filename;
+                            a.click();
+                            URL.revokeObjectURL(url);
+                          }).catch(() => alert('下载失败'));
+                        }}
+                      >
+                        下载
+                      </a>
                       <button
                         onClick={() => handleDelete(file.id)}
                         className="text-red-600 hover:text-red-900"
@@ -267,84 +291,148 @@ export default function UploadedFiles() {
         )}
 
         {/* 文件详情对话框 */}
-        {selectedFile && (
-          <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50 overflow-y-auto">
-            <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full p-6 my-8">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="text-xl font-bold">文件详情</h3>
-                <button
-                  onClick={() => setSelectedFile(null)}
-                  className="text-gray-500 hover:text-gray-700"
-                >
-                  ✕
-                </button>
-              </div>
-
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-sm text-gray-500">文件名</p>
-                    <p className="font-semibold">{selectedFile.original_filename}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-500">文件大小</p>
-                    <p className="font-semibold">{formatFileSize(selectedFile.file_size)}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-500">项目名称</p>
-                    <p className="font-semibold text-green-600">{selectedFile.project_name || '未关联项目'}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-500">上传者</p>
-                    <p className="font-semibold">{selectedFile.uploaded_by_name}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-500">上传时间</p>
-                    <p className="font-semibold">{new Date(selectedFile.uploaded_at).toLocaleString()}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-500">总行数</p>
-                    <p className="font-semibold">{selectedFile.total_rows}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-500">成功导入</p>
-                    <p className="font-semibold text-green-600">
-                      {selectedFile.success_count !== null ? selectedFile.success_count : '未知'}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-500">导入失败</p>
-                    <p className="font-semibold text-red-600">{selectedFile.error_count}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-500">状态</p>
-                    <p className={`font-semibold ${getStatusColor(selectedFile.status).replace('bg-', 'text-').replace('100', '800')}`}>
-                      {getStatusText(selectedFile.status)}
-                    </p>
-                  </div>
+        {selectedFile && (() => {
+          const tableTypeLabel =
+            selectedFile.table_type === 'ata_device' ? 'ATA章节设备表' :
+            selectedFile.table_type === 'device_component' ? '设备端元器件表' :
+            selectedFile.table_type === 'electrical_interface' ? '电气接口数据表' :
+            selectedFile.table_type || '—';
+          const errorList: string[] = (() => {
+            try { return selectedFile.error_details ? JSON.parse(selectedFile.error_details) : []; }
+            catch { return []; }
+          })();
+          const unmatchedList: string[] = (() => {
+            try { return selectedFile.unmatched_cols ? JSON.parse(selectedFile.unmatched_cols) : []; }
+            catch { return []; }
+          })();
+          return (
+            <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50 p-4">
+              <div className="bg-white rounded-lg shadow-xl w-full max-w-3xl max-h-[90vh] flex flex-col">
+                {/* Header */}
+                <div className="flex justify-between items-center px-6 py-4 border-b">
+                  <h3 className="text-xl font-bold">导入详情</h3>
+                  <button onClick={() => setSelectedFile(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
                 </div>
 
-                {selectedFile.fileExists !== undefined && (
-                  <div>
-                    <p className="text-sm text-gray-500">文件状态</p>
-                    <p className={`font-semibold ${selectedFile.fileExists ? 'text-green-600' : 'text-red-600'}`}>
-                      {selectedFile.fileExists ? '✓ 文件仍存在' : '✗ 文件已删除'}
-                    </p>
-                  </div>
-                )}
-              </div>
+                {/* Body — scrollable */}
+                <div className="overflow-y-auto flex-1 px-6 py-4 space-y-5">
 
-              <div className="mt-6 flex justify-end">
-                <button
-                  onClick={() => setSelectedFile(null)}
-                  className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
-                >
-                  关闭
-                </button>
+                  {/* 基本信息 */}
+                  <div className="grid grid-cols-2 gap-x-8 gap-y-3 text-sm">
+                    <div>
+                      <p className="text-gray-500">文件名</p>
+                      <p className="font-medium break-all">{selectedFile.original_filename}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-500">文件大小</p>
+                      <p className="font-medium">{formatFileSize(selectedFile.file_size)}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-500">项目</p>
+                      <p className="font-medium text-green-700">{selectedFile.project_name || '未关联项目'}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-500">导入表类型</p>
+                      <p className="font-medium">{tableTypeLabel}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-500">上传者</p>
+                      <p className="font-medium">{selectedFile.uploaded_by_name}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-500">上传时间</p>
+                      <p className="font-medium">{new Date(selectedFile.uploaded_at).toLocaleString()}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-500">文件状态</p>
+                      <p className={`font-medium ${selectedFile.fileExists ? 'text-green-600' : 'text-red-500'}`}>
+                        {selectedFile.fileExists ? '✓ 原文件存在' : '✗ 原文件已删除'}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-gray-500">状态</p>
+                      <span className={`inline-block px-2 py-0.5 text-xs font-semibold rounded-full ${getStatusColor(selectedFile.status)}`}>
+                        {getStatusText(selectedFile.status)}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* 导入统计 */}
+                  <div className="bg-gray-50 rounded-lg p-4 grid grid-cols-3 gap-4 text-center text-sm">
+                    <div>
+                      <p className="text-gray-500 mb-1">总行数</p>
+                      <p className="text-2xl font-bold text-gray-800">{selectedFile.total_rows}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-500 mb-1">成功导入</p>
+                      <p className="text-2xl font-bold text-green-600">
+                        {selectedFile.success_count !== null ? selectedFile.success_count : '—'}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-gray-500 mb-1">导入失败</p>
+                      <p className="text-2xl font-bold text-red-600">{selectedFile.error_count}</p>
+                    </div>
+                  </div>
+
+                  {/* 未匹配列 */}
+                  {unmatchedList.length > 0 && (
+                    <div>
+                      <h4 className="text-sm font-semibold text-gray-700 mb-2">
+                        未匹配的列（{unmatchedList.length} 列，数据未导入）
+                      </h4>
+                      <div className="bg-orange-50 border border-orange-200 rounded-md px-4 py-3 flex flex-wrap gap-2">
+                        {unmatchedList.map((col, i) => (
+                          <span key={i} className="bg-orange-100 text-orange-800 text-xs px-2 py-0.5 rounded">
+                            {col}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 失败详情 */}
+                  {errorList.length > 0 && (
+                    <div>
+                      <h4 className="text-sm font-semibold text-gray-700 mb-2">
+                        失败详情（共 {errorList.length} 条）
+                      </h4>
+                      <div className="border border-red-200 rounded-md overflow-hidden">
+                        <div className="bg-red-50 px-3 py-1.5 text-xs text-red-600 border-b border-red-200 font-medium">
+                          行号 / 原因
+                        </div>
+                        <ul className="max-h-72 overflow-y-auto divide-y divide-red-100 text-xs text-red-800">
+                          {errorList.map((err, i) => (
+                            <li key={i} className="px-3 py-1.5">
+                              {err}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+                  )}
+
+                  {selectedFile.error_count > 0 && errorList.length === 0 && (
+                    <p className="text-sm text-gray-400 italic">
+                      该记录为旧版导入，未保存错误详情。
+                    </p>
+                  )}
+
+                </div>
+
+                {/* Footer */}
+                <div className="px-6 py-4 border-t flex justify-end">
+                  <button
+                    onClick={() => setSelectedFile(null)}
+                    className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm"
+                  >
+                    关闭
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
       </div>
     </Layout>
   );

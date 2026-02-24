@@ -47,16 +47,16 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 >
                   任务管理
                 </Link>
+                <Link
+                  to="/sysml-browser"
+                  className={`${
+                    isActive('/sysml-browser') ? 'border-blue-500 text-gray-900' : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
+                  } inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium`}
+                >
+                  SysML 模型
+                </Link>
                 {user?.role === 'admin' && (
                   <>
-                    <Link
-                      to="/templates"
-                      className={`${
-                        isActive('/templates') ? 'border-blue-500 text-gray-900' : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
-                      } inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium`}
-                    >
-                      模板管理
-                    </Link>
                     <Link
                       to="/projects"
                       className={`${

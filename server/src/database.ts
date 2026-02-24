@@ -155,7 +155,104 @@ export class Database {
           )
         `);
 
-        // 项目数据表关联表
+        // ① devices（设备 - SysML Block）
+        this.db.run(`
+          CREATE TABLE IF NOT EXISTS devices (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER NOT NULL,
+            设备编号 TEXT NOT NULL,
+            设备中文名称 TEXT, 设备英文名称 TEXT, 设备英文缩写 TEXT,
+            设备件号 TEXT, 设备供应商名称 TEXT, 设备所属ATA TEXT,
+            设备安装位置 TEXT, 设备DAL TEXT,
+            壳体是否金属 TEXT, 金属壳体表面处理 TEXT, 设备内共地情况 TEXT,
+            壳体接地需求 TEXT, 壳体接地是否故障电流路径 TEXT, 其他接地特殊要求 TEXT,
+            设备端连接器数量 TEXT, 是否选装设备 TEXT, 设备装机架次 TEXT,
+            设备负责人 TEXT, 额定电压 TEXT, 额定电流 TEXT, 备注 TEXT,
+            status TEXT DEFAULT 'normal',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(project_id, 设备编号),
+            FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+          )
+        `);
+
+        // ② connectors（连接器 - SysML Port）
+        this.db.run(`
+          CREATE TABLE IF NOT EXISTS connectors (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            device_id INTEGER NOT NULL,
+            连接器号 TEXT NOT NULL,
+            设备端元器件编号 TEXT, 元器件名称及类型 TEXT,
+            元器件件号及类型 TEXT, 元器件供应商名称 TEXT,
+            匹配线束端元器件件号 TEXT, 匹配线束线型 TEXT,
+            是否随设备交付 TEXT, 备注 TEXT,
+            status TEXT DEFAULT 'normal',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(device_id, 连接器号),
+            FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
+          )
+        `);
+
+        // ③ pins（针孔 - SysML Pin/Contact）
+        this.db.run(`
+          CREATE TABLE IF NOT EXISTS pins (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            connector_id INTEGER NOT NULL,
+            针孔号 TEXT NOT NULL,
+            端接尺寸 TEXT, 屏蔽类型 TEXT, 备注 TEXT,
+            status TEXT DEFAULT 'normal',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(connector_id, 针孔号),
+            FOREIGN KEY (connector_id) REFERENCES connectors(id) ON DELETE CASCADE
+          )
+        `);
+
+        // ④ signals（信号 - SysML ItemFlow）
+        this.db.run(`
+          CREATE TABLE IF NOT EXISTS signals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER NOT NULL,
+            unique_id TEXT, 连接类型 TEXT, 信号方向 TEXT,
+            信号架次有效性 TEXT,
+            推荐导线线规 TEXT, 推荐导线线型 TEXT,
+            独立电源代码 TEXT, 敷设代码 TEXT, 电磁兼容代码 TEXT,
+            余度代码 TEXT, 功能代码 TEXT, 接地代码 TEXT, 极性 TEXT,
+            额定电压 TEXT, 额定电流 TEXT, 设备正常工作电压范围 TEXT,
+            是否成品线 TEXT, 成品线件号 TEXT, 成品线线规 TEXT, 成品线类型 TEXT,
+            成品线长度 TEXT, 成品线载流量 TEXT, 成品线线路压降 TEXT, 成品线标识 TEXT,
+            成品线与机上线束对接方式 TEXT, 成品线安装责任 TEXT, 备注 TEXT,
+            status TEXT DEFAULT 'normal',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+          )
+        `);
+
+        // ⑤ signal_endpoints（信号端点 - SysML ConnectorEnd）
+        this.db.run(`
+          CREATE TABLE IF NOT EXISTS signal_endpoints (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            signal_id INTEGER NOT NULL,
+            pin_id INTEGER NOT NULL,
+            endpoint_index INTEGER NOT NULL DEFAULT 0,
+            端接尺寸 TEXT, 信号名称 TEXT, 信号定义 TEXT,
+            FOREIGN KEY (signal_id) REFERENCES signals(id) ON DELETE CASCADE,
+            FOREIGN KEY (pin_id) REFERENCES pins(id) ON DELETE RESTRICT
+          )
+        `);
+
+        // 性能索引（5张新表）
+        this.db.run(`CREATE INDEX IF NOT EXISTS idx_devices_project ON devices(project_id)`);
+        this.db.run(`CREATE INDEX IF NOT EXISTS idx_connectors_device ON connectors(device_id)`);
+        this.db.run(`CREATE INDEX IF NOT EXISTS idx_pins_connector ON pins(connector_id)`);
+        this.db.run(`CREATE INDEX IF NOT EXISTS idx_signals_project ON signals(project_id)`);
+        this.db.run(`CREATE INDEX IF NOT EXISTS idx_signal_endpoints_signal ON signal_endpoints(signal_id)`);
+        this.db.run(`CREATE INDEX IF NOT EXISTS idx_signal_endpoints_pin ON signal_endpoints(pin_id)`);
+        this.db.run(`CREATE INDEX IF NOT EXISTS idx_devices_owner ON devices(设备负责人)`);
+
+        // 项目数据表关联表（保留向后兼容）
         this.db.run(`
           CREATE TABLE IF NOT EXISTS project_tables (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -229,16 +326,47 @@ export class Database {
 
   async runMigrationsAndInit() {
     try {
-      // 检查并添加 uploaded_files 表的 table_name 列
+      // 检查并添加 uploaded_files 表的各列
       const columns = await this.query('PRAGMA table_info(uploaded_files)');
-      const hasTableName = columns.some((col: any) => col.name === 'table_name');
-      
-      if (!hasTableName) {
+      const colNames = columns.map((c: any) => c.name);
+
+      if (!colNames.includes('table_name')) {
         await this.run('ALTER TABLE uploaded_files ADD COLUMN table_name TEXT');
         console.log('Database migration: added table_name column to uploaded_files table');
       }
+      if (!colNames.includes('table_type')) {
+        await this.run('ALTER TABLE uploaded_files ADD COLUMN table_type TEXT');
+        console.log('Database migration: added table_type column to uploaded_files table');
+      }
+      if (!colNames.includes('error_details')) {
+        await this.run('ALTER TABLE uploaded_files ADD COLUMN error_details TEXT');
+        console.log('Database migration: added error_details column to uploaded_files table');
+      }
+      if (!colNames.includes('unmatched_cols')) {
+        await this.run('ALTER TABLE uploaded_files ADD COLUMN unmatched_cols TEXT');
+        console.log('Database migration: added unmatched_cols column to uploaded_files table');
+      }
     } catch (error: any) {
       console.log('Migration: uploaded_files table check:', error.message);
+    }
+
+    try {
+      // 创建 edit_locks 表（编辑锁）
+      await this.run(`
+        CREATE TABLE IF NOT EXISTS edit_locks (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          table_name TEXT NOT NULL,
+          row_id INTEGER NOT NULL,
+          locked_by INTEGER NOT NULL,
+          locked_by_name TEXT NOT NULL,
+          locked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          expires_at DATETIME NOT NULL,
+          UNIQUE(table_name, row_id),
+          FOREIGN KEY (locked_by) REFERENCES users(id)
+        )
+      `);
+    } catch (error: any) {
+      console.log('Migration: edit_locks table:', error.message);
     }
 
     try {
@@ -271,13 +399,147 @@ export class Database {
       // 检查并添加 users 表的 permissions 列（用于普通用户的权限列表）
       const columns = await this.query('PRAGMA table_info(users)');
       const hasPermissions = columns.some((col: any) => col.name === 'permissions');
-      
+
       if (!hasPermissions) {
         await this.run('ALTER TABLE users ADD COLUMN permissions TEXT DEFAULT \'[]\'');
         console.log('Database migration: added permissions column to users table');
       }
     } catch (error: any) {
       console.log('Migration: users table check:', error.message);
+    }
+
+    try {
+      // 检查并添加 sysml_sync_status 表的 data_hash 列（用于变更检测，避免重复推送）
+      const columns = await this.query('PRAGMA table_info(sysml_sync_status)');
+      const hasDataHash = columns.some((col: any) => col.name === 'data_hash');
+
+      if (!hasDataHash) {
+        await this.run('ALTER TABLE sysml_sync_status ADD COLUMN data_hash TEXT');
+        console.log('Database migration: added data_hash column to sysml_sync_status table');
+      }
+    } catch (error: any) {
+      console.log('Migration: sysml_sync_status table check:', error.message);
+    }
+
+    try {
+      // 添加 tasks 表的 entity_table / entity_id 列（新关系型表支持）
+      const taskCols = await this.query('PRAGMA table_info(tasks)');
+      const taskColNames = taskCols.map((c: any) => c.name);
+      if (!taskColNames.includes('entity_table')) {
+        await this.run('ALTER TABLE tasks ADD COLUMN entity_table TEXT');
+        console.log('Database migration: added entity_table column to tasks table');
+      }
+      if (!taskColNames.includes('entity_id')) {
+        await this.run('ALTER TABLE tasks ADD COLUMN entity_id INTEGER');
+        console.log('Database migration: added entity_id column to tasks table');
+      }
+    } catch (error: any) {
+      console.log('Migration: tasks entity columns:', error.message);
+    }
+
+    try {
+      // 添加 change_logs 表的 entity_table / entity_id 列
+      const clCols = await this.query('PRAGMA table_info(change_logs)');
+      const clColNames = clCols.map((c: any) => c.name);
+      if (!clColNames.includes('entity_table')) {
+        await this.run('ALTER TABLE change_logs ADD COLUMN entity_table TEXT');
+        console.log('Database migration: added entity_table column to change_logs table');
+      }
+      if (!clColNames.includes('entity_id')) {
+        await this.run('ALTER TABLE change_logs ADD COLUMN entity_id INTEGER');
+        console.log('Database migration: added entity_id column to change_logs table');
+      }
+    } catch (error: any) {
+      console.log('Migration: change_logs entity columns:', error.message);
+    }
+
+    try {
+      // 为 pins 表添加 屏蔽类型 列
+      const pinCols = await this.query('PRAGMA table_info(pins)');
+      if (!pinCols.some((c: any) => c.name === '屏蔽类型')) {
+        await this.run('ALTER TABLE pins ADD COLUMN 屏蔽类型 TEXT');
+        console.log('Database migration: added 屏蔽类型 column to pins table');
+      }
+    } catch (e: any) {
+      console.log('Migration: pins 屏蔽类型 column:', e.message);
+    }
+
+    try {
+      // 从 signal_endpoints 删除 屏蔽类型 列（该属性属于 pins，不属于端点关联表）
+      const seCols = await this.query('PRAGMA table_info(signal_endpoints)');
+      if (seCols.some((c: any) => c.name === '屏蔽类型')) {
+        await this.run('ALTER TABLE signal_endpoints DROP COLUMN 屏蔽类型');
+        console.log('Database migration: dropped 屏蔽类型 column from signal_endpoints table');
+      }
+      // 为 signal_endpoints 添加 信号名称、信号定义 列（存储各端点自己的信号名称和定义）
+      const seCols2 = await this.query('PRAGMA table_info(signal_endpoints)');
+      if (!seCols2.some((c: any) => c.name === '信号名称')) {
+        await this.run('ALTER TABLE signal_endpoints ADD COLUMN 信号名称 TEXT');
+        console.log('Database migration: added 信号名称 column to signal_endpoints table');
+      }
+      if (!seCols2.some((c: any) => c.name === '信号定义')) {
+        await this.run('ALTER TABLE signal_endpoints ADD COLUMN 信号定义 TEXT');
+        console.log('Database migration: added 信号定义 column to signal_endpoints table');
+      }
+      // 从 signals 表移除 信号定义 列（已迁移至 signal_endpoints）
+      const sigCols = await this.query('PRAGMA table_info(signals)');
+      if (sigCols.some((c: any) => c.name === '信号定义')) {
+        await this.run('ALTER TABLE signals DROP COLUMN 信号定义');
+        console.log('Database migration: dropped 信号定义 column from signals table');
+      }
+    } catch (e: any) {
+      console.log('Migration: signal_endpoints 信号名称:', e.message);
+    }
+
+    // 为 devices/connectors/pins/signals 添加 version 列（乐观锁）
+    for (const table of ['devices', 'connectors', 'pins', 'signals']) {
+      try {
+        const cols = await this.query(`PRAGMA table_info(${table})`);
+        if (!cols.some((c: any) => c.name === 'version')) {
+          await this.run(`ALTER TABLE ${table} ADD COLUMN version INTEGER NOT NULL DEFAULT 1`);
+          console.log(`Database migration: added version column to ${table}`);
+        }
+      } catch (e: any) {
+        console.log(`Migration: ${table} version column:`, e.message);
+      }
+    }
+
+    // 从 signals 表删除 信号ATA 列
+    try {
+      const sigCols = await this.query(`PRAGMA table_info(signals)`);
+      if (sigCols.some((c: any) => c.name === '信号ATA')) {
+        await this.run(`ALTER TABLE signals DROP COLUMN 信号ATA`);
+        console.log('Database migration: dropped 信号ATA column from signals');
+      }
+    } catch (e: any) {
+      console.log('Migration: signals 信号ATA:', e.message);
+    }
+
+    // 为 uploaded_files 添加 color_data 列（存储导入颜色标注数据）
+    try {
+      const ufCols = await this.query(`PRAGMA table_info(uploaded_files)`);
+      if (!ufCols.some((c: any) => c.name === 'color_data')) {
+        await this.run(`ALTER TABLE uploaded_files ADD COLUMN color_data TEXT`);
+        console.log('Database migration: added color_data column to uploaded_files');
+      }
+    } catch (e: any) {
+      console.log('Migration: uploaded_files color_data:', e.message);
+    }
+
+    // 将 信号方向 从 signal_endpoints 迁移至 signals 表
+    try {
+      const sigColsDir = await this.query('PRAGMA table_info(signals)');
+      if (!sigColsDir.some((c: any) => c.name === '信号方向')) {
+        await this.run('ALTER TABLE signals ADD COLUMN 信号方向 TEXT');
+        console.log('Database migration: added 信号方向 column to signals table');
+      }
+      const seColsDir = await this.query('PRAGMA table_info(signal_endpoints)');
+      if (seColsDir.some((c: any) => c.name === '信号方向')) {
+        await this.run('ALTER TABLE signal_endpoints DROP COLUMN 信号方向');
+        console.log('Database migration: dropped 信号方向 column from signal_endpoints table');
+      }
+    } catch (e: any) {
+      console.log('Migration: 信号方向 signal-level:', e.message);
     }
 
     // 初始化默认用户（不再创建示例数据）

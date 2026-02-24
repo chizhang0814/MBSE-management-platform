@@ -177,4 +177,12 @@ export class SysmlApiClient {
       `/projects/${projectId}/commits`,
     );
   }
+
+  /** 列出项目的分支 */
+  async listBranches(projectId: string): Promise<any[]> {
+    return this.request<any[]>(
+      'GET',
+      `/projects/${projectId}/branches`,
+    );
+  }
 }

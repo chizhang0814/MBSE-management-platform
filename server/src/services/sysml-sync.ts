@@ -7,7 +7,7 @@
  * 子元素通过 owner.@id 引用父元素，不能嵌套在 ownedFeature 中。
  */
 
-import { randomUUID } from 'crypto';
+import { randomUUID, createHash } from 'crypto';
 import { Database } from '../database.js';
 import { SysmlApiClient, type DataVersion } from './sysml-api-client.js';
 import {
@@ -22,6 +22,7 @@ export interface SyncResult {
   sysmlProjectId: string;
   commitId: string;
   elementCount: number;
+  skipped?: boolean;
   error?: string;
 }
 
@@ -242,10 +243,36 @@ export async function syncToSysmlApi(
       }
     }
 
-    // 7. 提交
+    // 7. 计算当前数据哈希，与上次同步比较，无变更则跳过
+    const currentHash = createHash('sha256')
+      .update(JSON.stringify([...changes].sort((a, b) =>
+        (a.identity?.['@id'] ?? '').localeCompare(b.identity?.['@id'] ?? '')
+      )))
+      .digest('hex');
+
+    const storedHash = (await db.get(
+      'SELECT data_hash FROM sysml_sync_status WHERE project_id = ?',
+      [projectId],
+    ))?.data_hash;
+
+    if (currentHash === storedHash) {
+      await db.run(
+        'UPDATE sysml_sync_status SET status = ? WHERE project_id = ?',
+        ['synced', projectId],
+      );
+      return {
+        success: true,
+        skipped: true,
+        sysmlProjectId,
+        commitId: lastCommitId || '',
+        elementCount: 0,
+      };
+    }
+
+    // 8. 提交
     const commit = await client.createCommit(sysmlProjectId, changes, lastCommitId);
 
-    // 8. 保存新 UUID 映射
+    // 9. 保存新 UUID 映射
     for (const entry of newEntries) {
       await db.run(
         `INSERT OR REPLACE INTO sysml_element_map
@@ -255,12 +282,12 @@ export async function syncToSysmlApi(
       );
     }
 
-    // 9. 更新状态
+    // 10. 更新状态（同时保存本次数据哈希）
     await db.run(
       `UPDATE sysml_sync_status
-       SET last_commit_id = ?, last_sync_at = datetime('now'), status = 'synced', error_message = NULL
+       SET last_commit_id = ?, last_sync_at = datetime('now'), status = 'synced', error_message = NULL, data_hash = ?
        WHERE project_id = ?`,
-      [commit['@id'], projectId],
+      [commit['@id'], currentHash, projectId],
     );
 
     return {

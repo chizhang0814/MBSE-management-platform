@@ -1,0 +1,61 @@
+services:
+
+  # ── 前端（Nginx + React 静态文件）────────────────────────
+  frontend:
+    build: ./client
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  # ── 后端（Node.js / Express + SQLite）───────────────────
+  backend:
+    build: ./server
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DB_PATH: /app/data/eicd.db
+      SYSML_API_URL: http://sysml-api:9000
+      JWT_SECRET: ${JWT_SECRET:-eicd_secret_key_2024}
+    volumes:
+      - ./data/sqlite:/app/data        # SQLite 数据库 → 本地 data/sqlite/
+      - ./data/uploads:/app/uploads    # 上传文件    → 本地 data/uploads/
+    depends_on:
+      - sysml-api
+    restart: unless-stopped
+
+  # ── SysML v2 REST API（Play/Scala）──────────────────────
+  # 注意：镜像需预先构建：
+  #   cd <SysML-v2-API-Services 目录>/docker_images && docker build . -t sysml-v2-api
+  sysml-api:
+    image: sysml-v2-api
+    container_name: sysml-api
+    stdin_open: true
+    tty: true
+    ports:
+      - "9000:9000"
+    depends_on:
+      postgresdbserver:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── SysML v2 PostgreSQL 数据库 ───────────────────────────
+  # 服务名必须为 postgresdbserver（sysml-api 镜像内硬编码了此主机名）
+  postgresdbserver:
+    image: postgres:15-alpine
+    container_name: sysml-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: mysecretpassword
+      POSTGRES_DB: sysml2
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data  # PostgreSQL → 本地 data/postgres/
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d sysml2"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped

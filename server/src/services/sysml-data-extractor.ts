@@ -10,6 +10,7 @@ import {
   TableType,
   columnSchemaMap,
 } from '../shared/column-schema.js';
+import type { Database } from '../database.js';
 
 // ── 类型 ──────────────────────────────────────────────────
 
@@ -231,9 +232,9 @@ export function extractEicdStructure(tables: TableData[]): EicdStructure {
     for (const row of compData.rows) {
       const vals = extractMappedValues(row, compMapping);
       const devId = vals.deviceId;
-      let connector = vals.connectorNumber;
+      let connector: string | null | undefined = vals.connectorNumber;
       if (!connector && vals.componentId) {
-        connector = extractPortFromComponentId(vals.componentId) || undefined;
+        connector = extractPortFromComponentId(vals.componentId);
       }
       if (devId && connector) {
         if (!deviceMap.has(devId)) {
@@ -285,4 +286,95 @@ export function extractEicdStructure(tables: TableData[]): EicdStructure {
   }
 
   return { deviceMap, connections };
+}
+
+// ── 关系型5表适配器 ────────────────────────────────────────
+
+/**
+ * 从5张固定关系型表中读取数据，构建与现有SysML生成器兼容的 TableData[] 格式。
+ */
+export async function loadTableDataFromRelational(db: Database, projectId: number): Promise<TableData[]> {
+  // ① ATA设备表 → ata_device 行
+  const deviceRows = await db.query(
+    'SELECT * FROM devices WHERE project_id = ? ORDER BY 设备编号',
+    [projectId]
+  );
+  const deviceCols = [
+    '设备编号', '设备中文名称', '设备英文名称', '设备英文缩写',
+    '设备件号', '设备供应商名称', '设备所属ATA',
+    '设备安装位置', '设备DAL', '壳体是否金属', '金属壳体表面处理',
+    '设备内共地情况', '壳体接地需求', '壳体接地是否故障电流路径',
+    '其他接地特殊要求', '设备端连接器数量', '是否选装设备', '设备装机架次',
+    '设备负责人', '额定电压', '额定电流', '备注',
+  ];
+
+  // ② 设备端元器件表 → device_component 行（pins JOIN connectors JOIN devices）
+  const compRows = await db.query(
+    `SELECT d.设备编号, d.设备中文名称 as 设备名称,
+            c.连接器号, c.设备端元器件编号, c.元器件名称及类型,
+            c.元器件件号及类型, c.元器件供应商名称,
+            c.匹配线束端元器件件号, c.匹配线束线型, c.是否随设备交付,
+            p.针孔号, p.端接尺寸, c.备注
+     FROM pins p
+     JOIN connectors c ON p.connector_id = c.id
+     JOIN devices d ON c.device_id = d.id
+     WHERE d.project_id = ?
+     ORDER BY d.设备编号, c.连接器号, p.针孔号`,
+    [projectId]
+  );
+  const compCols = [
+    '设备编号', '设备名称', '连接器号', '设备端元器件编号', '元器件名称及类型',
+    '元器件件号及类型', '元器件供应商名称', '匹配线束端元器件件号', '匹配线束线型',
+    '是否随设备交付', '针孔号', '端接尺寸', '备注',
+  ];
+
+  // ③ 电气接口数据表 → electrical_interface 行（重建"设备"JSON数组）
+  const signalRows = await db.query(
+    'SELECT * FROM signals WHERE project_id = ? ORDER BY unique_id, id',
+    [projectId]
+  );
+
+  const ifaceRowsRaw: Record<string, any>[] = [];
+  for (const sig of signalRows) {
+    const endpoints = await db.query(
+      `SELECT se.endpoint_index, se.端接尺寸 as 端接尺寸_ep,
+              p.针孔号, c.连接器号, d.设备编号
+       FROM signal_endpoints se
+       JOIN pins p ON se.pin_id = p.id
+       JOIN connectors c ON p.connector_id = c.id
+       JOIN devices d ON c.device_id = d.id
+       WHERE se.signal_id = ?
+       ORDER BY se.endpoint_index`,
+      [sig.id]
+    );
+
+    const devicesArray = endpoints.map((ep: any) => ({
+      '设备编号': ep.设备编号,
+      '连接器号': ep.连接器号,
+      '针孔号': ep.针孔号,
+      '端接尺寸': ep.端接尺寸_ep,
+    }));
+
+    ifaceRowsRaw.push({
+      ...sig,
+      'Unique ID': sig.unique_id,
+      '设备': JSON.stringify(devicesArray),
+    });
+  }
+
+  const ifaceCols = [
+    'Unique ID', '信号名称', '信号定义', '连接类型', '设备',
+    '推荐导线线规', '推荐导线线型', '独立电源代码', '敷设代码',
+    '电磁兼容代码', '余度代码', '功能代码', '接地代码', '极性',
+    '信号架次有效性', '额定电压', '额定电流', '设备正常工作电压范围',
+    '是否成品线', '成品线件号', '成品线线规', '成品线类型', '成品线长度',
+    '成品线载流量', '成品线线路压降', '成品线标识', '成品线与机上线束对接方式',
+    '成品线安装责任', '备注',
+  ];
+
+  return [
+    { tableType: 'ata_device' as TableType, originalColumns: deviceCols, rows: deviceRows },
+    { tableType: 'device_component' as TableType, originalColumns: compCols, rows: compRows },
+    { tableType: 'electrical_interface' as TableType, originalColumns: ifaceCols, rows: ifaceRowsRaw },
+  ];
 }

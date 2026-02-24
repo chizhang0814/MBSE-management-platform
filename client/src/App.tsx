@@ -6,15 +6,15 @@ import Tasks from './pages/Tasks';
 import Admin from './pages/Admin';
 import UserManagement from './pages/UserManagement';
 import UploadedFiles from './pages/UploadedFiles';
-import TemplateManagement from './pages/TemplateManagement';
 import ProjectManagement from './pages/ProjectManagement';
 import ProjectDataView from './pages/ProjectDataView';
+import SysmlBrowser from './pages/SysmlBrowser';
 import PrivateRoute from './components/PrivateRoute';
 
 function App() {
   return (
     <AuthProvider>
-      <Router>
+      <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route element={<PrivateRoute />}>
@@ -24,8 +24,8 @@ function App() {
             <Route path="/admin" element={<Admin />} />
             <Route path="/users" element={<UserManagement />} />
             <Route path="/files" element={<UploadedFiles />} />
-            <Route path="/templates" element={<TemplateManagement />} />
             <Route path="/projects" element={<ProjectManagement />} />
+            <Route path="/sysml-browser" element={<SysmlBrowser />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

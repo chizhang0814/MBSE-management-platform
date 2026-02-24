@@ -592,6 +592,27 @@ export function uploadRoutes(db: Database) {
     }
   });
 
+  // 下载已上传文件
+  router.get('/files/:id/download', authenticate, requireRole('admin'), async (req, res) => {
+    try {
+      const file = await db.get('SELECT * FROM uploaded_files WHERE id = ?', [req.params.id]);
+      if (!file) return res.status(404).json({ error: '文件记录不存在' });
+
+      const filePath = path.join('uploads', file.filename);
+      if (!fs.existsSync(filePath)) {
+        return res.status(404).json({ error: '文件已被删除或不存在' });
+      }
+
+      const originalName = fixFilenameEncoding(file.original_filename || file.filename);
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(originalName)}"`);
+      fs.createReadStream(filePath).pipe(res);
+    } catch (error) {
+      console.error('下载文件失败:', error);
+      res.status(500).json({ error: '下载文件失败' });
+    }
+  });
+
   // 删除上传文件记录（移入deleted文件夹）
   router.delete('/files/:id', authenticate, requireRole('admin'), async (req, res) => {
     try {

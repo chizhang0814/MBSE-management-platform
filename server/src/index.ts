@@ -9,6 +9,9 @@ import { uploadRoutes } from './routes/upload.js';
 import { usersRoutes } from './routes/users.js';
 import { templateRoutes } from './routes/templates.js';
 import { projectRoutes } from './routes/projects.js';
+import { deviceRoutes } from './routes/devices.js';
+import { signalRoutes } from './routes/signals.js';
+import { sysmlBrowserRoutes } from './routes/sysml-browser.js';
 import path from 'path';
 
 dotenv.config();
@@ -38,6 +41,9 @@ app.use('/api/upload', uploadRoutes(db));
 app.use('/api/users', usersRoutes(db));
 app.use('/api/templates', templateRoutes(db));
 app.use('/api/projects', projectRoutes(db));
+app.use('/api/devices', deviceRoutes(db));
+app.use('/api/signals', signalRoutes(db));
+app.use('/api/sysml', sysmlBrowserRoutes());
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' });

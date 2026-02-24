@@ -55,9 +55,10 @@ export default function UserManagement() {
         headers: { Authorization: `Bearer ${token}` },
       });
       const result = await response.json();
-      setUsers(result.users);
+      setUsers(result.users || []);
     } catch (error) {
       console.error(error);
+      setUsers([]);
     } finally {
       setLoading(false);
     }

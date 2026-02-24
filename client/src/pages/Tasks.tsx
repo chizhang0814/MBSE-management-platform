@@ -61,9 +61,10 @@ export default function Tasks() {
         headers: { Authorization: `Bearer ${token}` },
       });
       const result = await response.json();
-      setTasks(result.tasks);
+      setTasks(result.tasks || []);
     } catch (error) {
       console.error(error);
+      setTasks([]);
     } finally {
       setLoading(false);
     }
