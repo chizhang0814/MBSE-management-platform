@@ -589,6 +589,75 @@ export class Database {
       console.log('Migration: signals created_by:', e.message);
     }
 
+    try {
+      // 创建 notifications 表（站内通知）
+      await this.run(`
+        CREATE TABLE IF NOT EXISTS notifications (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          recipient_username TEXT NOT NULL,
+          type TEXT NOT NULL DEFAULT 'signal_deleted',
+          title TEXT NOT NULL,
+          message TEXT NOT NULL,
+          is_read INTEGER NOT NULL DEFAULT 0,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+    } catch (e: any) {
+      console.log('Migration: notifications table:', e.message);
+    }
+
+    // 为 signal_endpoints 添加 confirmed 列（端点确认状态）
+    try {
+      const seColsConf = await this.query('PRAGMA table_info(signal_endpoints)');
+      if (!seColsConf.some((c: any) => c.name === 'confirmed')) {
+        await this.run('ALTER TABLE signal_endpoints ADD COLUMN confirmed INTEGER NOT NULL DEFAULT 1');
+        console.log('Database migration: added confirmed column to signal_endpoints');
+      }
+    } catch (e: any) {
+      console.log('Migration: signal_endpoints confirmed:', e.message);
+    }
+
+    // 为 signals 添加 status 列（Draft / Pending / Active）
+    try {
+      const sigColsSt = await this.query('PRAGMA table_info(signals)');
+      if (!sigColsSt.some((c: any) => c.name === 'status')) {
+        await this.run(`ALTER TABLE signals ADD COLUMN status TEXT NOT NULL DEFAULT 'Active'`);
+        console.log('Database migration: added status column to signals');
+      }
+    } catch (e: any) {
+      console.log('Migration: signals status:', e.message);
+    }
+
+    // 新增 aircraft_device_list 表（全机设备清单，管理员导入 Excel）
+    await this.run(`
+      CREATE TABLE IF NOT EXISTS aircraft_device_list (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL,
+        object_identifier TEXT,
+        系统名称 TEXT,
+        object_text TEXT,
+        设备编号_DOORS TEXT,
+        LIN号_DOORS TEXT,
+        设备布置区域 TEXT,
+        飞机构型 TEXT,
+        是否有供应商数模 TEXT,
+        是否已布置在样机 TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+      )
+    `);
+    await this.run(`
+      CREATE INDEX IF NOT EXISTS idx_aircraft_devices_project ON aircraft_device_list(project_id)
+    `);
+
+    // 为 aircraft_device_list 补充扩展列
+    const adlCols = await this.query('PRAGMA table_info(aircraft_device_list)');
+    for (const col of ['电设备编号', '是否有EICD', '是否确认设备选型', '是否已确认MICD', '模型成熟度']) {
+      if (!adlCols.some((c: any) => c.name === col)) {
+        await this.run(`ALTER TABLE aircraft_device_list ADD COLUMN "${col}" TEXT DEFAULT '-'`);
+      }
+    }
+
     // 初始化默认用户（不再创建示例数据）
     await this.initDefaultData();
   }

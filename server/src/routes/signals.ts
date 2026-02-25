@@ -96,7 +96,10 @@ export function signalRoutes(db: Database) {
         hasProjectPermission = perms.some((p: any) => p.project_name === projectRow?.name);
       }
 
-      let sql = `SELECT s.* FROM signals s WHERE s.project_id = ?`;
+      // 非管理员只能看到自己的草稿，其他人的草稿不可见
+      const draftClause = userRole === 'admin' ? '' : `AND (s.status != 'Draft' OR s.created_by = ?)`;
+
+      let sql: string;
       const params: any[] = [projectId];
 
       if (myDevices || (userRole === 'user' && !hasProjectPermission)) {
@@ -104,6 +107,7 @@ export function signalRoutes(db: Database) {
           SELECT DISTINCT s.*
           FROM signals s
           WHERE s.project_id = ?
+            ${draftClause}
             AND EXISTS (
               SELECT 1 FROM signal_endpoints se
               JOIN pins p ON se.pin_id = p.id
@@ -112,7 +116,11 @@ export function signalRoutes(db: Database) {
               WHERE se.signal_id = s.id AND d.设备负责人 = ?
             )
         `;
+        if (userRole !== 'admin') params.push(username);
         params.push(username);
+      } else {
+        sql = `SELECT s.* FROM signals s WHERE s.project_id = ? ${draftClause}`;
+        if (userRole !== 'admin') params.push(username);
       }
       sql += ' ORDER BY s.unique_id, s.id';
 
@@ -134,7 +142,12 @@ export function signalRoutes(db: Database) {
           );
           can_edit = !!ownEp;
         }
-        return { ...s, ...summaries, can_edit };
+        const unconfirmedRow = await db.get(
+          'SELECT COUNT(*) as cnt FROM signal_endpoints WHERE signal_id = ? AND confirmed = 0',
+          [s.id]
+        );
+        const has_unconfirmed = (unconfirmedRow?.cnt ?? 0) > 0 ? 1 : 0;
+        return { ...s, ...summaries, can_edit, has_unconfirmed };
       }));
 
       res.json({ signals: result });
@@ -175,7 +188,7 @@ export function signalRoutes(db: Database) {
 
   router.post('/', authenticate, async (req: AuthRequest, res) => {
     try {
-      const { project_id, endpoints, ...signalFields } = req.body;
+      const { project_id, endpoints, draft: isDraft, ...signalFields } = req.body;
       if (!project_id) return res.status(400).json({ error: '缺少 project_id' });
 
       if (req.user!.role !== 'admin' && !(await isProjectDeviceManager(db, req.user!.username, project_id))) {
@@ -202,6 +215,131 @@ export function signalRoutes(db: Database) {
         }
       }
 
+      // ── 预解析所有端点的 pin_id ──────────────────────────
+      type ResolvedEp = { ep: any; pinId: number };
+      const resolved: ResolvedEp[] = [];
+      const endpointErrors: string[] = [];
+
+      if (Array.isArray(endpoints)) {
+        for (let i = 0; i < endpoints.length; i++) {
+          const ep = endpoints[i];
+          const pin = await db.get(
+            `SELECT p.id FROM pins p
+             JOIN connectors c ON p.connector_id = c.id
+             JOIN devices d ON c.device_id = d.id
+             WHERE d.project_id = ? AND d.设备编号 = ? AND c.连接器号 = ? AND p.针孔号 = ?`,
+            [project_id, ep.设备编号, ep.连接器号, ep.针孔号]
+          );
+          if (!pin) {
+            endpointErrors.push(`端点${i + 1}: 找不到 ${ep.设备编号}.${ep.连接器号}.${ep.针孔号}`);
+          } else {
+            resolved.push({ ep, pinId: pin.id });
+          }
+        }
+      }
+
+      const newPinIds = resolved.map(r => r.pinId);
+
+      // ── 端点重叠检测 ────────────────────────────────────
+      if (newPinIds.length > 0) {
+        const ph = newPinIds.map(() => '?').join(',');
+        // 找出项目内与新端点有交集的已有信号，按重叠数降序
+        const overlapping: Array<{ signal_id: number; overlap_count: number }> = await db.query(
+          `SELECT se.signal_id, COUNT(*) as overlap_count
+           FROM signal_endpoints se
+           JOIN signals s ON se.signal_id = s.id
+           WHERE s.project_id = ? AND se.pin_id IN (${ph})
+           GROUP BY se.signal_id
+           ORDER BY overlap_count DESC`,
+          [project_id, ...newPinIds]
+        );
+
+        if (overlapping.length > 0) {
+          const top = overlapping[0];
+
+          // 情况1：某个已有信号包含了所有新端点 → 拒绝
+          if (top.overlap_count >= newPinIds.length) {
+            const existing = await db.get('SELECT unique_id FROM signals WHERE id = ?', [top.signal_id]);
+            return res.status(409).json({
+              error: `所有端点均已存在于信号 "${existing?.unique_id || top.signal_id}" 中，不允许重复创建`,
+            });
+          }
+
+          // 情况2：部分端点与某个已有信号重叠 → 检查连接类型后合并
+          const targetSignalRow = await db.get('SELECT unique_id, "连接类型" FROM signals WHERE id = ?', [top.signal_id]);
+          if (targetSignalRow?.['连接类型'] !== signalFields['连接类型']) {
+            return res.status(409).json({
+              error: `端点与信号 "${targetSignalRow?.unique_id || top.signal_id}" 重叠，但连接类型不同（现有：${targetSignalRow?.['连接类型'] || '未设置'}，新建：${signalFields['连接类型'] || '未设置'}），无法合并`,
+            });
+          }
+
+          const existingPins: Array<{ pin_id: number }> = await db.query(
+            'SELECT pin_id FROM signal_endpoints WHERE signal_id = ?',
+            [top.signal_id]
+          );
+          const existingPinSet = new Set(existingPins.map(p => p.pin_id));
+          const maxIdxRow = await db.get(
+            'SELECT MAX(endpoint_index) as m FROM signal_endpoints WHERE signal_id = ?',
+            [top.signal_id]
+          );
+          let nextIdx: number = (maxIdxRow?.m ?? -1) + 1;
+
+          for (const { ep, pinId } of resolved) {
+            if (!existingPinSet.has(pinId)) {
+              const ownerRow = await db.get(
+                `SELECT d.设备负责人 FROM devices d
+                 JOIN connectors c ON c.device_id = d.id
+                 JOIN pins p ON p.connector_id = c.id
+                 WHERE p.id = ?`,
+                [pinId]
+              );
+              const confirmed = (!ownerRow?.设备负责人 || ownerRow.设备负责人 === req.user!.username) ? 1 : 0;
+              await db.run(
+                `INSERT INTO signal_endpoints (signal_id, pin_id, endpoint_index, confirmed, 信号名称, 信号定义)
+                 VALUES (?, ?, ?, ?, ?, ?)`,
+                [top.signal_id, pinId, nextIdx++, confirmed, ep.信号名称 || null, ep.信号定义 || null]
+              );
+            }
+          }
+
+          // 向新合并端点中其他设备负责人发送确认通知
+          const mergeOtherOwners: Array<{ 设备负责人: string; 设备编号: string }> = await db.query(
+            `SELECT DISTINCT d.设备负责人, d.设备编号
+             FROM signal_endpoints se
+             JOIN pins p ON se.pin_id = p.id
+             JOIN connectors c ON p.connector_id = c.id
+             JOIN devices d ON c.device_id = d.id
+             WHERE se.signal_id = ? AND se.confirmed = 0 AND d.设备负责人 != ?`,
+            [top.signal_id, req.user!.username]
+          );
+          if (mergeOtherOwners.length > 0) {
+            const ownerDevices: Record<string, string[]> = {};
+            for (const row of mergeOtherOwners) {
+              if (!ownerDevices[row.设备负责人]) ownerDevices[row.设备负责人] = [];
+              ownerDevices[row.设备负责人].push(row.设备编号);
+            }
+            for (const [owner, devs] of Object.entries(ownerDevices)) {
+              await db.run(
+                `INSERT INTO notifications (recipient_username, type, title, message) VALUES (?, 'signal_confirm_request', ?, ?)`,
+                [
+                  owner,
+                  `信号端点确认请求：${targetSignalRow?.unique_id}`,
+                  `用户 ${req.user!.username} 向信号 "${targetSignalRow?.unique_id}" 添加了新端点，包含您负责的设备（${devs.join('、')}）的端点信息，请进入信号视图确认或完善相关信息。`,
+                ]
+              );
+            }
+          }
+
+          return res.json({
+            success: true,
+            merged: true,
+            mergedIntoId: top.signal_id,
+            mergedIntoUniqueId: targetSignalRow?.unique_id,
+          });
+        }
+      }
+
+      // ── 无重叠，正常新建 ────────────────────────────────
       // unique_id 必填 + 项目内唯一性校验
       if (!signalFields.unique_id) {
         return res.status(400).json({ error: 'Unique ID 不能为空' });
@@ -214,7 +352,6 @@ export function signalRoutes(db: Database) {
         return res.status(409).json({ error: `Unique ID "${signalFields.unique_id}" 在本项目中已存在` });
       }
 
-      // 构建 INSERT
       const cols = Object.keys(signalFields).map(k => `"${k}"`).join(', ');
       const placeholders = Object.keys(signalFields).map(() => '?').join(', ');
       const sigResult = await db.run(
@@ -223,30 +360,73 @@ export function signalRoutes(db: Database) {
       );
       const signalId = sigResult.lastID;
 
-      // 插入端点
-      const endpointErrors: string[] = [];
-      if (Array.isArray(endpoints)) {
-        for (let i = 0; i < endpoints.length; i++) {
-          const ep = endpoints[i];
-          // 按 设备编号→连接器号→针孔号 查找 pin_id
-          const pin = await db.get(
-            `SELECT p.id FROM pins p
-             JOIN connectors c ON p.connector_id = c.id
-             JOIN devices d ON c.device_id = d.id
-             WHERE d.project_id = ? AND d.设备编号 = ? AND c.连接器号 = ? AND p.针孔号 = ?`,
-            [project_id, ep.设备编号, ep.连接器号, ep.针孔号]
-          );
-          if (!pin) {
-            endpointErrors.push(`端点${i + 1}: 找不到 ${ep.设备编号}.${ep.连接器号}.${ep.针孔号}`);
-            continue;
+      let anyUnconfirmed = false;
+      for (let i = 0; i < resolved.length; i++) {
+        const { ep, pinId } = resolved[i];
+        const ownerRow = await db.get(
+          `SELECT d.设备负责人 FROM devices d
+           JOIN connectors c ON c.device_id = d.id
+           JOIN pins p ON p.connector_id = c.id
+           WHERE p.id = ?`,
+          [pinId]
+        );
+        const confirmed = (!ownerRow?.设备负责人 || ownerRow.设备负责人 === req.user!.username) ? 1 : 0;
+        if (confirmed === 0) anyUnconfirmed = true;
+        await db.run(
+          `INSERT INTO signal_endpoints (signal_id, pin_id, endpoint_index, confirmed, 信号名称, 信号定义)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [signalId, pinId, i, confirmed, ep.信号名称 || null, ep.信号定义 || null]
+        );
+      }
+
+      // 设置信号状态
+      const signalStatus = isDraft ? 'Draft' : (anyUnconfirmed ? 'Pending' : 'Active');
+      await db.run('UPDATE signals SET status = ? WHERE id = ?', [signalStatus, signalId]);
+
+      // 非草稿且有待确认端点时，向其他设备负责人发送确认请求通知
+      if (!isDraft && anyUnconfirmed) {
+        const otherOwners: Array<{ 设备负责人: string; 设备编号: string }> = await db.query(
+          `SELECT DISTINCT d.设备负责人, d.设备编号
+           FROM signal_endpoints se
+           JOIN pins p ON se.pin_id = p.id
+           JOIN connectors c ON p.connector_id = c.id
+           JOIN devices d ON c.device_id = d.id
+           WHERE se.signal_id = ? AND se.confirmed = 0`,
+          [signalId]
+        );
+        if (otherOwners.length > 0) {
+          const ownerDevices: Record<string, string[]> = {};
+          for (const row of otherOwners) {
+            if (!ownerDevices[row.设备负责人]) ownerDevices[row.设备负责人] = [];
+            ownerDevices[row.设备负责人].push(row.设备编号);
           }
-          await db.run(
-            `INSERT INTO signal_endpoints (signal_id, pin_id, endpoint_index, 端接尺寸, 信号名称, 信号定义)
-             VALUES (?, ?, ?, ?, ?, ?)`,
-            [signalId, pin.id, i, ep.端接尺寸 || null, ep.信号名称 || null, ep.信号定义 || null]
-          );
+          for (const [owner, devs] of Object.entries(ownerDevices)) {
+            await db.run(
+              `INSERT INTO notifications (recipient_username, type, title, message) VALUES (?, 'signal_confirm_request', ?, ?)`,
+              [
+                owner,
+                `信号端点确认请求：${signalFields.unique_id}`,
+                `用户 ${req.user!.username} 创建了信号 "${signalFields.unique_id}"，包含您负责的设备（${devs.join('、')}）的端点信息，请进入信号视图确认或完善相关信息。`,
+              ]
+            );
+          }
         }
       }
+
+      // 写修改日志
+      await db.run(
+        `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, new_values, reason, status)
+         VALUES ('signals', ?, ?, 'signals', ?, ?, '新建信号', 'approved')`,
+        [
+          signalId, signalId, req.user!.id,
+          JSON.stringify({
+            ...signalFields,
+            endpoints: resolved.map(({ ep }) => ({
+              设备编号: ep.设备编号, 连接器号: ep.连接器号, 针孔号: ep.针孔号, 信号名称: ep.信号名称 || null,
+            })),
+          }),
+        ]
+      );
 
       res.json({ success: true, id: signalId, unique_id: signalFields.unique_id, endpointErrors });
     } catch (error: any) {
@@ -283,8 +463,11 @@ export function signalRoutes(db: Database) {
         }
       }
 
-      const { endpoints, version, ...fields } = req.body;
-      delete fields.id; delete fields.project_id; delete fields.created_at;
+      const { endpoints, version, submit: shouldSubmit, ...fields } = req.body;
+      delete fields.id; delete fields.project_id; delete fields.created_at; delete fields.status;
+
+      const wasDraft = signal.status === 'Draft';
+      const wasActive = signal.status === 'Active';
 
       if (Object.keys(fields).length > 0) {
         const setClauses = Object.keys(fields).map(k => `"${k}" = ?`).join(', ');
@@ -297,8 +480,41 @@ export function signalRoutes(db: Database) {
         }
       }
 
+      // 辅助：向未确认端点的其他设备负责人发通知
+      const sendConfirmNotifications = async (sigId: number, uniqueId: string, isRe: boolean) => {
+        const unconfOwners: Array<{ 设备负责人: string; 设备编号: string }> = await db.query(
+          `SELECT DISTINCT d.设备负责人, d.设备编号
+           FROM signal_endpoints se JOIN pins p ON se.pin_id = p.id
+           JOIN connectors c ON p.connector_id = c.id JOIN devices d ON c.device_id = d.id
+           WHERE se.signal_id = ? AND se.confirmed = 0 AND d.设备负责人 != ?`,
+          [sigId, req.user!.username]
+        );
+        const ownerDevices: Record<string, string[]> = {};
+        for (const row of unconfOwners) {
+          if (!ownerDevices[row.设备负责人]) ownerDevices[row.设备负责人] = [];
+          ownerDevices[row.设备负责人].push(row.设备编号);
+        }
+        for (const [owner, devs] of Object.entries(ownerDevices)) {
+          const msg = isRe
+            ? `用户 ${req.user!.username} 修改了信号 "${uniqueId}"，其中包含您负责的设备（${devs.join('、')}）的端点信息，请进入信号视图重新确认。`
+            : `用户 ${req.user!.username} 创建了信号 "${uniqueId}"，包含您负责的设备（${devs.join('、')}）的端点信息，请进入信号视图确认或完善相关信息。`;
+          await db.run(
+            `INSERT INTO notifications (recipient_username, type, title, message) VALUES (?, 'signal_confirm_request', ?, ?)`,
+            [owner, `信号端点确认请求：${uniqueId}`, msg]
+          );
+        }
+      };
+
       // 如果提供了 endpoints，替换所有端点
       if (Array.isArray(endpoints)) {
+        // 保存现有端点的确认状态（按 pin_id 索引）
+        const prevEps: Array<{ pin_id: number; confirmed: number }> = await db.query(
+          'SELECT pin_id, confirmed FROM signal_endpoints WHERE signal_id = ?',
+          [signalId]
+        );
+        const prevConfirmedMap: Record<number, number> = {};
+        for (const row of prevEps) prevConfirmedMap[row.pin_id] = row.confirmed;
+
         await db.run('DELETE FROM signal_endpoints WHERE signal_id = ?', [signalId]);
         const endpointErrors: string[] = [];
         for (let i = 0; i < endpoints.length; i++) {
@@ -314,14 +530,105 @@ export function signalRoutes(db: Database) {
             endpointErrors.push(`端点${i + 1}: 找不到 ${ep.设备编号}.${ep.连接器号}.${ep.针孔号}`);
             continue;
           }
+          const ownerRow = await db.get(
+            `SELECT d.设备负责人 FROM devices d
+             JOIN connectors c ON c.device_id = d.id
+             JOIN pins p ON p.connector_id = c.id
+             WHERE p.id = ?`,
+            [pin.id]
+          );
+          let confirmed = 0;
+          if (!ownerRow?.设备负责人 || ownerRow.设备负责人 === req.user!.username) {
+            confirmed = 1; // 当前用户负责的端点，保存即视为确认
+          } else if (signal.status === 'Pending' && prevConfirmedMap[pin.id] === 1) {
+            confirmed = 1; // Pending 状态下保留其他用户已确认的状态
+          }
+          // Active 状态 → 重置为 0（需重新确认）；Draft → 保持 0
           await db.run(
-            `INSERT INTO signal_endpoints (signal_id, pin_id, endpoint_index, 端接尺寸, 信号名称, 信号定义)
-             VALUES (?, ?, ?, ?, ?, ?)`,
-            [signalId, pin.id, i, ep.端接尺寸 || null, ep.信号名称 || null, ep.信号定义 || null]
+            `INSERT INTO signal_endpoints (signal_id, pin_id, endpoint_index, confirmed, 端接尺寸, 信号名称, 信号定义)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [signalId, pin.id, i, confirmed, ep.端接尺寸 || null, ep.信号名称 || null, ep.信号定义 || null]
           );
         }
+
+        // 确定新状态
+        const unconfAfter = await db.get(
+          'SELECT COUNT(*) as cnt FROM signal_endpoints WHERE signal_id = ? AND confirmed = 0', [signalId]
+        );
+        const allConfirmedNow = (unconfAfter?.cnt ?? 1) === 0;
+        let newStatus: string;
+        if (wasDraft && !shouldSubmit) {
+          newStatus = 'Draft';
+        } else if (allConfirmedNow) {
+          newStatus = 'Active';
+        } else {
+          newStatus = 'Pending';
+        }
+        await db.run('UPDATE signals SET status = ? WHERE id = ?', [newStatus, signalId]);
+
+        // 通知创建者：信号已全部确认（Pending → Active）
+        if (newStatus === 'Active' && signal.status === 'Pending' && signal.created_by && req.user!.username !== signal.created_by) {
+          await db.run(
+            `INSERT INTO notifications (recipient_username, type, title, message) VALUES (?, 'signal_all_confirmed', ?, ?)`,
+            [signal.created_by, `信号端点已全部确认：${signal.unique_id}`, `信号 "${signal.unique_id}" 的所有端点均已被确认。`]
+          );
+        }
+        // 通知其他设备负责人：Active 被修改（重新确认）或 Draft 被提交
+        if (newStatus === 'Pending') {
+          await sendConfirmNotifications(signalId, signal.unique_id, wasActive);
+        }
+
+        // 写修改日志
+        await db.run(
+          `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, old_values, new_values, reason, status)
+           VALUES ('signals', ?, ?, 'signals', ?, ?, ?, '修改信号', 'approved')`,
+          [
+            signalId, signalId, req.user!.id,
+            JSON.stringify(signal),
+            JSON.stringify({
+              ...fields,
+              endpoints: endpoints.map((ep: any) => ({
+                设备编号: ep.设备编号, 连接器号: ep.连接器号, 针孔号: ep.针孔号, 信号名称: ep.信号名称 || null,
+              })),
+            }),
+          ]
+        );
+
         res.json({ success: true, endpointErrors });
       } else {
+        // 仅字段变更路径
+        if (wasActive) {
+          // Active 信号字段被修改：重置其他用户端点确认状态，回到 Pending
+          await db.run(
+            `UPDATE signal_endpoints SET confirmed = 0
+             WHERE signal_id = ? AND pin_id IN (
+               SELECT p.id FROM pins p
+               JOIN connectors c ON p.connector_id = c.id
+               JOIN devices d ON c.device_id = d.id
+               WHERE d.设备负责人 != ?
+             )`,
+            [signalId, req.user!.username]
+          );
+          await db.run('UPDATE signals SET status = ? WHERE id = ?', ['Pending', signalId]);
+          await sendConfirmNotifications(signalId, signal.unique_id, true);
+        } else if (wasDraft && shouldSubmit) {
+          // 草稿提交（无端点变更）：根据现有确认状态决定 Pending/Active
+          const unconfDraft = await db.get(
+            'SELECT COUNT(*) as cnt FROM signal_endpoints WHERE signal_id = ? AND confirmed = 0', [signalId]
+          );
+          const allDone = (unconfDraft?.cnt ?? 1) === 0;
+          const submitStatus = allDone ? 'Active' : 'Pending';
+          await db.run('UPDATE signals SET status = ? WHERE id = ?', [submitStatus, signalId]);
+          if (!allDone) await sendConfirmNotifications(signalId, signal.unique_id, false);
+        }
+
+        // 写修改日志
+        await db.run(
+          `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, old_values, new_values, reason, status)
+           VALUES ('signals', ?, ?, 'signals', ?, ?, ?, '修改信号', 'approved')`,
+          [signalId, signalId, req.user!.id, JSON.stringify(signal), JSON.stringify(fields)]
+        );
+
         res.json({ success: true });
       }
     } catch (error: any) {
@@ -337,27 +644,64 @@ export function signalRoutes(db: Database) {
       const signal = await db.get('SELECT * FROM signals WHERE id = ?', [signalId]);
       if (!signal) return res.status(404).json({ error: '信号不存在' });
 
-      if (req.user!.role !== 'admin') {
-        if (signal.created_by !== req.user!.username) {
-          return res.status(403).json({ error: '只能删除自己创建的信号' });
-        }
-        // 检查信号端点是否包含非本人负责的设备
-        const foreignEndpoints = await db.query(
-          `SELECT d.设备编号, d.设备负责人
-           FROM signal_endpoints se
-           JOIN pins p ON se.pin_id = p.id
-           JOIN connectors c ON p.connector_id = c.id
-           JOIN devices d ON c.device_id = d.id
-           WHERE se.signal_id = ? AND d.设备负责人 != ?`,
-          [signalId, req.user!.username]
-        );
-        if (foreignEndpoints.length > 0) {
-          const devList = [...new Set(foreignEndpoints.map((e: any) => e.设备编号))].join('、');
-          return res.status(403).json({ error: `无法删除：信号包含不属于您负责的设备（${devList}）的端点` });
-        }
+      // 仅创建者或管理员可删除
+      if (req.user!.role !== 'admin' && signal.created_by !== req.user!.username) {
+        return res.status(403).json({ error: '只能删除自己创建的信号' });
       }
 
+      // 抓端点快照（用于日志和通知，删除前执行）
+      const epSnapshot: Array<{ 设备编号: string; 连接器号: string; 针孔号: string; 信号名称: string | null; 设备负责人: string }> = await db.query(
+        `SELECT d.设备编号, c.连接器号, p.针孔号, se.信号名称, d.设备负责人
+         FROM signal_endpoints se
+         JOIN pins p ON se.pin_id = p.id
+         JOIN connectors c ON p.connector_id = c.id
+         JOIN devices d ON c.device_id = d.id
+         WHERE se.signal_id = ?
+         ORDER BY se.endpoint_index`,
+        [signalId]
+      );
+
+      // 写修改日志（删除前快照）
+      await db.run(
+        `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, old_values, reason, status)
+         VALUES ('signals', ?, ?, 'signals', ?, ?, '删除信号', 'approved')`,
+        [
+          signalId, signalId, req.user!.id,
+          JSON.stringify({
+            ...signal,
+            endpoints: epSnapshot.map(ep => ({
+              设备编号: ep.设备编号, 连接器号: ep.连接器号, 针孔号: ep.针孔号, 信号名称: ep.信号名称 || null,
+            })),
+          }),
+        ]
+      );
+
+      // 查找端点中其他设备负责人（排除删除者本人），用于发送通知
+      const affectedOwners = epSnapshot
+        .filter(ep => ep.设备负责人 && ep.设备负责人 !== req.user!.username)
+        .reduce<Record<string, string[]>>((acc, ep) => {
+          if (!acc[ep.设备负责人]) acc[ep.设备负责人] = [];
+          if (!acc[ep.设备负责人].includes(ep.设备编号)) acc[ep.设备负责人].push(ep.设备编号);
+          return acc;
+        }, {});
+
       await db.run('DELETE FROM signals WHERE id = ?', [signalId]);
+
+      // 向受影响的设备负责人发送站内通知
+      const deleter = req.user!.username;
+      const uniqueId = signal.unique_id || String(signalId);
+      for (const [username, devices] of Object.entries(affectedOwners)) {
+        await db.run(
+          `INSERT INTO notifications (recipient_username, type, title, message)
+           VALUES (?, 'signal_deleted', ?, ?)`,
+          [
+            username,
+            `信号已删除：${uniqueId}`,
+            `用户 ${deleter} 删除了信号 "${uniqueId}"，该信号包含您负责的设备（${devices.join('、')}）的端点。`,
+          ]
+        );
+      }
+
       res.json({ success: true });
     } catch (error: any) {
       res.status(500).json({ error: error.message || '删除信号失败' });

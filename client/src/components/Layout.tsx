@@ -1,13 +1,79 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import ProfileModal from './ProfileModal';
+
+interface Notification {
+  id: number;
+  type: string;
+  title: string;
+  message: string;
+  is_read: number;
+  created_at: string;
+}
+
+const API_HEADERS = () => ({
+  Authorization: `Bearer ${localStorage.getItem('token')}`,
+});
+const API_JSON_HEADERS = () => ({
+  ...API_HEADERS(),
+  'Content-Type': 'application/json',
+});
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const { user, logout } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const [showProfile, setShowProfile] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const notifRef = useRef<HTMLDivElement>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const fetchUnreadCount = useCallback(async () => {
+    if (!user) return;
+    try {
+      const res = await fetch('/api/notifications/unread-count', { headers: API_HEADERS() });
+      if (res.ok) setUnreadCount((await res.json()).count ?? 0);
+    } catch { }
+  }, [user]);
+
+  const fetchNotifications = async () => {
+    try {
+      const res = await fetch('/api/notifications', { headers: API_HEADERS() });
+      if (res.ok) setNotifications((await res.json()).notifications || []);
+    } catch { }
+  };
+
+  const openNotifications = async () => {
+    setShowNotifications(true);
+    await fetchNotifications();
+    // 打开面板时全部标为已读
+    try {
+      await fetch('/api/notifications/read-all', { method: 'PUT', headers: API_JSON_HEADERS() });
+      setUnreadCount(0);
+      setNotifications(prev => prev.map(n => ({ ...n, is_read: 1 })));
+    } catch { }
+  };
+
+  // 轮询未读数（30秒）
+  useEffect(() => {
+    fetchUnreadCount();
+    pollRef.current = setInterval(fetchUnreadCount, 30000);
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, [fetchUnreadCount]);
+
+  // 点击面板外部关闭
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (notifRef.current && !notifRef.current.contains(e.target as Node)) {
+        setShowNotifications(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
 
   const handleLogout = () => {
     logout();
@@ -99,6 +165,45 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                   }`}>
                     {user?.role === 'admin' ? '管理员' : '普通用户'}
                   </span>
+                  {/* 铃铛通知 */}
+                  <div className="relative" ref={notifRef}>
+                    <button
+                      onClick={openNotifications}
+                      title="通知"
+                      className="relative text-gray-400 hover:text-gray-600 p-1 rounded"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                      </svg>
+                      {unreadCount > 0 && (
+                        <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full h-4 w-4 flex items-center justify-center leading-none">
+                          {unreadCount > 9 ? '9+' : unreadCount}
+                        </span>
+                      )}
+                    </button>
+                    {/* 通知面板 */}
+                    {showNotifications && (
+                      <div className="absolute right-0 top-8 w-80 bg-white border border-gray-200 rounded-lg shadow-lg z-50">
+                        <div className="flex items-center justify-between px-4 py-2 border-b border-gray-100">
+                          <span className="text-sm font-semibold text-gray-700">通知</span>
+                          <button onClick={() => setShowNotifications(false)} className="text-gray-400 hover:text-gray-600 text-xs">关闭</button>
+                        </div>
+                        <div className="max-h-72 overflow-y-auto">
+                          {notifications.length === 0 ? (
+                            <div className="px-4 py-6 text-center text-gray-400 text-sm">暂无通知</div>
+                          ) : (
+                            notifications.map(n => (
+                              <div key={n.id} className={`px-4 py-3 border-b border-gray-50 ${n.is_read ? 'bg-white' : 'bg-blue-50'}`}>
+                                <div className="text-xs font-medium text-gray-800 mb-0.5">{n.title}</div>
+                                <div className="text-xs text-gray-600 leading-relaxed">{n.message}</div>
+                                <div className="text-xs text-gray-400 mt-1">{new Date(n.created_at).toLocaleString('zh-CN')}</div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                   <button
                     onClick={() => setShowProfile(true)}
                     title="个人设置"

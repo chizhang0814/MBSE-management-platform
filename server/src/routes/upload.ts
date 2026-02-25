@@ -355,7 +355,7 @@ export function uploadRoutes(db: Database) {
         }
 
         // 获取原始列名（Excel的第一行）
-        const originalColumns = Object.keys(jsonData[0]);
+        const originalColumns = Object.keys(jsonData[0] as Record<string, unknown>);
         
         // 创建动态表
         const userId = (req as AuthRequest).user!.id;
@@ -403,7 +403,7 @@ export function uploadRoutes(db: Database) {
             
             // 打印失败行的详细信息
             const rowInfo = JSON.stringify({
-              原始数据: Object.keys(row).slice(0, 5).map(k => `${k}:${(row as any)[k]}`).join(', '),
+              原始数据: Object.keys(row as Record<string, unknown>).slice(0, 5).map(k => `${k}:${(row as any)[k]}`).join(', '),
               错误原因: error.message
             });
             

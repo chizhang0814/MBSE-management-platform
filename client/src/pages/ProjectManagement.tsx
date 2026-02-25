@@ -24,6 +24,17 @@ export default function ProjectManagement() {
   const [sysmlApiAvailable, setSysmlApiAvailable] = useState(false);
   const [syncingProjects, setSyncingProjects] = useState<Set<number>>(new Set());
 
+  // 全机设备清单
+  const [showImportListModal, setShowImportListModal] = useState(false);
+  const [importListProjectId, setImportListProjectId] = useState<number | null>(null);
+  const [importListFile, setImportListFile] = useState<File | null>(null);
+  const [importListResult, setImportListResult] = useState<{ inserted: number; skipped: number } | null>(null);
+  const [importListLoading, setImportListLoading] = useState(false);
+  const [showViewListModal, setShowViewListModal] = useState(false);
+  const [viewListProjectId, setViewListProjectId] = useState<number | null>(null);
+  const [aircraftDevices, setAircraftDevices] = useState<any[]>([]);
+  const [listSearch, setListSearch] = useState('');
+
   const [formData, setFormData] = useState({ name: '', description: '' });
 
   useEffect(() => {
@@ -127,6 +138,42 @@ export default function ProjectManagement() {
       document.body.removeChild(a);
       window.URL.revokeObjectURL(url);
     } catch (error: any) { alert(error.message || '下载失败'); }
+  };
+
+  const handleImportList = async () => {
+    if (!importListFile || !importListProjectId) return;
+    setImportListLoading(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', importListFile);
+      const res = await fetch(`/api/projects/${importListProjectId}/aircraft-devices/import`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+        body: formData,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '导入失败');
+      setImportListResult(data);
+    } catch (err: any) {
+      alert(err.message || '导入失败');
+    } finally {
+      setImportListLoading(false);
+    }
+  };
+
+  const openViewList = async (projectId: number, search = '') => {
+    setViewListProjectId(projectId);
+    try {
+      const res = await fetch(
+        `/api/projects/${projectId}/aircraft-devices?search=${encodeURIComponent(search)}`,
+        { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }
+      );
+      const data = await res.json();
+      setAircraftDevices(data.rows || []);
+      setShowViewListModal(true);
+    } catch (err: any) {
+      alert(err.message || '加载失败');
+    }
   };
 
   const handleExportSysml = async (projectId: number, projectName: string) => {
@@ -255,6 +302,14 @@ export default function ProjectManagement() {
                       >
                         导入数据
                       </button>
+                      <button
+                        onClick={() => { setImportListProjectId(project.id); setImportListResult(null); setImportListFile(null); setShowImportListModal(true); }}
+                        className="text-purple-600 hover:text-purple-800"
+                      >导入清单</button>
+                      <button
+                        onClick={() => { setListSearch(''); openViewList(project.id); }}
+                        className="text-cyan-600 hover:text-cyan-800"
+                      >查看清单</button>
                       <button onClick={() => handleEdit(project)} className="text-green-600 hover:text-green-800">编辑</button>
                       <button onClick={() => handleDelete(project.id)} className="text-red-600 hover:text-red-800">删除</button>
                     </td>
@@ -377,6 +432,114 @@ export default function ProjectManagement() {
           </div>
         )}
       </div>
+
+      {/* 导入全机设备清单弹窗 */}
+      {showImportListModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-[520px] max-h-[80vh] overflow-y-auto shadow-xl">
+            <h2 className="text-lg font-bold mb-3">导入全机设备清单</h2>
+            {!importListResult ? (
+              <>
+                <p className="text-sm text-gray-500 mb-4">
+                  请上传 Sheet 名为 <strong>5-全机设备清单</strong> 的 Excel 文件。<br />
+                  支持的列（可缺）：Object Identifier、系统名称、Object Text、设备编号、LIN号、设备布置区域、飞机构型、是否有供应商数模、是否已布置在样机、电设备编号、是否有EICD、是否确认设备选型、是否已确认MICD、模型成熟度。<br />
+                  缺失列自动填充"-"；若某行与数据库中已有记录的 14 列内容完全相同则跳过。
+                </p>
+                <input
+                  type="file" accept=".xlsx,.xls"
+                  onChange={e => setImportListFile(e.target.files?.[0] || null)}
+                  className="w-full border border-gray-300 rounded px-2 py-1 text-sm mb-4"
+                />
+                <div className="flex justify-end space-x-2">
+                  <button onClick={() => setShowImportListModal(false)} className="px-4 py-1.5 border rounded text-sm">取消</button>
+                  <button
+                    onClick={handleImportList}
+                    disabled={!importListFile || importListLoading}
+                    className="px-4 py-1.5 bg-purple-600 text-white rounded text-sm disabled:opacity-50"
+                  >
+                    {importListLoading ? '导入中...' : '开始导入'}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="mb-4 space-y-1 text-sm">
+                  <p className="text-green-700">✓ 新增 {importListResult.inserted} 条</p>
+                  {importListResult.skipped > 0 && (
+                    <p className="text-amber-700">⚠ 跳过 {importListResult.skipped} 条（与已有记录完全相同）</p>
+                  )}
+                </div>
+                <div className="flex justify-end">
+                  <button
+                    onClick={() => { setShowImportListModal(false); setImportListResult(null); }}
+                    className="px-4 py-1.5 bg-gray-100 rounded text-sm"
+                  >关闭</button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 查看全机设备清单弹窗 */}
+      {showViewListModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 flex flex-col shadow-xl" style={{ width: '90vw', maxWidth: '1200px', maxHeight: '85vh' }}>
+            <div className="flex justify-between items-center mb-3">
+              <h2 className="text-lg font-bold">全机设备清单（{aircraftDevices.length} 条）</h2>
+              <button onClick={() => setShowViewListModal(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
+            </div>
+            <div className="flex space-x-2 mb-3">
+              <input
+                value={listSearch}
+                onChange={e => setListSearch(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && viewListProjectId && openViewList(viewListProjectId, listSearch)}
+                placeholder="搜索设备编号/LIN号/系统名称/Object Identifier..."
+                className="flex-1 border border-gray-300 rounded px-3 py-1.5 text-sm"
+              />
+              <button
+                onClick={() => viewListProjectId && openViewList(viewListProjectId, listSearch)}
+                className="px-4 py-1.5 bg-cyan-600 text-white rounded text-sm"
+              >搜索</button>
+            </div>
+            <div className="overflow-auto flex-1">
+              <table className="min-w-full text-xs border-collapse">
+                <thead className="bg-gray-50 sticky top-0">
+                  <tr>
+                    {['Object Identifier','系统名称','Object Text','设备编号（DOORS）','设备LIN号（DOORS）','设备布置区域','飞机构型','是否有供应商数模','是否已布置在样机','电设备编号','是否有EICD','是否确认设备选型','是否已确认MICD','模型成熟度'].map(h => (
+                      <th key={h} className="px-3 py-2 text-left text-gray-500 border-b whitespace-nowrap font-medium">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {aircraftDevices.length === 0 ? (
+                    <tr><td colSpan={14} className="px-3 py-4 text-center text-gray-400">暂无数据</td></tr>
+                  ) : (
+                    aircraftDevices.map(row => (
+                      <tr key={row.id} className="hover:bg-gray-50">
+                        <td className="px-3 py-1.5">{row.object_identifier || '-'}</td>
+                        <td className="px-3 py-1.5">{row.系统名称 || '-'}</td>
+                        <td className="px-3 py-1.5 max-w-xs truncate" title={row.object_text}>{row.object_text || '-'}</td>
+                        <td className="px-3 py-1.5 font-mono">{row.设备编号_DOORS || '-'}</td>
+                        <td className="px-3 py-1.5 font-mono">{row['LIN号_DOORS'] || '-'}</td>
+                        <td className="px-3 py-1.5">{row.设备布置区域 || '-'}</td>
+                        <td className="px-3 py-1.5">{row.飞机构型 || '-'}</td>
+                        <td className="px-3 py-1.5">{row.是否有供应商数模 || '-'}</td>
+                        <td className="px-3 py-1.5">{row.是否已布置在样机 || '-'}</td>
+                        <td className="px-3 py-1.5 font-mono">{row['电设备编号'] || '-'}</td>
+                        <td className="px-3 py-1.5">{row['是否有EICD'] || '-'}</td>
+                        <td className="px-3 py-1.5">{row['是否确认设备选型'] || '-'}</td>
+                        <td className="px-3 py-1.5">{row['是否已确认MICD'] || '-'}</td>
+                        <td className="px-3 py-1.5">{row['模型成熟度'] || '-'}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
     </Layout>
   );
 }

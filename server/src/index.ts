@@ -12,6 +12,7 @@ import { projectRoutes } from './routes/projects.js';
 import { deviceRoutes } from './routes/devices.js';
 import { signalRoutes } from './routes/signals.js';
 import { sysmlBrowserRoutes } from './routes/sysml-browser.js';
+import { notificationRoutes } from './routes/notifications.js';
 import path from 'path';
 
 dotenv.config();
@@ -44,6 +45,7 @@ app.use('/api/projects', projectRoutes(db));
 app.use('/api/devices', deviceRoutes(db));
 app.use('/api/signals', signalRoutes(db));
 app.use('/api/sysml', sysmlBrowserRoutes());
+app.use('/api/notifications', notificationRoutes(db));
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' });

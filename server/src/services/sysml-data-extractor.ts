@@ -314,12 +314,11 @@ export async function loadTableDataFromRelational(db: Database, projectId: numbe
             c.连接器号, c.设备端元器件编号, c.元器件名称及类型,
             c.元器件件号及类型, c.元器件供应商名称,
             c.匹配线束端元器件件号, c.匹配线束线型, c.是否随设备交付,
-            p.针孔号, p.端接尺寸, c.备注
-     FROM pins p
-     JOIN connectors c ON p.connector_id = c.id
+            NULL as 针孔号, NULL as 端接尺寸, c.备注
+     FROM connectors c
      JOIN devices d ON c.device_id = d.id
      WHERE d.project_id = ?
-     ORDER BY d.设备编号, c.连接器号, p.针孔号`,
+     ORDER BY d.设备编号, c.连接器号`,
     [projectId]
   );
   const compCols = [

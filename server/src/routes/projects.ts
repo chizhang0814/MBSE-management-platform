@@ -879,6 +879,27 @@ export function projectRoutes(db: Database) {
         xlsx.utils.book_append_sheet(workbook, ws, sheetNames[i]);
       }
 
+      // ── 全机设备清单 Sheet ──────────────────────────────────
+      const adlCols = [
+        'Object Identifier', '系统名称', 'Object Text', '设备编号（DOORS）', '设备LIN号（DOORS）',
+        '设备布置区域', '飞机构型', '是否有供应商数模', '是否已布置在样机',
+        '电设备编号', '是否有EICD', '是否确认设备选型', '是否已确认MICD', '模型成熟度',
+      ];
+      const adlDbCols = [
+        'object_identifier', '系统名称', 'object_text', '设备编号_DOORS', 'LIN号_DOORS',
+        '设备布置区域', '飞机构型', '是否有供应商数模', '是否已布置在样机',
+        '电设备编号', '是否有EICD', '是否确认设备选型', '是否已确认MICD', '模型成熟度',
+      ];
+      const adlRows = await db.query(
+        'SELECT * FROM aircraft_device_list WHERE project_id = ? ORDER BY id',
+        [projectId]
+      );
+      const adlSheetData: any[][] = [adlCols];
+      for (const row of adlRows) {
+        adlSheetData.push(adlDbCols.map(col => row[col] ?? ''));
+      }
+      xlsx.utils.book_append_sheet(workbook, xlsx.utils.aoa_to_sheet(adlSheetData), '全机设备清单');
+
       const buffer = xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' });
       const filename = `${project.name}_${new Date().toISOString().split('T')[0]}.xlsx`;
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -940,6 +961,145 @@ export function projectRoutes(db: Database) {
       res.json({ syncStatus: status || null });
     } catch (error: any) {
       res.status(500).json({ error: '获取同步状态失败' });
+    }
+  });
+
+  // ── 全机设备清单 ───────────────────────────────────────────
+
+  // 查看清单（仅管理员）
+  router.get('/:id/aircraft-devices', authenticate, requireRole('admin'), async (req: AuthRequest, res) => {
+    try {
+      const projectId = Number(req.params.id);
+      const search = ((req.query.search as string) || '').trim();
+      let sql = 'SELECT * FROM aircraft_device_list WHERE project_id = ?';
+      const params: any[] = [projectId];
+      if (search) {
+        sql += ' AND (设备编号_DOORS LIKE ? OR 系统名称 LIKE ? OR LIN号_DOORS LIKE ? OR object_identifier LIKE ?)';
+        params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
+      }
+      sql += ' ORDER BY id';
+      const rows = await db.query(sql, params);
+      res.json({ rows, total: rows.length });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 导入清单（仅管理员，Excel 单 Sheet）
+  router.post('/:id/aircraft-devices/import', authenticate, requireRole('admin'), upload.single('file'), async (req: AuthRequest, res) => {
+    if (!req.file) return res.status(400).json({ error: '未上传文件' });
+    try {
+      const projectId = Number(req.params.id);
+      const workbook = xlsx.readFile(req.file.path);
+      const TARGET_SHEET = '5-全机设备清单';
+      const exactMatch = workbook.SheetNames.find(n => n.trim() === TARGET_SHEET);
+      const fuzzyMatch = workbook.SheetNames.find(n => n.includes('全机设备清单'));
+      const sheetName = exactMatch ?? fuzzyMatch;
+      if (!sheetName) {
+        fs.unlink(req.file.path, () => {});
+        return res.status(400).json({
+          error: `文件中未找到名为"${TARGET_SHEET}"的 Sheet，当前可用 Sheet：${workbook.SheetNames.join('、')}`
+        });
+      }
+      const sheet = workbook.Sheets[sheetName];
+      const jsonData: any[] = xlsx.utils.sheet_to_json(sheet);
+
+      // 列名映射：Excel列名 → DB列名（支持全角/半角括号及无括号变体）
+      const COL_MAP: Record<string, string> = {
+        'Object Identifier': 'object_identifier',
+        '系统名称': '系统名称',
+        'Object Text': 'object_text',
+        '设备编号': '设备编号_DOORS',
+        '设备编号（DOORS）': '设备编号_DOORS',
+        '设备编号(DOORS)': '设备编号_DOORS',
+        'LIN号': 'LIN号_DOORS',
+        'LIN号（DOORS）': 'LIN号_DOORS',
+        'LIN号(DOORS)': 'LIN号_DOORS',
+        '设备布置区域': '设备布置区域',
+        '飞机构型': '飞机构型',
+        '是否有供应商数模': '是否有供应商数模',
+        '是否已布置在样机': '是否已布置在样机',
+        '电设备编号': '电设备编号',
+        '是否有EICD': '是否有EICD',
+        '是否确认设备选型': '是否确认设备选型',
+        '是否已确认MICD': '是否已确认MICD',
+        '模型成熟度': '模型成熟度',
+      };
+      const ALL_DB_COLS = [
+        'object_identifier','系统名称','object_text','设备编号_DOORS','LIN号_DOORS',
+        '设备布置区域','飞机构型','是否有供应商数模','是否已布置在样机',
+        '电设备编号','是否有EICD','是否确认设备选型','是否已确认MICD','模型成熟度',
+      ];
+
+      // 校验 Excel 列名：不允许出现 COL_MAP 之外的列
+      if (jsonData.length > 0) {
+        const knownKeys = new Set(Object.keys(COL_MAP));
+        const unknownCols = Object.keys(jsonData[0] as Record<string, unknown>)
+          .map(k => k.trim())
+          .filter(k => !knownKeys.has(k));
+        if (unknownCols.length > 0) {
+          fs.unlink(req.file.path, () => {});
+          return res.status(400).json({
+            error: `Sheet"${sheetName}"包含未知列，请检查后重新上传。未知列：${unknownCols.join('、')}`
+          });
+        }
+      }
+
+      // 预加载已有记录的14列指纹（拼接后放入 Set，O(1) 查重）
+      const existingRows = await db.query(
+        `SELECT ${ALL_DB_COLS.map(c => `"${c}"`).join(', ')} FROM aircraft_device_list WHERE project_id = ?`,
+        [projectId]
+      );
+      const existingFingerprints = new Set<string>(
+        existingRows.map((r: any) => ALL_DB_COLS.map(c => r[c] ?? '-').join('\0'))
+      );
+
+      let inserted = 0, skipped = 0;
+
+      for (let i = 0; i < jsonData.length; i++) {
+        const raw = jsonData[i] as Record<string, unknown>;
+        const mapped: Record<string, string> = {};
+        // 先将所有 DB 列初始化为 '-'
+        for (const dbCol of ALL_DB_COLS) mapped[dbCol] = '-';
+        // 再用 Excel 数据覆盖能匹配的列
+        for (const [excelKey, dbKey] of Object.entries(COL_MAP)) {
+          const found = Object.keys(raw).find(k =>
+            k.trim() === excelKey || k.trim().includes(excelKey) || excelKey.includes(k.trim())
+          );
+          if (found !== undefined && raw[found] != null && String(raw[found]).trim() !== '') {
+            mapped[dbKey] = String(raw[found]).trim();
+          }
+        }
+
+        const fingerprint = ALL_DB_COLS.map(c => mapped[c] ?? '-').join('\0');
+        if (existingFingerprints.has(fingerprint)) {
+          skipped++;
+          continue;
+        }
+
+        await db.run(
+          `INSERT INTO aircraft_device_list
+            (project_id, object_identifier, 系统名称, object_text, 设备编号_DOORS, LIN号_DOORS,
+             设备布置区域, 飞机构型, 是否有供应商数模, 是否已布置在样机,
+             电设备编号, 是否有EICD, 是否确认设备选型, 是否已确认MICD, 模型成熟度)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [projectId,
+           mapped['object_identifier'], mapped['系统名称'], mapped['object_text'],
+           mapped['设备编号_DOORS'],    mapped['LIN号_DOORS'],
+           mapped['设备布置区域'],      mapped['飞机构型'],
+           mapped['是否有供应商数模'],  mapped['是否已布置在样机'],
+           mapped['电设备编号'],        mapped['是否有EICD'],
+           mapped['是否确认设备选型'],  mapped['是否已确认MICD'], mapped['模型成熟度']]
+        );
+        existingFingerprints.add(fingerprint);
+        inserted++;
+      }
+
+      fs.unlink(req.file.path, () => {});
+      res.json({ inserted, skipped });
+    } catch (err: any) {
+      if (req.file) fs.unlink(req.file.path, () => {});
+      res.status(500).json({ error: err.message });
     }
   });
 
