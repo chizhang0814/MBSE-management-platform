@@ -1,6 +1,7 @@
 import sqlite3 from 'sqlite3';
 import bcrypt from 'bcryptjs';
 import path from 'path';
+import fs from 'fs';
 
 export class Database {
   private db: sqlite3.Database;
@@ -89,58 +90,7 @@ export class Database {
           )
         `);
         
-        // 创建动态表管理记录
-        this.db.run(`
-          CREATE TABLE IF NOT EXISTS custom_tables (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            table_name TEXT UNIQUE NOT NULL,
-            display_name TEXT,
-            original_columns TEXT,
-            created_by INTEGER,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            record_count INTEGER DEFAULT 0,
-            FOREIGN KEY (created_by) REFERENCES users(id)
-          )
-        `);
-        
-        // 创建表元数据表（记录每个表的connection编号、Unique ID、设备、连接器、针孔号）
-        this.db.run(`
-          CREATE TABLE IF NOT EXISTS table_metadata (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            table_name TEXT NOT NULL,
-            metadata_type TEXT NOT NULL,
-            value TEXT NOT NULL,
-            parent_value TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(table_name, metadata_type, value)
-          )
-        `);
-        
-        // 创建索引以提高查询性能
-        this.db.run(`
-          CREATE INDEX IF NOT EXISTS idx_table_metadata_table_type 
-          ON table_metadata(table_name, metadata_type)
-        `);
-        
-        this.db.run(`
-          CREATE INDEX IF NOT EXISTS idx_table_metadata_parent 
-          ON table_metadata(table_name, metadata_type, parent_value)
-        `);
 
-        // 模板表（用于定义三类表的列模板）
-        this.db.run(`
-          CREATE TABLE IF NOT EXISTS templates (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            table_type TEXT NOT NULL,
-            columns TEXT NOT NULL,
-            description TEXT,
-            created_by INTEGER NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (created_by) REFERENCES users(id)
-          )
-        `);
 
         // 项目表
         this.db.run(`
@@ -162,16 +112,18 @@ export class Database {
             project_id INTEGER NOT NULL,
             设备编号 TEXT NOT NULL,
             设备中文名称 TEXT, 设备英文名称 TEXT, 设备英文缩写 TEXT,
-            设备件号 TEXT, 设备供应商名称 TEXT, 设备所属ATA TEXT,
+            设备供应商件号 TEXT, 设备供应商名称 TEXT, 设备部件所属系统（4位ATA） TEXT,
             设备安装位置 TEXT, 设备DAL TEXT,
-            壳体是否金属 TEXT, 金属壳体表面处理 TEXT, 设备内共地情况 TEXT,
-            壳体接地需求 TEXT, 壳体接地是否故障电流路径 TEXT, 其他接地特殊要求 TEXT,
-            设备端连接器数量 TEXT, 是否选装设备 TEXT, 设备装机架次 TEXT,
-            设备负责人 TEXT, 额定电压 TEXT, 额定电流 TEXT, 备注 TEXT,
+            设备壳体是否金属 TEXT, 金属壳体表面是否经过特殊处理而不易导电 TEXT, 设备内共地情况 TEXT,
+            设备壳体接地方式 TEXT, 壳体接地是否故障电流路径 TEXT, 其他接地特殊要求 TEXT,
+            设备端连接器或接线柱数量 TEXT, 是否为选装设备 TEXT, 设备装机架次 TEXT,
+            设备负责人 TEXT, 设备正常工作电压范围（V） TEXT, 设备物理特性 TEXT, 备注 TEXT,
+            导入来源 TEXT, created_by TEXT,
             status TEXT DEFAULT 'normal',
+            validation_errors TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(project_id, 设备编号),
+            UNIQUE(project_id, 设备编号, 设备中文名称),
             FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
           )
         `);
@@ -182,15 +134,30 @@ export class Database {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             device_id INTEGER NOT NULL,
             连接器号 TEXT NOT NULL,
-            设备端元器件编号 TEXT, 元器件名称及类型 TEXT,
-            元器件件号及类型 TEXT, 元器件供应商名称 TEXT,
-            匹配线束端元器件件号 TEXT, 匹配线束线型 TEXT,
-            是否随设备交付 TEXT, 备注 TEXT,
+            设备端元器件编号 TEXT, 设备端元器件名称及类型 TEXT,
+            设备端元器件件号类型及件号 TEXT, 设备端元器件供应商名称 TEXT,
+            匹配的线束端元器件件号 TEXT, 匹配的线束线型 TEXT,
+            设备端元器件匹配的元器件是否随设备交付 TEXT, 备注 TEXT,
             status TEXT DEFAULT 'normal',
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(device_id, 连接器号),
             FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
+          )
+        `);
+
+        // ③ section_connectors（断面连接器）
+        this.db.run(`
+          CREATE TABLE IF NOT EXISTS section_connectors (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER NOT NULL,
+            设备名称 TEXT NOT NULL,
+            负责人 TEXT,
+            status TEXT DEFAULT 'normal',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(project_id, 设备名称),
+            FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
           )
         `);
 
@@ -209,12 +176,45 @@ export class Database {
           )
         `);
 
+        // ④ sc_connectors（断面连接器下的连接器）
+        this.db.run(`
+          CREATE TABLE IF NOT EXISTS sc_connectors (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            section_connector_id INTEGER NOT NULL,
+            连接器号 TEXT NOT NULL,
+            设备端元器件编号 TEXT, 设备端元器件名称及类型 TEXT,
+            设备端元器件件号类型及件号 TEXT, 设备端元器件供应商名称 TEXT,
+            匹配的线束端元器件件号 TEXT, 匹配的线束线型 TEXT,
+            设备端元器件匹配的元器件是否随设备交付 TEXT, 备注 TEXT,
+            status TEXT DEFAULT 'normal',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(section_connector_id, 连接器号),
+            FOREIGN KEY (section_connector_id) REFERENCES section_connectors(id) ON DELETE CASCADE
+          )
+        `);
+
+        // ⑤ sc_pins（断面连接器下连接器的针孔）
+        this.db.run(`
+          CREATE TABLE IF NOT EXISTS sc_pins (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sc_connector_id INTEGER NOT NULL,
+            针孔号 TEXT NOT NULL,
+            端接尺寸 TEXT, 屏蔽类型 TEXT, 备注 TEXT,
+            status TEXT DEFAULT 'normal',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(sc_connector_id, 针孔号),
+            FOREIGN KEY (sc_connector_id) REFERENCES sc_connectors(id) ON DELETE CASCADE
+          )
+        `);
+
         // ④ signals（信号 - SysML ItemFlow）
         this.db.run(`
           CREATE TABLE IF NOT EXISTS signals (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             project_id INTEGER NOT NULL,
-            unique_id TEXT, 连接类型 TEXT, 信号方向 TEXT,
+            unique_id TEXT, 连接类型 TEXT, 信号方向 TEXT, 信号ATA TEXT,
             信号架次有效性 TEXT,
             推荐导线线规 TEXT, 推荐导线线型 TEXT,
             独立电源代码 TEXT, 敷设代码 TEXT, 电磁兼容代码 TEXT,
@@ -252,20 +252,6 @@ export class Database {
         this.db.run(`CREATE INDEX IF NOT EXISTS idx_signal_endpoints_pin ON signal_endpoints(pin_id)`);
         this.db.run(`CREATE INDEX IF NOT EXISTS idx_devices_owner ON devices(设备负责人)`);
 
-        // 项目数据表关联表（保留向后兼容）
-        this.db.run(`
-          CREATE TABLE IF NOT EXISTS project_tables (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            project_id INTEGER NOT NULL,
-            table_type TEXT NOT NULL,
-            table_name TEXT NOT NULL UNIQUE,
-            template_id INTEGER,
-            display_name TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
-            FOREIGN KEY (template_id) REFERENCES templates(id)
-          )
-        `);
 
         // SysML v2 同步状态表
         this.db.run(`
@@ -299,16 +285,6 @@ export class Database {
 
         // 创建索引
         this.db.run(`
-          CREATE INDEX IF NOT EXISTS idx_templates_table_type
-          ON templates(table_type)
-        `);
-
-        this.db.run(`
-          CREATE INDEX IF NOT EXISTS idx_project_tables_project
-          ON project_tables(project_id)
-        `);
-
-        this.db.run(`
           CREATE INDEX IF NOT EXISTS idx_sysml_element_map_project
           ON sysml_element_map(project_id)
         `);
@@ -324,7 +300,58 @@ export class Database {
     });
   }
 
+  /** 备份数据库文件到 server/backups/ 目录，保留最近 20 个备份 */
+  async backupDatabase(): Promise<string | null> {
+    try {
+      const dbPath = path.resolve(process.env.DB_PATH || './eicd.db');
+      if (!fs.existsSync(dbPath)) return null;
+
+      const backupDir = path.join(path.dirname(dbPath), 'backups');
+      if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
+
+      const now = new Date();
+      const ts = now.getFullYear().toString()
+        + String(now.getMonth() + 1).padStart(2, '0')
+        + String(now.getDate()).padStart(2, '0')
+        + '_'
+        + String(now.getHours()).padStart(2, '0')
+        + String(now.getMinutes()).padStart(2, '0')
+        + String(now.getSeconds()).padStart(2, '0');
+      const backupName = `eicd_${ts}.db`;
+      const backupPath = path.join(backupDir, backupName);
+
+      // 使用 SQLite 的 VACUUM INTO 进行安全备份（确保 WAL 数据已合并）
+      try {
+        await this.run(`VACUUM INTO ?`, [backupPath]);
+      } catch {
+        // 如果 VACUUM INTO 不可用（SQLite < 3.27），退回到文件复制
+        fs.copyFileSync(dbPath, backupPath);
+      }
+      console.log(`Database backup created: ${backupPath}`);
+
+      // 清理旧备份，只保留最近 20 个
+      const backups = fs.readdirSync(backupDir)
+        .filter(f => f.startsWith('eicd_') && f.endsWith('.db'))
+        .sort();
+      const MAX_BACKUPS = 20;
+      if (backups.length > MAX_BACKUPS) {
+        const toDelete = backups.slice(0, backups.length - MAX_BACKUPS);
+        for (const f of toDelete) {
+          fs.unlinkSync(path.join(backupDir, f));
+          console.log(`Deleted old backup: ${f}`);
+        }
+      }
+      return backupPath;
+    } catch (e: any) {
+      console.error('Database backup failed:', e.message);
+      return null;
+    }
+  }
+
   async runMigrationsAndInit() {
+    // 每次启动 / 迁移前先备份数据库
+    await this.backupDatabase();
+
     try {
       // 检查并添加 uploaded_files 表的各列
       const columns = await this.query('PRAGMA table_info(uploaded_files)');
@@ -345,6 +372,10 @@ export class Database {
       if (!colNames.includes('unmatched_cols')) {
         await this.run('ALTER TABLE uploaded_files ADD COLUMN unmatched_cols TEXT');
         console.log('Database migration: added unmatched_cols column to uploaded_files table');
+      }
+      if (!colNames.includes('skipped_count')) {
+        await this.run('ALTER TABLE uploaded_files ADD COLUMN skipped_count INTEGER DEFAULT 0');
+        console.log('Database migration: added skipped_count column to uploaded_files table');
       }
     } catch (error: any) {
       console.log('Migration: uploaded_files table check:', error.message);
@@ -504,12 +535,12 @@ export class Database {
       }
     }
 
-    // 从 signals 表删除 信号ATA 列
+    // 为 signals 表添加 信号ATA 列
     try {
       const sigCols = await this.query(`PRAGMA table_info(signals)`);
-      if (sigCols.some((c: any) => c.name === '信号ATA')) {
-        await this.run(`ALTER TABLE signals DROP COLUMN 信号ATA`);
-        console.log('Database migration: dropped 信号ATA column from signals');
+      if (!sigCols.some((c: any) => c.name === '信号ATA')) {
+        await this.run(`ALTER TABLE signals ADD COLUMN 信号ATA TEXT`);
+        console.log('Database migration: added 信号ATA column to signals');
       }
     } catch (e: any) {
       console.log('Migration: signals 信号ATA:', e.message);
@@ -652,10 +683,234 @@ export class Database {
 
     // 为 aircraft_device_list 补充扩展列
     const adlCols = await this.query('PRAGMA table_info(aircraft_device_list)');
-    for (const col of ['电设备编号', '是否有EICD', '是否确认设备选型', '是否已确认MICD', '模型成熟度']) {
+    for (const col of ['电设备编号', '是否有EICD', '是否确认设备选型', '是否已确认MICD', '模型成熟度', '是否是用电设备', '类型']) {
       if (!adlCols.some((c: any) => c.name === col)) {
         await this.run(`ALTER TABLE aircraft_device_list ADD COLUMN "${col}" TEXT DEFAULT '-'`);
+        console.log(`Database migration: added column "${col}" to aircraft_device_list`);
       }
+    }
+
+    // 为 devices 表添加 DOORS 关联列
+    try {
+      const devCols = await this.query('PRAGMA table_info(devices)');
+      if (!devCols.some((c: any) => c.name === '设备编号（DOORS）')) {
+        await this.run(`ALTER TABLE devices ADD COLUMN "设备编号（DOORS）" TEXT`);
+        console.log('Database migration: added 设备编号（DOORS） column to devices');
+      }
+      if (!devCols.some((c: any) => c.name === '设备LIN号（DOORS）')) {
+        await this.run(`ALTER TABLE devices ADD COLUMN "设备LIN号（DOORS）" TEXT`);
+        console.log('Database migration: added 设备LIN号（DOORS） column to devices');
+      }
+    } catch (e: any) {
+      console.log('Migration: devices DOORS columns:', e.message);
+    }
+
+    // devices 列重命名 / 新增 / 删除
+    try {
+      const devCols2 = await this.query('PRAGMA table_info(devices)');
+      const names = devCols2.map((c: any) => c.name);
+
+      const renames: [string, string][] = [
+        ['设备件号',         '设备供应商件号'],
+        ['壳体是否金属',     '设备壳体是否金属'],
+        ['金属壳体表面处理', '金属壳体表面是否经过特殊处理而不易导电'],
+        ['壳体接地需求',     '设备壳体接地方式'],
+        ['额定电压',         '设备正常工作电压范围（V）'],
+        ['设备端连接器数量', '设备端连接器或接线柱数量'],
+        ['设备所属ATA',      '设备部件所属系统（4位ATA）'],
+        ['是否选装设备',     '是否为选装设备'],
+      ];
+      for (const [oldName, newName] of renames) {
+        if (names.includes(oldName) && !names.includes(newName)) {
+          await this.run(`ALTER TABLE devices RENAME COLUMN "${oldName}" TO "${newName}"`);
+          console.log(`Database migration: renamed devices.${oldName} → ${newName}`);
+        }
+      }
+
+      const devCols3 = await this.query('PRAGMA table_info(devices)');
+      const names3 = devCols3.map((c: any) => c.name);
+      if (!names3.includes('设备物理特性')) {
+        await this.run(`ALTER TABLE devices ADD COLUMN "设备物理特性" TEXT`);
+        console.log('Database migration: added 设备物理特性 column to devices');
+      }
+      if (names3.includes('额定电流')) {
+        await this.run(`ALTER TABLE devices DROP COLUMN "额定电流"`);
+        console.log('Database migration: dropped 额定电流 column from devices');
+      }
+      if (!names3.includes('导入来源')) {
+        await this.run(`ALTER TABLE devices ADD COLUMN "导入来源" TEXT`);
+        console.log('Database migration: added 导入来源 column to devices');
+      }
+      if (!names3.includes('created_by')) {
+        await this.run(`ALTER TABLE devices ADD COLUMN "created_by" TEXT`);
+        console.log('Database migration: added created_by column to devices');
+      }
+      if (!names3.includes('validation_errors')) {
+        await this.run(`ALTER TABLE devices ADD COLUMN "validation_errors" TEXT`);
+        console.log('Database migration: added validation_errors column to devices');
+      }
+      if (!names3.includes('import_conflicts')) {
+        await this.run(`ALTER TABLE devices ADD COLUMN "import_conflicts" TEXT`);
+        console.log('Database migration: added import_conflicts column to devices');
+      }
+    } catch (e: any) {
+      console.log('Migration: devices column rename/add/drop:', e.message);
+    }
+
+    // 迁移：将 devices 唯一约束从 (project_id, 设备编号) 改为 (project_id, 设备编号, 设备中文名称)
+    // 同时修复因旧迁移代码丢失 PRIMARY KEY AUTOINCREMENT 导致的外键失效问题
+    try {
+      const colInfos = await this.query('PRAGMA table_info(devices)');
+      const colNames = colInfos.map((c: any) => `"${c.name}"`).join(', ');
+      const idCol = colInfos.find((c: any) => c.name === 'id');
+      // 检查 CREATE TABLE 语句中是否已包含新的三列 UNIQUE 约束
+      const tableSchema = await this.get(`SELECT sql FROM sqlite_master WHERE type='table' AND name='devices'`);
+      const createSql = tableSchema?.sql || '';
+      const hasNewConstraint = createSql.includes('设备中文名称');
+      // 需要重建：约束未更新 或 id 列的 PRIMARY KEY 丢失（pk===0）
+      const needRebuild = !hasNewConstraint || (idCol && idCol.pk !== 1);
+      if (needRebuild) {
+        console.log('Database migration: rebuilding devices table (unique constraint + PRIMARY KEY fix)...');
+        await this.run('PRAGMA foreign_keys = OFF');
+        // 清理可能残留的 devices_new 表（上次迁移中断时留下的）
+        await this.run('DROP TABLE IF EXISTS devices_new');
+        // 用硬编码 schema 重建，保证 id PRIMARY KEY AUTOINCREMENT 不丢失
+        await this.run(`
+          CREATE TABLE devices_new (
+            "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+            "project_id" INTEGER NOT NULL,
+            "设备编号" TEXT,
+            "设备中文名称" TEXT, "设备英文名称" TEXT, "设备英文缩写" TEXT,
+            "设备供应商件号" TEXT, "设备供应商名称" TEXT, "设备部件所属系统（4位ATA）" TEXT,
+            "设备安装位置" TEXT, "设备DAL" TEXT,
+            "设备壳体是否金属" TEXT, "金属壳体表面是否经过特殊处理而不易导电" TEXT, "设备内共地情况" TEXT,
+            "设备壳体接地方式" TEXT, "壳体接地是否故障电流路径" TEXT, "其他接地特殊要求" TEXT,
+            "设备端连接器或接线柱数量" TEXT, "是否为选装设备" TEXT, "设备装机架次" TEXT,
+            "设备负责人" TEXT, "设备正常工作电压范围（V）" TEXT, "设备物理特性" TEXT, "备注" TEXT,
+            "导入来源" TEXT, "created_by" TEXT,
+            "status" TEXT DEFAULT 'normal',
+            "validation_errors" TEXT,
+            "import_conflicts" TEXT,
+            "created_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
+            "updated_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
+            "设备编号（DOORS）" TEXT,
+            "设备LIN号（DOORS）" TEXT,
+            "version" INTEGER NOT NULL DEFAULT 1,
+            UNIQUE("project_id", "设备编号", "设备中文名称"),
+            FOREIGN KEY ("project_id") REFERENCES projects(id) ON DELETE CASCADE
+          )
+        `);
+        await this.run(`INSERT INTO devices_new (${colNames}) SELECT ${colNames} FROM devices`);
+        await this.run('DROP TABLE devices');
+        await this.run('ALTER TABLE devices_new RENAME TO devices');
+        await this.run('PRAGMA foreign_keys = ON');
+        console.log('Database migration: devices table rebuilt successfully');
+      }
+    } catch (e: any) {
+      console.log('Migration: devices rebuild:', e.message);
+    }
+
+    // 为 connectors 表添加 导入来源、import_conflicts、validation_errors 列
+    try {
+      const connColsMig = await this.query('PRAGMA table_info(connectors)');
+      const connColNames = connColsMig.map((c: any) => c.name);
+      if (!connColNames.includes('导入来源')) {
+        await this.run(`ALTER TABLE connectors ADD COLUMN "导入来源" TEXT`);
+        console.log('Database migration: added 导入来源 column to connectors');
+      }
+      if (!connColNames.includes('import_conflicts')) {
+        await this.run(`ALTER TABLE connectors ADD COLUMN "import_conflicts" TEXT`);
+        console.log('Database migration: added import_conflicts column to connectors');
+      }
+      if (!connColNames.includes('validation_errors')) {
+        await this.run(`ALTER TABLE connectors ADD COLUMN "validation_errors" TEXT`);
+        console.log('Database migration: added validation_errors column to connectors');
+      }
+    } catch (e: any) {
+      console.log('Migration: connectors new columns:', e.message);
+    }
+
+    // 迁移：connectors 列名变更
+    try {
+      const connCols = await this.query('PRAGMA table_info(connectors)');
+      const connNames = connCols.map((c: any) => c.name);
+      const connRenames: [string, string][] = [
+        ['元器件名称及类型',   '设备端元器件名称及类型'],
+        ['元器件件号及类型',   '设备端元器件件号类型及件号'],
+        ['元器件供应商名称',   '设备端元器件供应商名称'],
+        ['匹配线束端元器件件号', '匹配的线束端元器件件号'],
+        ['匹配线束线型',       '匹配的线束线型'],
+        ['是否随设备交付',     '设备端元器件匹配的元器件是否随设备交付'],
+      ];
+      for (const [oldName, newName] of connRenames) {
+        if (connNames.includes(oldName) && !connNames.includes(newName)) {
+          await this.run(`ALTER TABLE connectors RENAME COLUMN "${oldName}" TO "${newName}"`);
+          console.log(`Database migration: connectors "${oldName}" → "${newName}"`);
+        }
+      }
+    } catch (e: any) {
+      console.log('Migration: connectors column rename:', e.message);
+    }
+
+    // 新增 approval_requests 表（设备/连接器创建编辑审批流程）
+    await this.run(`
+      CREATE TABLE IF NOT EXISTS approval_requests (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL,
+        requester_id INTEGER NOT NULL,
+        requester_username TEXT NOT NULL,
+        action_type TEXT NOT NULL,
+        entity_type TEXT NOT NULL,
+        entity_id INTEGER,
+        device_id INTEGER,
+        payload TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        rejection_reason TEXT,
+        reviewed_by_username TEXT,
+        reviewed_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+        FOREIGN KEY (requester_id) REFERENCES users(id)
+      )
+    `);
+    await this.run(`CREATE INDEX IF NOT EXISTS idx_approval_project ON approval_requests(project_id)`);
+    await this.run(`CREATE INDEX IF NOT EXISTS idx_approval_status  ON approval_requests(status)`);
+
+    // 清理废弃表
+    try {
+      await this.run('DROP TABLE IF EXISTS project_tables');
+      await this.run('DROP TABLE IF EXISTS table_metadata');
+      await this.run('DROP TABLE IF EXISTS custom_tables');
+      await this.run('DROP TABLE IF EXISTS templates');
+    } catch (e: any) {
+      console.log('Migration: drop legacy tables:', e.message);
+    }
+
+    // 迁移：section_connectors 简化为只有 设备名称 的顶层实体表（删除所有连接器字段）
+    try {
+      const scCols = await this.query('PRAGMA table_info(section_connectors)');
+      const hasOldSchema = scCols.some((c: any) =>
+        c.name === '连接器号' || c.name === '设备端元器件编号'
+      );
+      if (hasOldSchema) {
+        await this.run('DROP TABLE section_connectors');
+        await this.run(`
+          CREATE TABLE section_connectors (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER NOT NULL,
+            设备名称 TEXT NOT NULL,
+            负责人 TEXT,
+            status TEXT DEFAULT 'normal',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(project_id, 设备名称),
+            FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+          )
+        `);
+        console.log('Database migration: rebuilt section_connectors as simple device-name-only table');
+      }
+    } catch (e: any) {
+      console.log('Migration: section_connectors simplify:', e.message);
     }
 
     // 初始化默认用户（不再创建示例数据）

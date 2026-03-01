@@ -17,10 +17,12 @@ export default function ProjectManagement() {
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState<number | null>(null);
+  const [importPhase, setImportPhase] = useState<'devices' | 'connectors' | 'signals'>('devices');
   const [editingProject, setEditingProject] = useState<Project | null>(null);
-  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importFiles, setImportFiles] = useState<File[]>([]);
   const [importing, setImporting] = useState(false);
-  const [importResult, setImportResult] = useState<any | null>(null);
+  const [importResults, setImportResults] = useState<any[]>([]); // 每个文件一条
+  const [importProgress, setImportProgress] = useState(''); // 当前正在处理的文件名
   const [sysmlApiAvailable, setSysmlApiAvailable] = useState(false);
   const [syncingProjects, setSyncingProjects] = useState<Set<number>>(new Set());
 
@@ -34,6 +36,9 @@ export default function ProjectManagement() {
   const [viewListProjectId, setViewListProjectId] = useState<number | null>(null);
   const [aircraftDevices, setAircraftDevices] = useState<any[]>([]);
   const [listSearch, setListSearch] = useState('');
+  const [showListEditModal, setShowListEditModal] = useState(false);
+  const [editingListRow, setEditingListRow] = useState<any | null>(null); // null = 新增
+  const [listRowForm, setListRowForm] = useState<Record<string, string>>({});
 
   const [formData, setFormData] = useState({ name: '', description: '' });
 
@@ -176,6 +181,26 @@ export default function ProjectManagement() {
     }
   };
 
+  const saveListRow = async () => {
+    if (!viewListProjectId) return;
+    try {
+      const url = editingListRow
+        ? `/api/projects/${viewListProjectId}/aircraft-devices/${editingListRow.id}`
+        : `/api/projects/${viewListProjectId}/aircraft-devices`;
+      const method = editingListRow ? 'PUT' : 'POST';
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` },
+        body: JSON.stringify(listRowForm),
+      });
+      if (!res.ok) throw new Error((await res.json()).error || '保存失败');
+      setShowListEditModal(false);
+      await openViewList(viewListProjectId, listSearch);
+    } catch (err: any) {
+      alert(err.message || '保存失败');
+    }
+  };
+
   const handleExportSysml = async (projectId: number, projectName: string) => {
     try {
       const response = await fetch(`/api/projects/${projectId}/export-sysml`, {
@@ -212,25 +237,33 @@ export default function ProjectManagement() {
   };
 
   const handleImport = async () => {
-    if (!importFile || !showImportModal) return;
-    const formDataObj = new FormData();
-    formDataObj.append('file', importFile);
-    try {
-      setImporting(true);
-      setImportResult(null);
-      const response = await fetch(`/api/projects/${showImportModal}/import-data`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
-        body: formDataObj
-      });
-      if (!response.ok) throw new Error((await response.json()).error || '导入失败');
-      const result = await response.json();
-      setImportResult(result);
-    } catch (error: any) {
-      alert(error.message || '导入失败');
-    } finally {
-      setImporting(false);
+    if (!importFiles.length || !showImportModal) return;
+    setImporting(true);
+    setImportResults([]);
+
+    for (const file of importFiles) {
+      setImportProgress(file.name);
+      const fd = new FormData();
+      fd.append('file', file);
+      try {
+        const response = await fetch(`/api/projects/${showImportModal}/import-data?phase=${importPhase}`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+          body: fd
+        });
+        const result = await response.json();
+        if (!response.ok) {
+          setImportResults(prev => [...prev, { fileName: file.name, error: result.error || '导入失败' }]);
+        } else {
+          setImportResults(prev => [...prev, { fileName: file.name, results: result.results }]);
+        }
+      } catch (err: any) {
+        setImportResults(prev => [...prev, { fileName: file.name, error: err.message || '导入失败' }]);
+      }
     }
+
+    setImportProgress('');
+    setImporting(false);
   };
 
   if (user?.role !== 'admin') {
@@ -297,19 +330,25 @@ export default function ProjectManagement() {
                         {syncingProjects.has(project.id) ? '同步中...' : '同步SysML'}
                       </button>
                       <button
-                        onClick={() => { setShowImportModal(project.id); setImportFile(null); setImportResult(null); }}
+                        onClick={() => { setImportPhase('devices'); setShowImportModal(project.id); setImportFiles([]); setImportResults([]); }}
                         className="text-blue-600 hover:text-blue-800"
-                      >
-                        导入数据
-                      </button>
+                      >导入电设备清单</button>
+                      <button
+                        onClick={() => { setImportPhase('connectors'); setShowImportModal(project.id); setImportFiles([]); setImportResults([]); }}
+                        className="text-blue-600 hover:text-blue-800"
+                      >导入设备端元器件清单</button>
+                      <button
+                        onClick={() => { setImportPhase('signals'); setShowImportModal(project.id); setImportFiles([]); setImportResults([]); }}
+                        className="text-blue-600 hover:text-blue-800"
+                      >导入电气接口清单</button>
                       <button
                         onClick={() => { setImportListProjectId(project.id); setImportListResult(null); setImportListFile(null); setShowImportListModal(true); }}
                         className="text-purple-600 hover:text-purple-800"
-                      >导入清单</button>
+                      >导入全机设备清单</button>
                       <button
                         onClick={() => { setListSearch(''); openViewList(project.id); }}
                         className="text-cyan-600 hover:text-cyan-800"
-                      >查看清单</button>
+                      >查看全机设备清单</button>
                       <button onClick={() => handleEdit(project)} className="text-green-600 hover:text-green-800">编辑</button>
                       <button onClick={() => handleDelete(project.id)} className="text-red-600 hover:text-red-800">删除</button>
                     </td>
@@ -360,71 +399,120 @@ export default function ProjectManagement() {
         {showImportModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
             <div className="bg-white rounded-lg p-6 max-w-xl w-full max-h-[85vh] overflow-y-auto">
-              <h2 className="text-xl font-bold mb-4">导入数据（3-Sheet Excel）</h2>
+              <h2 className="text-xl font-bold mb-4">
+                {importPhase === 'devices' ? '导入电设备清单' : importPhase === 'connectors' ? '导入设备端元器件清单' : '导入电气接口清单'}
+              </h2>
 
               <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded text-sm text-blue-700">
-                <p className="font-medium mb-1">文件格式要求：</p>
-                <ul className="list-disc ml-4 space-y-1">
-                  <li>Sheet 1：ATA章节设备表（包含设备编号列）</li>
-                  <li>Sheet 2：设备端元器件表（包含设备编号、连接器号、针孔号列）</li>
-                  <li>Sheet 3：电气接口数据表（包含信号名称、连接类型、设备JSON列）</li>
-                </ul>
+                {importPhase === 'devices' && (
+                  <p>读取 Sheet <strong>「1-电设备清单」</strong>（第1行列名，第2行填写说明，第3行起为数据）。导入后自动校验，不合规的标记为 Draft。</p>
+                )}
+                {importPhase === 'connectors' && (
+                  <p>读取 Sheet <strong>「2-设备端元器件清单」</strong>，按设备编号关联到已导入的设备。</p>
+                )}
+                {importPhase === 'signals' && (
+                  <p>读取 Sheet 名称含 <strong>「电气接口清单」</strong> 的所有 Sheet（可多个），按设备 LIN 号关联设备和连接器。</p>
+                )}
               </div>
 
               <div className="mb-4">
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  选择 Excel 文件（.xlsx，包含3个Sheet）
+                  选择 Excel 文件（.xlsx，可多选）
                 </label>
                 <input
                   type="file"
                   accept=".xlsx"
-                  onChange={(e) => { setImportFile(e.target.files?.[0] || null); setImportResult(null); }}
+                  multiple
+                  onChange={(e) => { setImportFiles(Array.from(e.target.files || [])); setImportResults([]); }}
                   className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
                   disabled={importing}
                 />
+                {importFiles.length > 0 && (
+                  <p className="mt-1 text-xs text-gray-500">已选择 {importFiles.length} 个文件</p>
+                )}
               </div>
 
+              {/* 进度提示 */}
+              {importing && importProgress && (
+                <p className="mb-3 text-sm text-blue-600">正在处理：{importProgress}</p>
+              )}
+
               {/* 导入结果 */}
-              {importResult && (
-                <div className="mb-4 space-y-2">
-                  {Object.entries(importResult.results || {}).map(([key, sheet]: [string, any]) => {
-                    if (!sheet) return null;
-                    const hasErrors = sheet.errors?.length > 0;
-                    const hasSkipped = sheet.skipped > 0;
+              {importResults.length > 0 && (
+                <div className="mb-4">
+                  {/* 汇总统计 */}
+                  {!importing && (() => {
+                    let totalSuccess = 0, totalSkipped = 0, totalErrors = 0;
+                    for (const fr of importResults) {
+                      if (fr.error) { totalErrors++; continue; }
+                      for (const sheet of Object.values(fr.results || {}) as any[]) {
+                        if (!sheet) continue;
+                        totalSuccess += sheet.success || 0;
+                        totalSkipped += Array.isArray(sheet.skipped) ? sheet.skipped.length : 0;
+                        totalErrors += Array.isArray(sheet.errors) ? sheet.errors.length : 0;
+                      }
+                    }
                     return (
-                      <div key={key} className={`p-3 rounded border text-sm ${hasErrors ? 'border-yellow-300 bg-yellow-50' : 'border-green-300 bg-green-50'}`}>
-                        <p className="font-medium">
-                          {sheet.name}：新增 {sheet.success} 条
-                          {hasSkipped ? ` / 已存在跳过 ${sheet.skipped} 条` : ''}
-                          {hasErrors ? ` / 问题 ${sheet.errors.length} 条` : ''}
-                        </p>
-                        {hasErrors && (
-                          <ul className="mt-1 text-xs text-yellow-800 space-y-0.5 max-h-24 overflow-y-auto">
-                            {sheet.errors.slice(0, 20).map((e: string, idx: number) => <li key={idx}>• {e}</li>)}
-                            {sheet.errors.length > 20 && <li>... 还有 {sheet.errors.length - 20} 条</li>}
-                          </ul>
-                        )}
+                      <div className="mb-3 px-3 py-2 bg-blue-50 border border-blue-200 rounded text-sm font-medium text-blue-800">
+                        导入完成：新增 {totalSuccess} 条 / 跳过 {totalSkipped} 条 / 问题 {totalErrors} 条
                       </div>
                     );
-                  })}
+                  })()}
+                  <div className="space-y-3 max-h-64 overflow-y-auto">
+                  {importResults.map((fileResult, fi) => (
+                    <div key={fi} className="border rounded p-2">
+                      <p className="text-xs font-semibold text-gray-700 mb-1 truncate" title={fileResult.fileName}>{fileResult.fileName}</p>
+                      {fileResult.error ? (
+                        <p className="text-xs text-red-600">{fileResult.error}</p>
+                      ) : (
+                        Object.entries(fileResult.results || {}).map(([key, sheet]: [string, any]) => {
+                          if (!sheet) return null;
+                          const skippedList: string[] = Array.isArray(sheet.skipped) ? sheet.skipped : [];
+                          const hasErrors = sheet.errors?.length > 0;
+                          const hasSkipped = skippedList.length > 0;
+                          return (
+                            <div key={key} className={`px-2 py-1 rounded text-xs ${hasErrors ? 'bg-yellow-50 text-yellow-800' : 'bg-green-50 text-green-800'}`}>
+                              <span className="font-medium">{sheet.name}：</span>
+                              新增 {sheet.success} 条
+                              {hasSkipped ? ` / 跳过 ${skippedList.length} 条` : ''}
+                              {hasErrors ? ` / 问题 ${sheet.errors.length} 条` : ''}
+                              {hasSkipped && (
+                                <ul className="mt-0.5 space-y-0.5 max-h-16 overflow-y-auto text-gray-600">
+                                  {skippedList.slice(0, 10).map((s: string, idx: number) => <li key={idx}>• {s}</li>)}
+                                  {skippedList.length > 10 && <li>... 还有 {skippedList.length - 10} 条</li>}
+                                </ul>
+                              )}
+                              {hasErrors && (
+                                <ul className="mt-0.5 space-y-0.5 max-h-16 overflow-y-auto">
+                                  {sheet.errors.slice(0, 10).map((e: string, idx: number) => <li key={idx}>• {e}</li>)}
+                                  {sheet.errors.length > 10 && <li>... 还有 {sheet.errors.length - 10} 条</li>}
+                                </ul>
+                              )}
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  ))}
+                  </div>
                 </div>
               )}
 
               <div className="flex justify-end gap-2">
                 <button
-                  onClick={() => { setShowImportModal(null); setImportFile(null); setImportResult(null); }}
+                  onClick={() => { setShowImportModal(null); setImportFiles([]); setImportResults([]); setImportProgress(''); }}
                   className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50"
                   disabled={importing}
                 >
-                  {importResult ? '关闭' : '取消'}
+                  {importResults.length > 0 && !importing ? '关闭' : '取消'}
                 </button>
-                {!importResult && (
+                {!(importResults.length > 0 && !importing) && (
                   <button
                     onClick={handleImport}
-                    disabled={!importFile || importing}
+                    disabled={!importFiles.length || importing}
                     className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
                   >
-                    {importing ? '导入中...' : '开始导入'}
+                    {importing ? `导入中 (${importResults.length}/${importFiles.length})...` : '开始导入'}
                   </button>
                 )}
               </div>
@@ -441,9 +529,9 @@ export default function ProjectManagement() {
             {!importListResult ? (
               <>
                 <p className="text-sm text-gray-500 mb-4">
-                  请上传 Sheet 名为 <strong>5-全机设备清单</strong> 的 Excel 文件。<br />
-                  支持的列（可缺）：Object Identifier、系统名称、Object Text、设备编号、LIN号、设备布置区域、飞机构型、是否有供应商数模、是否已布置在样机、电设备编号、是否有EICD、是否确认设备选型、是否已确认MICD、模型成熟度。<br />
-                  缺失列自动填充"-"；若某行与数据库中已有记录的 14 列内容完全相同则跳过。
+                  请上传 DOORS 导出的 Excel 文件，Sheet 名须为 <strong>00设备编号管理</strong>。<br />
+                  读取列：Object Identifier、系统名称、电设备编号、设备编号、LIN号、Object Text、设备布置区域、飞机构型、是否有EICD、是否是用电设备、类型（共 11 列，缺失列填"-"）。<br />
+                  若某行与数据库中已有记录的 11 列内容完全相同则跳过。
                 </p>
                 <input
                   type="file" accept=".xlsx,.xls"
@@ -484,10 +572,16 @@ export default function ProjectManagement() {
       {/* 查看全机设备清单弹窗 */}
       {showViewListModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 flex flex-col shadow-xl" style={{ width: '90vw', maxWidth: '1200px', maxHeight: '85vh' }}>
+          <div className="bg-white rounded-lg p-6 flex flex-col shadow-xl" style={{ width: '98vw', maxWidth: '1800px', maxHeight: '90vh' }}>
             <div className="flex justify-between items-center mb-3">
               <h2 className="text-lg font-bold">全机设备清单（{aircraftDevices.length} 条）</h2>
-              <button onClick={() => setShowViewListModal(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => { setEditingListRow(null); setListRowForm({}); setShowListEditModal(true); }}
+                  className="px-3 py-1 bg-green-600 text-white rounded text-sm hover:bg-green-700"
+                >+ 新增</button>
+                <button onClick={() => setShowViewListModal(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
+              </div>
             </div>
             <div className="flex space-x-2 mb-3">
               <input
@@ -506,36 +600,76 @@ export default function ProjectManagement() {
               <table className="min-w-full text-xs border-collapse">
                 <thead className="bg-gray-50 sticky top-0">
                   <tr>
-                    {['Object Identifier','系统名称','Object Text','设备编号（DOORS）','设备LIN号（DOORS）','设备布置区域','飞机构型','是否有供应商数模','是否已布置在样机','电设备编号','是否有EICD','是否确认设备选型','是否已确认MICD','模型成熟度'].map(h => (
+                    {['Object Identifier','系统名称','电设备编号','设备编号（DOORS）','设备LIN号（DOORS）','Object Text','设备布置区域','飞机构型','是否有EICD','是否是用电设备','类型'].map(h => (
                       <th key={h} className="px-3 py-2 text-left text-gray-500 border-b whitespace-nowrap font-medium">{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {aircraftDevices.length === 0 ? (
-                    <tr><td colSpan={14} className="px-3 py-4 text-center text-gray-400">暂无数据</td></tr>
+                    <tr><td colSpan={11} className="px-3 py-4 text-center text-gray-400">暂无数据</td></tr>
                   ) : (
                     aircraftDevices.map(row => (
                       <tr key={row.id} className="hover:bg-gray-50">
-                        <td className="px-3 py-1.5">{row.object_identifier || '-'}</td>
-                        <td className="px-3 py-1.5">{row.系统名称 || '-'}</td>
-                        <td className="px-3 py-1.5 max-w-xs truncate" title={row.object_text}>{row.object_text || '-'}</td>
-                        <td className="px-3 py-1.5 font-mono">{row.设备编号_DOORS || '-'}</td>
-                        <td className="px-3 py-1.5 font-mono">{row['LIN号_DOORS'] || '-'}</td>
-                        <td className="px-3 py-1.5">{row.设备布置区域 || '-'}</td>
-                        <td className="px-3 py-1.5">{row.飞机构型 || '-'}</td>
-                        <td className="px-3 py-1.5">{row.是否有供应商数模 || '-'}</td>
-                        <td className="px-3 py-1.5">{row.是否已布置在样机 || '-'}</td>
+                        <td className="px-3 py-1.5">
+                          <button
+                            onClick={() => { setEditingListRow(row); setListRowForm({ ...row }); setShowListEditModal(true); }}
+                            className="text-blue-600 hover:text-blue-800 hover:underline text-left"
+                          >{row.object_identifier || '-'}</button>
+                        </td>
+                        <td className="px-3 py-1.5">{row['系统名称'] || '-'}</td>
                         <td className="px-3 py-1.5 font-mono">{row['电设备编号'] || '-'}</td>
+                        <td className="px-3 py-1.5 font-mono">{row['设备编号_DOORS'] || '-'}</td>
+                        <td className="px-3 py-1.5 font-mono">{row['LIN号_DOORS'] || '-'}</td>
+                        <td className="px-3 py-1.5 max-w-xs truncate" title={row.object_text}>{row.object_text || '-'}</td>
+                        <td className="px-3 py-1.5">{row['设备布置区域'] || '-'}</td>
+                        <td className="px-3 py-1.5">{row['飞机构型'] || '-'}</td>
                         <td className="px-3 py-1.5">{row['是否有EICD'] || '-'}</td>
-                        <td className="px-3 py-1.5">{row['是否确认设备选型'] || '-'}</td>
-                        <td className="px-3 py-1.5">{row['是否已确认MICD'] || '-'}</td>
-                        <td className="px-3 py-1.5">{row['模型成熟度'] || '-'}</td>
+                        <td className="px-3 py-1.5">{row['是否是用电设备'] || '-'}</td>
+                        <td className="px-3 py-1.5">{row['类型'] || '-'}</td>
                       </tr>
                     ))
                   )}
                 </tbody>
               </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── 全机设备清单 编辑/新增 弹窗 ── */}
+      {showListEditModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60]">
+          <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-[85vh] overflow-y-auto shadow-xl">
+            <h2 className="text-lg font-bold mb-4">{editingListRow ? '编辑设备清单行' : '新增设备清单行'}</h2>
+            <div className="grid grid-cols-2 gap-3">
+              {[
+                { key: 'object_identifier', label: 'Object Identifier' },
+                { key: '系统名称', label: '系统名称' },
+                { key: '电设备编号', label: '电设备编号' },
+                { key: '设备编号_DOORS', label: '设备编号（DOORS）' },
+                { key: 'LIN号_DOORS', label: '设备LIN号（DOORS）' },
+                { key: 'object_text', label: 'Object Text' },
+                { key: '设备布置区域', label: '设备布置区域' },
+                { key: '飞机构型', label: '飞机构型' },
+                { key: '是否有EICD', label: '是否有EICD' },
+                { key: '是否是用电设备', label: '是否是用电设备' },
+                { key: '类型', label: '类型' },
+              ].map(f => (
+                <div key={f.key}>
+                  <label className="block text-xs text-gray-600 mb-1">{f.label}</label>
+                  <input
+                    type="text"
+                    value={listRowForm[f.key] || ''}
+                    onChange={e => setListRowForm({ ...listRowForm, [f.key]: e.target.value })}
+                    className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
+                  />
+                </div>
+              ))}
+            </div>
+            <div className="flex justify-end gap-2 mt-4">
+              <button onClick={() => setShowListEditModal(false)} className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 text-sm">取消</button>
+              <button onClick={saveListRow} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm">保存</button>
             </div>
           </div>
         </div>

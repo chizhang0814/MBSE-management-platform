@@ -1,0 +1,23 @@
+services:
+
+  # ── 前端（Nginx + React 静态文件）────────────────────────
+  frontend:
+    build: ./client
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  # ── 后端（Node.js / Express + SQLite）───────────────────
+  backend:
+    build: ./server
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DB_PATH: /app/data/eicd.db
+      JWT_SECRET: ${JWT_SECRET:-eicd_secret_key_2024}
+    volumes:
+      - ./data/sqlite:/app/data        # SQLite 数据库 + 备份 → 宿主机 data/sqlite/
+      - ./data/uploads:/app/uploads    # 上传文件           → 宿主机 data/uploads/
+    restart: unless-stopped

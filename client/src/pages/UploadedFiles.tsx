@@ -11,6 +11,7 @@ interface UploadedFile {
   uploaded_by_name: string;
   total_rows: number;
   success_count: number | null;
+  skipped_count: number;
   error_count: number;
   file_size: number;
   uploaded_at: string;
@@ -20,10 +21,16 @@ interface UploadedFile {
   unmatched_cols?: string | null;  // JSON 字符串：string[]
 }
 
+function parseUtcDate(s: string): Date {
+  // SQLite CURRENT_TIMESTAMP 返回 UTC，补 Z 避免被当本地时间解析
+  return new Date(s.includes('Z') || s.includes('+') ? s : s.replace(' ', 'T') + 'Z');
+}
+
 export default function UploadedFiles() {
   const [files, setFiles] = useState<UploadedFile[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const [selectedFile, setSelectedFile] = useState<UploadedFile | null>(null);
 
   useEffect(() => {
@@ -101,6 +108,29 @@ export default function UploadedFiles() {
     }
   };
 
+  const handleClearAll = async () => {
+    if (!confirm('确定要清空所有上传文档信息吗？此操作不可恢复。')) return;
+    setClearing(true);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch('/api/upload/files/all', {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (res.ok) {
+        alert(`已清空 ${data.deleted} 条记录`);
+        fetchFiles();
+      } else {
+        alert(data.error || '清空失败');
+      }
+    } catch (e: any) {
+      alert(e.message || '清空失败');
+    } finally {
+      setClearing(false);
+    }
+  };
+
   const handleDelete = async (fileId: number) => {
     if (!confirm('确定要删除此文件记录吗？')) {
       return;
@@ -146,6 +176,14 @@ export default function UploadedFiles() {
     return status;
   };
 
+  const getImportTypeLabel = (tableType?: string) => {
+    if (tableType === 'devices') return '电设备清单';
+    if (tableType === 'connectors') return '设备端元器件清单';
+    if (tableType === 'signals') return '电气接口清单';
+    if (tableType === 'all') return '全部';
+    return tableType || '—';
+  };
+
   if (loading) {
     return (
       <Layout>
@@ -161,6 +199,14 @@ export default function UploadedFiles() {
       <div className="px-4 sm:px-0">
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-3xl font-bold text-gray-900">上传文件管理</h1>
+          <div className="flex gap-2">
+          <button
+            onClick={handleClearAll}
+            disabled={clearing}
+            className="bg-red-500 text-white px-4 py-2 rounded-lg hover:bg-red-600 disabled:bg-gray-300 text-sm"
+          >
+            {clearing ? '清空中...' : '清空上传文档信息'}
+          </button>
           <button
             onClick={handleSync}
             disabled={syncing}
@@ -168,6 +214,7 @@ export default function UploadedFiles() {
           >
             {syncing ? '同步中...' : '同步现有文件'}
           </button>
+          </div>
         </div>
         {files.length === 0 ? (
           <div className="bg-white shadow rounded-lg p-8 text-center">
@@ -189,13 +236,16 @@ export default function UploadedFiles() {
                     项目名称
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    导入类型
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     上传者
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     总行数
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    成功/失败
+                    成功/跳过/失败
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     状态
@@ -225,6 +275,11 @@ export default function UploadedFiles() {
                         <span className="text-gray-400 italic text-xs">未关联项目</span>
                       )}
                     </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm">
+                      <span className="px-2 py-1 bg-blue-50 text-blue-700 rounded text-xs">
+                        {getImportTypeLabel(file.table_type)}
+                      </span>
+                    </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{file.uploaded_by_name}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{file.total_rows}</td>
                     <td className="px-6 py-4 whitespace-nowrap">
@@ -234,6 +289,8 @@ export default function UploadedFiles() {
                         ) : (
                           <>
                             <span className="text-green-600">{file.success_count}</span>
+                            {' / '}
+                            <span className="text-yellow-600">{file.skipped_count || 0}</span>
                             {' / '}
                             <span className="text-red-600">{file.error_count}</span>
                           </>
@@ -246,7 +303,7 @@ export default function UploadedFiles() {
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {new Date(file.uploaded_at).toLocaleString()}
+                      {parseUtcDate(file.uploaded_at).toLocaleString()}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
                       <button
@@ -292,14 +349,27 @@ export default function UploadedFiles() {
 
         {/* 文件详情对话框 */}
         {selectedFile && (() => {
-          const tableTypeLabel =
-            selectedFile.table_type === 'ata_device' ? 'ATA章节设备表' :
-            selectedFile.table_type === 'device_component' ? '设备端元器件表' :
-            selectedFile.table_type === 'electrical_interface' ? '电气接口数据表' :
-            selectedFile.table_type || '—';
-          const errorList: string[] = (() => {
-            try { return selectedFile.error_details ? JSON.parse(selectedFile.error_details) : []; }
-            catch { return []; }
+          const tableTypeLabel = getImportTypeLabel(selectedFile.table_type);
+          type SheetResult = { name?: string; success: number; skipped: string[]; errors: string[] };
+          const { sheetResults, errorList, skippedList } = (() => {
+            try {
+              if (!selectedFile.error_details) return { sheetResults: null, errorList: [] as string[], skippedList: [] as string[] };
+              const parsed = JSON.parse(selectedFile.error_details);
+              // 新格式：{ sheets: { "Sheet名": { success, skipped, errors } } }
+              if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && parsed.sheets) {
+                const sheets = parsed.sheets as Record<string, SheetResult>;
+                const allErr: string[] = [];
+                const allSkip: string[] = [];
+                Object.values(sheets).forEach(s => { allErr.push(...(s.errors || [])); allSkip.push(...(s.skipped || [])); });
+                return { sheetResults: sheets, errorList: allErr, skippedList: allSkip };
+              }
+              // 旧格式：{ errors: [...], skipped: [...] }
+              if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                return { sheetResults: null, errorList: parsed.errors || [], skippedList: parsed.skipped || [] };
+              }
+              // 很旧格式：string[]
+              return { sheetResults: null, errorList: parsed as string[], skippedList: [] as string[] };
+            } catch { return { sheetResults: null, errorList: [] as string[], skippedList: [] as string[] }; }
           })();
           const unmatchedList: string[] = (() => {
             try { return selectedFile.unmatched_cols ? JSON.parse(selectedFile.unmatched_cols) : []; }
@@ -341,7 +411,7 @@ export default function UploadedFiles() {
                     </div>
                     <div>
                       <p className="text-gray-500">上传时间</p>
-                      <p className="font-medium">{new Date(selectedFile.uploaded_at).toLocaleString()}</p>
+                      <p className="font-medium">{parseUtcDate(selectedFile.uploaded_at).toLocaleString()}</p>
                     </div>
                     <div>
                       <p className="text-gray-500">文件状态</p>
@@ -358,7 +428,7 @@ export default function UploadedFiles() {
                   </div>
 
                   {/* 导入统计 */}
-                  <div className="bg-gray-50 rounded-lg p-4 grid grid-cols-3 gap-4 text-center text-sm">
+                  <div className="bg-gray-50 rounded-lg p-4 grid grid-cols-4 gap-4 text-center text-sm">
                     <div>
                       <p className="text-gray-500 mb-1">总行数</p>
                       <p className="text-2xl font-bold text-gray-800">{selectedFile.total_rows}</p>
@@ -368,6 +438,10 @@ export default function UploadedFiles() {
                       <p className="text-2xl font-bold text-green-600">
                         {selectedFile.success_count !== null ? selectedFile.success_count : '—'}
                       </p>
+                    </div>
+                    <div>
+                      <p className="text-gray-500 mb-1">跳过</p>
+                      <p className="text-2xl font-bold text-yellow-600">{selectedFile.skipped_count || 0}</p>
                     </div>
                     <div>
                       <p className="text-gray-500 mb-1">导入失败</p>
@@ -391,31 +465,72 @@ export default function UploadedFiles() {
                     </div>
                   )}
 
-                  {/* 失败详情 */}
-                  {errorList.length > 0 && (
-                    <div>
-                      <h4 className="text-sm font-semibold text-gray-700 mb-2">
-                        失败详情（共 {errorList.length} 条）
-                      </h4>
-                      <div className="border border-red-200 rounded-md overflow-hidden">
-                        <div className="bg-red-50 px-3 py-1.5 text-xs text-red-600 border-b border-red-200 font-medium">
-                          行号 / 原因
+                  {/* 分 Sheet 详情（新格式） */}
+                  {sheetResults ? (
+                    Object.entries(sheetResults).map(([sheetKey, sr]) => {
+                      const hasDetail = (sr.skipped?.length || 0) + (sr.errors?.length || 0) > 0;
+                      return (
+                        <div key={sheetKey}>
+                          <h4 className="text-sm font-semibold text-gray-700 mb-1">
+                            Sheet：{sheetKey}
+                            <span className="ml-2 text-xs font-normal text-gray-500">
+                              成功 {sr.success} 条 / 跳过 {sr.skipped?.length || 0} 条 / 失败 {sr.errors?.length || 0} 条
+                            </span>
+                          </h4>
+                          {hasDetail ? (
+                            <div className="space-y-2 mb-3">
+                              {(sr.skipped?.length || 0) > 0 && (
+                                <div className="border border-yellow-200 rounded-md overflow-hidden">
+                                  <div className="bg-yellow-50 px-3 py-1 text-xs text-yellow-700 border-b border-yellow-200 font-medium">跳过（{sr.skipped.length} 条）</div>
+                                  <ul className="max-h-36 overflow-y-auto divide-y divide-yellow-100 text-xs text-yellow-800">
+                                    {sr.skipped.map((s, i) => <li key={i} className="px-3 py-1">{s}</li>)}
+                                  </ul>
+                                </div>
+                              )}
+                              {(sr.errors?.length || 0) > 0 && (
+                                <div className="border border-red-200 rounded-md overflow-hidden">
+                                  <div className="bg-red-50 px-3 py-1 text-xs text-red-600 border-b border-red-200 font-medium">失败（{sr.errors.length} 条）</div>
+                                  <ul className="max-h-36 overflow-y-auto divide-y divide-red-100 text-xs text-red-800">
+                                    {sr.errors.map((e, i) => <li key={i} className="px-3 py-1">{e}</li>)}
+                                  </ul>
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <p className="text-xs text-gray-400 mb-3">无跳过/失败记录</p>
+                          )}
                         </div>
-                        <ul className="max-h-72 overflow-y-auto divide-y divide-red-100 text-xs text-red-800">
-                          {errorList.map((err, i) => (
-                            <li key={i} className="px-3 py-1.5">
-                              {err}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    </div>
-                  )}
-
-                  {selectedFile.error_count > 0 && errorList.length === 0 && (
-                    <p className="text-sm text-gray-400 italic">
-                      该记录为旧版导入，未保存错误详情。
-                    </p>
+                      );
+                    })
+                  ) : (
+                    <>
+                      {/* 旧格式兼容展示 */}
+                      {skippedList.length > 0 && (
+                        <div>
+                          <h4 className="text-sm font-semibold text-gray-700 mb-2">跳过详情（共 {skippedList.length} 条）</h4>
+                          <div className="border border-yellow-200 rounded-md overflow-hidden">
+                            <div className="bg-yellow-50 px-3 py-1.5 text-xs text-yellow-700 border-b border-yellow-200 font-medium">行号 / 原因</div>
+                            <ul className="max-h-48 overflow-y-auto divide-y divide-yellow-100 text-xs text-yellow-800">
+                              {skippedList.map((s, i) => <li key={i} className="px-3 py-1.5">{s}</li>)}
+                            </ul>
+                          </div>
+                        </div>
+                      )}
+                      {errorList.length > 0 && (
+                        <div>
+                          <h4 className="text-sm font-semibold text-gray-700 mb-2">失败详情（共 {errorList.length} 条）</h4>
+                          <div className="border border-red-200 rounded-md overflow-hidden">
+                            <div className="bg-red-50 px-3 py-1.5 text-xs text-red-600 border-b border-red-200 font-medium">行号 / 原因</div>
+                            <ul className="max-h-48 overflow-y-auto divide-y divide-red-100 text-xs text-red-800">
+                              {errorList.map((err, i) => <li key={i} className="px-3 py-1.5">{err}</li>)}
+                            </ul>
+                          </div>
+                        </div>
+                      )}
+                      {selectedFile.error_count > 0 && errorList.length === 0 && (
+                        <p className="text-sm text-gray-400 italic">该记录为旧版导入，未保存错误详情。</p>
+                      )}
+                    </>
                   )}
 
                 </div>

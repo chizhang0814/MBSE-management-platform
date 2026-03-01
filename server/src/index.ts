@@ -7,12 +7,14 @@ import { dataRoutes } from './routes/data.js';
 import { taskRoutes } from './routes/tasks.js';
 import { uploadRoutes } from './routes/upload.js';
 import { usersRoutes } from './routes/users.js';
-import { templateRoutes } from './routes/templates.js';
 import { projectRoutes } from './routes/projects.js';
 import { deviceRoutes } from './routes/devices.js';
 import { signalRoutes } from './routes/signals.js';
 import { sysmlBrowserRoutes } from './routes/sysml-browser.js';
 import { notificationRoutes } from './routes/notifications.js';
+import { approvalRoutes } from './routes/approvals.js';
+import { sectionConnectorRoutes } from './routes/section-connectors.js';
+import { changeLogRoutes } from './routes/change-logs.js';
 import path from 'path';
 
 dotenv.config();
@@ -40,12 +42,14 @@ app.use('/api/data', dataRoutes(db));
 app.use('/api/tasks', taskRoutes(db));
 app.use('/api/upload', uploadRoutes(db));
 app.use('/api/users', usersRoutes(db));
-app.use('/api/templates', templateRoutes(db));
 app.use('/api/projects', projectRoutes(db));
 app.use('/api/devices', deviceRoutes(db));
 app.use('/api/signals', signalRoutes(db));
 app.use('/api/sysml', sysmlBrowserRoutes());
 app.use('/api/notifications', notificationRoutes(db));
+app.use('/api/approvals', approvalRoutes(db));
+app.use('/api/section-connectors', sectionConnectorRoutes(db));
+app.use('/api/change-logs', changeLogRoutes(db));
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' });

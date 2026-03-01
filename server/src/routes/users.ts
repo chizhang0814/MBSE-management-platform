@@ -60,6 +60,17 @@ export function usersRoutes(db: Database) {
     }
   });
 
+  // 获取当前用户的权限列表（用于前端导航栏判断）
+  router.get('/me/permissions', authenticate, async (req: any, res) => {
+    try {
+      const userRow = await db.get('SELECT permissions FROM users WHERE id = ?', [req.user!.id]);
+      const permissions = userRow?.permissions ? JSON.parse(userRow.permissions) : [];
+      res.json({ permissions });
+    } catch (error) {
+      res.status(500).json({ error: '获取权限失败' });
+    }
+  });
+
   // 获取所有用户
   router.get('/', authenticate, requireRole('admin'), async (req, res) => {
     try {

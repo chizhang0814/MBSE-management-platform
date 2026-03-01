@@ -131,6 +131,31 @@ export function projectRoutes(db: Database) {
 
   // ── 获取单个项目 ──────────────────────────────────────────
 
+  // ── GET /api/projects/:id/members ────────────────────────────
+  // 返回被分配了该项目权限的用户名列表及角色（供设备负责人下拉选择）
+  router.get('/:id/members', authenticate, async (req, res) => {
+    try {
+      const projectId = parseInt(req.params.id);
+      const project = await db.get('SELECT name FROM projects WHERE id = ?', [projectId]);
+      if (!project) return res.status(404).json({ error: '项目不存在' });
+
+      const users = await db.query('SELECT username, permissions FROM users WHERE role = ?', ['user']);
+      const members: string[] = [];
+      const memberRoles: Array<{ username: string; project_role: string }> = [];
+      for (const u of users) {
+        const perms: Array<{ project_name: string; project_role: string }> = u.permissions ? JSON.parse(u.permissions) : [];
+        const match = perms.find(p => p.project_name === project.name);
+        if (match) {
+          members.push(u.username);
+          memberRoles.push({ username: u.username, project_role: match.project_role });
+        }
+      }
+      res.json({ members, memberRoles });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || '获取项目成员失败' });
+    }
+  });
+
   router.get('/:id', authenticate, async (req, res) => {
     try {
       const project = await db.get(
@@ -203,6 +228,28 @@ export function projectRoutes(db: Database) {
       params.push(projectId);
 
       await db.run(`UPDATE projects SET ${updates.join(', ')} WHERE id = ?`, params);
+
+      // 项目改名时，同步更新所有用户 permissions 中的旧项目名
+      if (name && name.trim() !== existing.name) {
+        const oldName = existing.name;
+        const newName = name.trim();
+        const allUsers = await db.query('SELECT id, permissions FROM users WHERE permissions IS NOT NULL');
+        for (const u of allUsers) {
+          let perms: any[];
+          try { perms = JSON.parse(u.permissions); } catch { continue; }
+          if (!Array.isArray(perms)) continue;
+          let changed = false;
+          for (const p of perms) {
+            if (p.project_name === oldName) { p.project_name = newName; changed = true; }
+          }
+          if (changed) {
+            await db.run('UPDATE users SET permissions = ? WHERE id = ?', [JSON.stringify(perms), u.id]);
+          }
+        }
+        // 同步更新 permission_requests 表中的旧项目名
+        await db.run('UPDATE permission_requests SET project_name = ? WHERE project_name = ?', [newName, oldName]);
+      }
+
       res.json({ success: true, message: '项目更新成功' });
     } catch (error: any) {
       res.status(500).json({ error: error.message || '更新项目失败' });
@@ -241,602 +288,776 @@ export function projectRoutes(db: Database) {
         if (!project) return res.status(404).json({ error: '项目不存在' });
 
         const workbook = xlsx.readFile(req.file.path);
-
-        if (workbook.SheetNames.length < 1) {
-          return res.status(400).json({ error: 'Excel 文件无 Sheet' });
-        }
+        const originalName = Buffer.from(req.file.originalname, 'latin1').toString('utf8');
 
         const results: Record<string, any> = {};
 
+        // phase: 'all'(默认) | 'devices'(只导设备) | 'connectors'(只导连接器) | 'signals'(只导信号)
+        const phase = (req.query.phase as string) || 'all';
+        const doDeviceSheet    = phase === 'all' || phase === 'devices';
+        const doConnectorSheet = phase === 'all' || phase === 'connectors';
+        const doSignals        = phase === 'all' || phase === 'signals';
+        // 预声明计数器，保证 phase 条件块外也能引用
+        let s0Success = 0, s0Error = 0; const s0Errors: string[] = [], s0Skipped: string[] = [];
+        let s1Success = 0, s1Error = 0; const s1Errors: string[] = [], s1Skipped: string[] = [];
 
-        // ─── Sheet 0: ATA设备表 → devices ────────────────────
+        // ─── Sheet 定位（按名称）────────────────────────────────
+        const DEVICE_SHEET    = '1-电设备清单';
+        const CONNECTOR_SHEET = '2-设备端元器件清单';
+        const deviceSheetName    = workbook.SheetNames.find(n => n.trim() === DEVICE_SHEET);
+        const connectorSheetName = workbook.SheetNames.find(n => n.trim() === CONNECTOR_SHEET);
+        const signalSheetNames   = workbook.SheetNames.filter(n => n.includes('电气接口清单'));
 
-        const sheet0 = workbook.Sheets[workbook.SheetNames[0]];
+        if (doDeviceSheet && !deviceSheetName) {
+          fs.unlink(req.file.path, () => {});
+          return res.status(400).json({ error: `文件缺少 "${DEVICE_SHEET}" Sheet。当前 Sheet：${workbook.SheetNames.join('、')}` });
+        }
+        if (doConnectorSheet && !connectorSheetName) {
+          fs.unlink(req.file.path, () => {});
+          return res.status(400).json({ error: `文件缺少 "${CONNECTOR_SHEET}" Sheet。当前 Sheet：${workbook.SheetNames.join('、')}` });
+        }
+
+        // ─── "1-电设备清单" → devices ─────────────────────────
+        // 列名映射（Excel normalize 后精确匹配，回退模糊匹配）
+        const DEVICE_SHEET_MAP: Record<string, string> = {
+          '设备编号': '设备编号',
+          '设备中文名称': '设备中文名称',
+          '设备英文名称': '设备英文名称',
+          '设备英文简称（缩略语）': '设备英文缩写',
+          '设备供应商件号': '设备供应商件号',
+          '设备供应商名称': '设备供应商名称',
+          '设备/部件所属系统（设备ATA，4位）': '设备部件所属系统（4位ATA）',
+          '设备安装位置': '设备安装位置',
+          '设备DAL': '设备DAL',
+          '设备壳体是否金属': '设备壳体是否金属',
+          '金属壳体表面是否经过特殊处理而不易导电': '金属壳体表面是否经过特殊处理而不易导电',
+          '设备内共地情况（信号地、电源地、机壳地）': '设备内共地情况',
+          '设备壳体接地方式': '设备壳体接地方式',
+          '壳体接地是否作为故障电流路径': '壳体接地是否故障电流路径',
+          '其他接地特殊要求': '其他接地特殊要求',
+          '设备端连接器/接线柱数量': '设备端连接器或接线柱数量',
+          '是否为选装设备': '是否为选装设备',
+          '设备装机架次': '设备装机架次',
+          '设备正常工作电压范围（V）': '设备正常工作电压范围（V）',
+          '设备编号（DOORS）': '设备编号（DOORS）',
+          '设备LIN号（DOORS）': '设备LIN号（DOORS）',
+          '设备物理特性': '设备物理特性',
+        };
+
+        if (doDeviceSheet) {
+        const sheet0 = workbook.Sheets[deviceSheetName!];
         const rows0: any[] = xlsx.utils.sheet_to_json(sheet0, { defval: '' }).map(normalizeRowKeys);
-        let s0Success = 0, s0Skipped = 0, s0Error = 0;
-        const s0Errors: string[] = [];
 
         for (let i = 0; i < rows0.length; i++) {
+          if (i === 0) continue; // 第2行为填写说明，跳过
           const row = rows0[i];
-          const rowNum = i + 2;
+          const rowNum = i + 2; // Excel 行号（row 0 = 第2行说明，row 1 = 第3行数据）
+          if (String(Object.values(row)[0] ?? '').includes('示例')) {
+            s0Skipped.push(`第${rowNum}行（A列含"示例"，跳过）`); continue;
+          }
           try {
             const insertFields: Record<string, any> = {};
             for (const [excelCol, val] of Object.entries(row)) {
-              const dbCol = resolveColumn(excelCol, DEVICES_EXCEL_TO_DB);
+              const dbCol = resolveColumn(excelCol, DEVICE_SHEET_MAP);
               if (dbCol) insertFields[dbCol] = val !== undefined && val !== null ? String(val) : '';
             }
 
-            if (!insertFields['设备编号'] || String(insertFields['设备编号']).trim() === '') {
-              s0Error++;
-              s0Errors.push(`第${rowNum}行: 设备编号为空，跳过`);
-              continue;
+            if (
+              (!insertFields['设备编号'] || String(insertFields['设备编号']).trim() === '') &&
+              (!insertFields['设备中文名称'] || String(insertFields['设备中文名称']).trim() === '')
+            ) {
+              continue; // 设备编号和设备中文名称同时为空，视为空行跳过
             }
 
             const deviceNum = String(insertFields['设备编号']).trim();
             insertFields['设备编号'] = deviceNum;
 
-            // 跳过已存在的设备（方案B：不覆盖）
+            // 先对字段值做标准化处理，确保查重比对使用的是处理后的值
+            // 设备部件所属系统（4位ATA）：去除首尾单/双引号（含中文弯引号 U+2018/2019/201C/201D）
+            const ataRaw = (insertFields['设备部件所属系统（4位ATA）'] || '').toString().trim();
+            insertFields['设备部件所属系统（4位ATA）'] = ataRaw.replace(/^['"\u2018\u2019\u201C\u201D]+|['"\u2018\u2019\u201C\u201D]+$/g, '').trim();
+
+            // Y/N → 是/否
+            const optVal = (insertFields['是否为选装设备'] || '').toString().trim().toUpperCase();
+            if (optVal === 'Y') insertFields['是否为选装设备'] = '是';
+            else if (optVal === 'N') insertFields['是否为选装设备'] = '否';
+
+            // 设备编号非空且非占位符时，检查是否已存在同编号设备
+            const isPlaceholder = (v: string) => v === '' || /^-+$/.test(v) || ['n/a', 'na', '无', '/', '暂无', '待定'].includes(v.toLowerCase());
+            const SKIP_COMPARE_COLS = new Set(['导入来源', 'created_by']);
+            if (!isPlaceholder(deviceNum)) {
+              const dup0 = await db.get(
+                `SELECT * FROM devices WHERE project_id = ? AND "设备编号" = ?`,
+                [projectId, deviceNum]
+              );
+              if (dup0) {
+                const diffCols: string[] = [];
+                for (const [col, newVal] of Object.entries(insertFields)) {
+                  if (SKIP_COMPARE_COLS.has(col)) continue;
+                  const oldVal = String(dup0[col] ?? '').trim();
+                  const newValStr = String(newVal ?? '').trim();
+                  if (oldVal !== newValStr) {
+                    diffCols.push(`${col}: "${oldVal}" → "${newValStr}"`);
+                  }
+                }
+                if (diffCols.length === 0) {
+                  s0Skipped.push(`第${rowNum}行: 设备编号"${deviceNum}"已存在且所有列匹配，跳过`);
+                } else {
+                  const oldSource = dup0['导入来源'] || '未知来源';
+                  const newSource = `${originalName} / ${deviceSheetName} / 第${rowNum}行`;
+                  const conflictMsg = `${oldSource}（旧）和 ${newSource}（新）均有此设备，以下列不匹配: ${diffCols.join('；')}`;
+                  s0Skipped.push(`第${rowNum}行: 设备编号"${deviceNum}"已存在，${conflictMsg}`);
+                  // 将已有设备标记为 Draft 并累积记录冲突详情
+                  const prevConflicts: string[] = (() => {
+                    try { return JSON.parse(dup0.import_conflicts || '[]'); } catch { return []; }
+                  })();
+                  prevConflicts.push(conflictMsg);
+                  await db.run(
+                    `UPDATE devices SET status = 'Draft', import_conflicts = ? WHERE id = ?`,
+                    [JSON.stringify(prevConflicts), dup0.id]
+                  );
+                }
+                continue;
+              }
+            }
+
+            // Layer 1.5：设备中文名称查重
+            const deviceName = String(insertFields['设备中文名称'] || '').trim();
+            if (!isPlaceholder(deviceName)) {
+              const dup1 = await db.get(
+                `SELECT * FROM devices WHERE project_id = ? AND "设备中文名称" = ?`,
+                [projectId, deviceName]
+              );
+              if (dup1) {
+                const diffCols: string[] = [];
+                for (const [col, newVal] of Object.entries(insertFields)) {
+                  if (SKIP_COMPARE_COLS.has(col)) continue;
+                  const oldVal = String(dup1[col] ?? '').trim();
+                  const newValStr = String(newVal ?? '').trim();
+                  if (oldVal !== newValStr) {
+                    diffCols.push(`${col}: "${oldVal}" → "${newValStr}"`);
+                  }
+                }
+                if (diffCols.length === 0) {
+                  s0Skipped.push(`第${rowNum}行: 设备中文名称"${deviceName}"已存在且所有列匹配，跳过`);
+                } else {
+                  const oldSource = dup1['导入来源'] || '未知来源';
+                  const newSource = `${originalName} / ${deviceSheetName} / 第${rowNum}行`;
+                  const conflictMsg = `${oldSource}（旧）和 ${newSource}（新）均有此设备，以下列不匹配: ${diffCols.join('；')}`;
+                  s0Skipped.push(`第${rowNum}行: 设备中文名称"${deviceName}"已存在，${conflictMsg}`);
+                  const prevConflicts1: string[] = (() => {
+                    try { return JSON.parse(dup1.import_conflicts || '[]'); } catch { return []; }
+                  })();
+                  prevConflicts1.push(conflictMsg);
+                  await db.run(
+                    `UPDATE devices SET status = 'Draft', import_conflicts = ? WHERE id = ?`,
+                    [JSON.stringify(prevConflicts1), dup1.id]
+                  );
+                }
+                continue;
+              }
+            }
+
+            // 导入来源 & 创建人
+            insertFields['导入来源'] = `${originalName} / ${deviceSheetName} / 第${rowNum}行`;
+            insertFields['created_by'] = req.user!.username;
+
             const cols = Object.keys(insertFields).map(k => `"${k}"`).join(', ');
             const placeholders = Object.keys(insertFields).map(() => '?').join(', ');
             const r0 = await db.run(
-              `INSERT INTO devices (project_id, ${cols})
-               VALUES (?, ${placeholders})
-               ON CONFLICT(project_id, 设备编号) DO NOTHING`,
+              `INSERT INTO devices (project_id, ${cols}) VALUES (?, ${placeholders}) ON CONFLICT(project_id, "设备编号", "设备中文名称") DO NOTHING`,
               [projectId, ...Object.values(insertFields)]
             );
-            if (r0.changes === 0) { s0Skipped++; } else { s0Success++; }
+
+            if (r0.changes === 0) {
+              const existing = await db.get(
+                `SELECT * FROM devices WHERE project_id = ? AND "设备编号" = ? AND "设备中文名称" = ?`,
+                [projectId, insertFields['设备编号'] || '', insertFields['设备中文名称'] || '']
+              );
+              if (existing) {
+                const diffCols: string[] = [];
+                for (const [col, newVal] of Object.entries(insertFields)) {
+                  if (SKIP_COMPARE_COLS.has(col)) continue;
+                  const oldVal = String(existing[col] ?? '').trim();
+                  const newValStr = String(newVal ?? '').trim();
+                  if (oldVal !== newValStr) {
+                    diffCols.push(`${col}: "${oldVal}" → "${newValStr}"`);
+                  }
+                }
+                if (diffCols.length === 0) {
+                  s0Skipped.push(`第${rowNum}行: 设备[${insertFields['设备编号'] || ''}/${insertFields['设备中文名称'] || ''}] 已存在且所有列匹配，跳过`);
+                } else {
+                  const oldSource = existing['导入来源'] || '未知来源';
+                  const newSource = insertFields['导入来源'] || `${originalName} / ${deviceSheetName} / 第${rowNum}行`;
+                  const conflictMsg = `${oldSource}（旧）和 ${newSource}（新）均有此设备，以下列不匹配: ${diffCols.join('；')}`;
+                  s0Skipped.push(`第${rowNum}行: 设备[${insertFields['设备编号'] || ''}/${insertFields['设备中文名称'] || ''}] 已存在，${conflictMsg}`);
+                  // 将已有设备标记为 Draft 并累积记录冲突详情
+                  const prevConflicts2: string[] = (() => {
+                    try { return JSON.parse(existing.import_conflicts || '[]'); } catch { return []; }
+                  })();
+                  prevConflicts2.push(conflictMsg);
+                  await db.run(
+                    `UPDATE devices SET status = 'Draft', import_conflicts = ? WHERE id = ?`,
+                    [JSON.stringify(prevConflicts2), existing.id]
+                  );
+                }
+              } else {
+                s0Skipped.push(`第${rowNum}行: 设备[${insertFields['设备编号'] || ''}/${insertFields['设备中文名称'] || ''}] 已存在，跳过`);
+              }
+              continue;
+            }
+
+            // ── 校验 a-h（仅新插入成功时执行）──────────────────
+            const veErrors: string[] = [];
+
+            // a) aircraft_device_list 四列精确匹配
+            const adlMatch = await db.get(
+              `SELECT 设备布置区域 FROM aircraft_device_list WHERE project_id = ? AND 电设备编号 = ? AND 设备编号_DOORS = ? AND LIN号_DOORS = ? AND object_text = ?`,
+              [projectId,
+               deviceNum,
+               (insertFields['设备编号（DOORS）'] || '').trim(),
+               (insertFields['设备LIN号（DOORS）'] || '').trim(),
+               (insertFields['设备中文名称'] || '').trim()]
+            );
+            if (!adlMatch) {
+              veErrors.push('设备编号（DOORS）', '设备LIN号（DOORS）', '设备编号', '设备中文名称', '设备安装位置');
+            } else {
+              // b) 设备安装位置 vs aircraft_device_list.设备布置区域
+              if ((adlMatch.设备布置区域 || '').trim() !== (insertFields['设备安装位置'] || '').trim()) {
+                veErrors.push('设备安装位置');
+              }
+            }
+
+            // c) 设备DAL
+            if (!['A', 'B', 'C', 'D', 'E', '其他'].includes((insertFields['设备DAL'] || '').trim())) {
+              veErrors.push('设备DAL');
+            }
+
+            // d) 设备部件所属系统（4位ATA）
+            const ataVal = (insertFields['设备部件所属系统（4位ATA）'] || '').trim();
+            if (!/^\d{2}-\d{2}$/.test(ataVal) && ataVal !== '其他') {
+              veErrors.push('设备部件所属系统（4位ATA）');
+            }
+
+            // e) 设备壳体是否金属
+            const isMetalShell = (insertFields['设备壳体是否金属'] || '').trim();
+            if (!['是', '否'].includes(isMetalShell)) veErrors.push('设备壳体是否金属');
+
+            // f) 金属壳体表面处理
+            const shellTreated = (insertFields['金属壳体表面是否经过特殊处理而不易导电'] || '').trim();
+            if (isMetalShell === '是' && !['是', '否'].includes(shellTreated)) {
+              veErrors.push('金属壳体表面是否经过特殊处理而不易导电');
+            } else if (isMetalShell === '否' && shellTreated !== 'N/A') {
+              veErrors.push('金属壳体表面是否经过特殊处理而不易导电');
+            }
+
+            // g) 设备壳体接地方式
+            if (!['线搭接', '面搭接', '无'].includes((insertFields['设备壳体接地方式'] || '').trim())) {
+              veErrors.push('设备壳体接地方式');
+            }
+
+            // h) 壳体接地是否故障电流路径
+            if (!['是', '否'].includes((insertFields['壳体接地是否故障电流路径'] || '').trim())) {
+              veErrors.push('壳体接地是否故障电流路径');
+            }
+
+            // 写回 status + validation_errors
+            await db.run(
+              `UPDATE devices SET status = ?, validation_errors = ? WHERE project_id = ? AND 设备编号 = ?`,
+              [veErrors.length > 0 ? 'Draft' : 'normal', JSON.stringify(veErrors), projectId, deviceNum]
+            );
+
+            if (veErrors.length > 0) {
+              s0Errors.push(`第${rowNum}行: 设备[${deviceNum}]校验失败（${veErrors.join('、')}）`);
+            }
+
+            s0Success++;
           } catch (err: any) {
             s0Error++;
             s0Errors.push(`第${rowNum}行: ${err.message}`);
           }
         }
-        results['sheet0'] = { name: workbook.SheetNames[0], success: s0Success, skipped: s0Skipped, errors: s0Errors };
+        results['1-电设备清单'] = { name: deviceSheetName, success: s0Success, skipped: s0Skipped, errors: s0Errors };
+        } // end doDeviceSheet
 
-        // ─── Sheet 1: 设备端元器件表 → connectors + pins ─────
+        // ─── "2-设备端元器件清单" → connectors ──────────────────
 
-        let s1Success = 0, s1Skipped = 0, s1Error = 0;
-        const s1Errors: string[] = [];
-
-        if (workbook.SheetNames.length >= 2) {
-          const sheet1 = workbook.Sheets[workbook.SheetNames[1]];
+        if (doConnectorSheet && connectorSheetName) {
+          const sheet1 = workbook.Sheets[connectorSheetName];
           const rows1: any[] = xlsx.utils.sheet_to_json(sheet1, { defval: '' }).map(normalizeRowKeys);
 
+          // 连接器比对时跳过的列
+          const CONN_SKIP_COMPARE = new Set(['连接器号', '导入来源']);
+
           for (let i = 0; i < rows1.length; i++) {
+            if (i === 0) continue; // 第2行为填写说明，跳过
             const row = rows1[i];
             const rowNum = i + 2;
+            if (String(Object.values(row)[0] ?? '').includes('示例')) {
+              s1Skipped.push(`第${rowNum}行（A列含"示例"，跳过）`); continue;
+            }
             try {
-              // 从行中提取所有字段
-              const allFields: Record<string, any> = {};
-              for (const [excelCol, val] of Object.entries(row)) {
-                allFields[excelCol.trim()] = val !== undefined && val !== null ? String(val) : '';
-              }
+              // ① 读取 A-D 列内容用于错误记录
+              const colA = String(row['设备编号'] || '').trim();
+              const colB = String(row['设备端元器件编号'] || '').trim();
+              const colC = String(row['设备端元器件名称及类型'] || row['元器件名称及类型'] || '').trim();
+              const colD = String(row['设备端元器件件号类型及件号'] || row['元器件件号及类型'] || '').trim();
+              const rowContext = `A=${colA}, B=${colB}, C=${colC}, D=${colD}`;
 
-              // 找设备编号（用于查 device_id）
-              const deviceNumRaw =
-                allFields['设备编号'] ||
-                Object.entries(allFields).find(([k]) => k.includes('设备编号'))?.[1] || '';
-              const deviceNum = String(deviceNumRaw).trim();
-              if (!deviceNum) {
-                s1Error++;
-                s1Errors.push(`第${rowNum}行: 设备编号为空，跳过`);
-                continue;
-              }
+              // 设备编号为空 → 空行跳过
+              if (!colA) continue;
 
-              const device = await db.get(
-                'SELECT id FROM devices WHERE project_id = ? AND 设备编号 = ?',
-                [projectId, deviceNum]
+              // ② 查找父设备
+              const device: any = await db.get(
+                `SELECT id, "设备LIN号（DOORS）" as linNo FROM devices
+                 WHERE project_id = ? AND "设备编号" = ?`,
+                [projectId, colA]
               );
               if (!device) {
                 s1Error++;
-                s1Errors.push(`第${rowNum}行: 找不到设备 ${deviceNum}`);
+                s1Errors.push(`第${rowNum}行: 未找到匹配设备（编号=${colA}）[${rowContext}]`);
                 continue;
               }
 
-              // 找连接器号（"设备端元器件编号"也可作为连接器号来源）
-              const connectorNumRaw =
-                allFields['连接器号'] ||
-                allFields['端元器件号（连接器号）'] ||
-                allFields['端元器件号'] ||
-                allFields['设备端元器件编号'] ||
-                Object.entries(allFields).find(([k]) => k.includes('连接器号') || k.includes('端元器件号'))?.[1] || '';
-              // 剥离 "设备编号-" 前缀（设备端元器件编号格式为 {设备编号}-{连接器号}）
-              let connectorNum = String(connectorNumRaw).trim();
-              const connPrefix = deviceNum + '-';
-              if (connectorNum.startsWith(connPrefix)) {
-                connectorNum = connectorNum.slice(connPrefix.length);
-              }
-              if (!connectorNum) {
-                s1Error++;
-                s1Errors.push(`第${rowNum}行: 连接器号为空，跳过`);
-                continue;
-              }
+              const deviceLinNo = (device.linNo || '').trim();
+              const importSource = `${originalName} / ${connectorSheetName} / 第${rowNum}行`;
+              let connStatus = 'normal';
+              const connConflicts: string[] = [];
+              const connVeErrors: string[] = [];
 
-              // 构建 connectors 插入字段
-              const connFields: Record<string, any> = { '连接器号': connectorNum };
-              for (const [excelCol, val] of Object.entries(allFields)) {
+              // ③ 构建插入字段（映射 Excel 列→DB 列）
+              const connFields: Record<string, any> = {};
+              for (const [excelCol, val] of Object.entries(row)) {
                 const dbCol = resolveColumn(excelCol, CONNECTORS_EXCEL_TO_DB);
                 if (dbCol && dbCol !== '设备编号') {
                   connFields[dbCol] = val !== undefined && val !== null ? String(val) : '';
                 }
               }
 
-              // 跳过已存在的连接器（方案B：不覆盖）
-              const connCols = Object.keys(connFields).map(k => `"${k}"`).join(', ');
-              const connPlaceholders = Object.keys(connFields).map(() => '?').join(', ');
-              const connResult = await db.run(
-                `INSERT INTO connectors (device_id, ${connCols})
-                 VALUES (?, ${connPlaceholders})
-                 ON CONFLICT(device_id, 连接器号) DO NOTHING`,
-                [device.id, ...Object.values(connFields)]
-              );
-              const connIsNew = connResult.changes > 0;
+              // "是否随设备交付"：Y→是，N→否
+              const DELIVER_KEY = '设备端元器件匹配的元器件是否随设备交付';
+              if (connFields[DELIVER_KEY] !== undefined) {
+                const raw = String(connFields[DELIVER_KEY]).trim();
+                if (raw === 'Y' || raw === 'y') {
+                  connFields[DELIVER_KEY] = '是';
+                } else if (raw === 'N' || raw === 'n') {
+                  connFields[DELIVER_KEY] = '否';
+                } else if (raw !== '' && raw !== '是' && raw !== '否') {
+                  connStatus = 'Draft';
+                }
+              }
 
-              // 获取 connector_id
-              const connector = await db.get(
-                'SELECT id FROM connectors WHERE device_id = ? AND 连接器号 = ?',
-                [device.id, connectorNum]
-              );
-              if (!connector) {
+              // ④ 读取并解析 设备端元器件编号
+              const compId = String(connFields['设备端元器件编号'] || '').trim();
+
+              if (!compId) {
+                // 设备端元器件编号为空 → 依旧插入，status=Draft
+                connStatus = 'Draft';
+                connConflicts.push(`[${importSource}] 缺少设备端元器件编号`);
+                connVeErrors.push('设备端元器件编号');
+                // 连接器号置为占位符以便插入
+                connFields['连接器号'] = connFields['连接器号'] || `_empty_${rowNum}`;
+                connFields['设备端元器件编号'] = '';
+                connFields['导入来源'] = importSource;
+
+                const ccols = Object.keys(connFields).map(k => `"${k}"`).join(', ');
+                const cph = Object.keys(connFields).map(() => '?').join(', ');
+                await db.run(
+                  `INSERT INTO connectors (device_id, status, import_conflicts, validation_errors, ${ccols})
+                   VALUES (?, ?, ?, ?, ${cph})
+                   ON CONFLICT(device_id, 连接器号) DO NOTHING`,
+                  [device.id, connStatus, JSON.stringify(connConflicts), JSON.stringify(connVeErrors), ...Object.values(connFields)]
+                );
                 s1Error++;
-                s1Errors.push(`第${rowNum}行: 连接器插入失败`);
+                s1Errors.push(`第${rowNum}行: 设备端元器件编号为空，已插入为Draft [${rowContext}]`);
                 continue;
               }
 
-              // 如果有针孔号，尝试插入 pin（跳过已存在）
-              let pinIsNew = false;
-              const pinNumRaw =
-                allFields['针孔号'] ||
-                Object.entries(allFields).find(([k]) => k.includes('针孔号'))?.[1] || '';
-              const pinNum = String(pinNumRaw).trim();
-              if (pinNum) {
-                const pinFields: Record<string, any> = { '针孔号': pinNum };
-                for (const [excelCol, val] of Object.entries(allFields)) {
-                  const dbCol = resolveColumn(excelCol, PINS_EXCEL_TO_DB);
-                  if (dbCol && dbCol !== '针孔号') {
-                    pinFields[dbCol] = val !== undefined && val !== null ? String(val) : '';
+              // ⑤ 检查数据库中是否已存在同 设备端元器件编号 的旧记录
+              const existingConn: any = await db.get(
+                `SELECT * FROM connectors WHERE device_id = ? AND "设备端元器件编号" = ?`,
+                [device.id, compId]
+              );
+
+              if (existingConn) {
+                // 旧记录存在 → 逐列比对
+                const diffCols: string[] = [];
+                for (const [col, newVal] of Object.entries(connFields)) {
+                  if (CONN_SKIP_COMPARE.has(col)) continue;
+                  const oldVal = String(existingConn[col] ?? '').trim();
+                  const newValStr = String(newVal ?? '').trim();
+                  if (oldVal !== newValStr) {
+                    diffCols.push(`${col}: "${oldVal}" → "${newValStr}"`);
                   }
                 }
-                const pinCols = Object.keys(pinFields).map(k => `"${k}"`).join(', ');
-                const pinPlaceholders = Object.keys(pinFields).map(() => '?').join(', ');
-                const pinResult = await db.run(
-                  `INSERT INTO pins (connector_id, ${pinCols})
-                   VALUES (?, ${pinPlaceholders})
-                   ON CONFLICT(connector_id, 针孔号) DO NOTHING`,
-                  [connector.id, ...Object.values(pinFields)]
-                );
-                pinIsNew = pinResult.changes > 0;
+                if (diffCols.length === 0) {
+                  s1Skipped.push(`第${rowNum}行: 连接器[${compId}] 已存在且所有列匹配，跳过`);
+                } else {
+                  // 有不一致 → 旧记录标 Draft，累积 import_conflicts
+                  const oldSource = existingConn['导入来源'] || '未知来源';
+                  const conflictMsg = `${oldSource}（旧）和 ${importSource}（新）均有此连接器，以下列不匹配: ${diffCols.join('；')}`;
+                  const prevConflicts: string[] = (() => {
+                    try { return JSON.parse(existingConn.import_conflicts || '[]'); } catch { return []; }
+                  })();
+                  prevConflicts.push(conflictMsg);
+                  await db.run(
+                    `UPDATE connectors SET status = 'Draft', import_conflicts = ? WHERE id = ?`,
+                    [JSON.stringify(prevConflicts), existingConn.id]
+                  );
+                  s1Skipped.push(`第${rowNum}行: 连接器[${compId}] 已存在，${conflictMsg}`);
+                }
+                continue;
               }
 
-              if (connIsNew || pinIsNew) { s1Success++; } else { s1Skipped++; }
+              // ⑥ 新记录：解析 设备端元器件编号 得到连接器号
+              let connectorNum: string;
+              const lastDash = compId.lastIndexOf('-');
+              if (lastDash === -1) {
+                // 不含 "-"：整体作为连接器号
+                connectorNum = compId;
+                connStatus = 'Draft';
+                connConflicts.push(`[${importSource}] 设备端元器件编号应为"设备LIN号（DOORS）-连接器号"的组合，当前值"${compId}"不含"-"`);
+              } else {
+                // 含 "-"：最后一个 "-" 后为连接器号，前缀与 LIN 号比对
+                connectorNum = compId.slice(lastDash + 1);
+                const prefix = compId.slice(0, lastDash);
+                if (prefix !== deviceLinNo) {
+                  connStatus = 'Draft';
+                  connConflicts.push(`[${importSource}] 设备端元器件编号前缀"${prefix}"与设备LIN号（DOORS）"${deviceLinNo}"不匹配`);
+                }
+              }
+
+              if (!connectorNum) {
+                // 解析后连接器号为空
+                connectorNum = `_empty_${rowNum}`;
+                connStatus = 'Draft';
+                connConflicts.push(`[${importSource}] 设备端元器件编号"${compId}"解析后连接器号为空`);
+              }
+
+              connFields['连接器号'] = connectorNum;
+              connFields['导入来源'] = importSource;
+
+              // ⑦ 插入新记录（device_id + 连接器号 冲突则跳过）
+              const connCols = Object.keys(connFields).map(k => `"${k}"`).join(', ');
+              const connPlaceholders = Object.keys(connFields).map(() => '?').join(', ');
+              const connResult = await db.run(
+                `INSERT INTO connectors (device_id, status, import_conflicts, validation_errors, ${connCols})
+                 VALUES (?, ?, ?, ?, ${connPlaceholders})
+                 ON CONFLICT(device_id, 连接器号) DO NOTHING`,
+                [device.id, connStatus,
+                 connConflicts.length > 0 ? JSON.stringify(connConflicts) : null,
+                 connVeErrors.length > 0 ? JSON.stringify(connVeErrors) : null,
+                 ...Object.values(connFields)]
+              );
+              if (connResult.changes === 0) {
+                // UNIQUE 冲突（device_id + 连接器号）→ 逐列比对旧记录
+                const existByNum: any = await db.get(
+                  `SELECT * FROM connectors WHERE device_id = ? AND "连接器号" = ?`,
+                  [device.id, connectorNum]
+                );
+                if (existByNum) {
+                  const diffCols: string[] = [];
+                  for (const [col, newVal] of Object.entries(connFields)) {
+                    if (CONN_SKIP_COMPARE.has(col)) continue;
+                    const oldVal = String(existByNum[col] ?? '').trim();
+                    const newValStr = String(newVal ?? '').trim();
+                    if (oldVal !== newValStr) {
+                      diffCols.push(`${col}: "${oldVal}" → "${newValStr}"`);
+                    }
+                  }
+                  if (diffCols.length === 0) {
+                    s1Skipped.push(`第${rowNum}行: 连接器号[${connectorNum}] 已存在且所有列匹配，跳过`);
+                  } else {
+                    const oldSource = existByNum['导入来源'] || '未知来源';
+                    const conflictMsg = `${oldSource}（旧）和 ${importSource}（新）均有此连接器，以下列不匹配: ${diffCols.join('；')}`;
+                    const prevConflicts: string[] = (() => {
+                      try { return JSON.parse(existByNum.import_conflicts || '[]'); } catch { return []; }
+                    })();
+                    prevConflicts.push(conflictMsg);
+                    await db.run(
+                      `UPDATE connectors SET status = 'Draft', import_conflicts = ? WHERE id = ?`,
+                      [JSON.stringify(prevConflicts), existByNum.id]
+                    );
+                    s1Skipped.push(`第${rowNum}行: 连接器号[${connectorNum}] 已存在，${conflictMsg}`);
+                  }
+                } else {
+                  s1Skipped.push(`第${rowNum}行: 连接器号[${connectorNum}] 已存在，跳过`);
+                }
+              } else {
+                s1Success++;
+              }
             } catch (err: any) {
               s1Error++;
               s1Errors.push(`第${rowNum}行: ${err.message}`);
             }
           }
-        }
-        results['sheet1'] = { name: workbook.SheetNames[1] || 'Sheet2', success: s1Success, skipped: s1Skipped, errors: s1Errors };
-
-        // ─── 自动检测 Sheet 2+ 角色：针孔表 or 信号表 ────────
-
-        let pinsSheetIdx = -1;
-        let signalsSheetIdx = -1;
-
-        if (workbook.SheetNames.length >= 3) {
-          const peekSheet = workbook.Sheets[workbook.SheetNames[2]];
-          const peekRows: any[] = xlsx.utils.sheet_to_json(peekSheet, { defval: '' }).map(normalizeRowKeys);
-          const peekHeaders: string[] = peekRows.length > 0
-            ? Object.keys(peekRows[0]).map(h => h.trim())
-            : [];
-          const looksLikePins =
-            peekHeaders.some(h => h === '针孔号') &&
-            !peekHeaders.some(h => h === 'Unique ID' || h.includes('信号名称') || h.includes('信号定义'));
-
-          if (looksLikePins) {
-            pinsSheetIdx = 2;
-            if (workbook.SheetNames.length >= 4) signalsSheetIdx = 3;
-          } else {
-            signalsSheetIdx = 2; // 传统3-sheet格式
-          }
+        results['2-设备端元器件清单'] = { name: connectorSheetName || '（无）', success: s1Success, skipped: s1Skipped, errors: s1Errors };
         }
 
-        // ─── 针孔表（若检测到）→ pins ────────────────────────
+        // ─── 含"电气接口清单"的 Sheet(s) → signals + signal_endpoints ──
 
-        let sPinsSuccess = 0, sPinsSkipped = 0, sPinsError = 0;
-        const sPinsErrors: string[] = [];
-
-        if (pinsSheetIdx !== -1) {
-          const sheetP = workbook.Sheets[workbook.SheetNames[pinsSheetIdx]];
-          const rowsP: any[] = xlsx.utils.sheet_to_json(sheetP, { defval: '' }).map(normalizeRowKeys);
-
-          for (let i = 0; i < rowsP.length; i++) {
-            const row = rowsP[i];
-            const rowNum = i + 2;
-            try {
-              const allFields: Record<string, any> = {};
-              for (const [excelCol, val] of Object.entries(row)) {
-                allFields[excelCol.trim()] = val !== undefined && val !== null ? String(val) : '';
-              }
-
-              // 找设备编号
-              const deviceNumRaw =
-                allFields['设备编号'] ||
-                Object.entries(allFields).find(([k]) => k.includes('设备编号'))?.[1] || '';
-              const deviceNum = String(deviceNumRaw).trim();
-              if (!deviceNum) {
-                sPinsError++;
-                sPinsErrors.push(`第${rowNum}行: 设备编号为空，跳过`);
-                continue;
-              }
-
-              const device = await db.get(
-                'SELECT id FROM devices WHERE project_id = ? AND 设备编号 = ?',
-                [projectId, deviceNum]
-              );
-              if (!device) {
-                sPinsError++;
-                sPinsErrors.push(`第${rowNum}行: 找不到设备 ${deviceNum}`);
-                continue;
-              }
-
-              // 找连接器号（支持 设备端元器件编号 作为来源）
-              const connectorNumRaw =
-                allFields['连接器号'] ||
-                allFields['端元器件号（连接器号）'] ||
-                allFields['端元器件号'] ||
-                allFields['设备端元器件编号'] ||
-                Object.entries(allFields).find(([k]) => k.includes('连接器号') || k.includes('端元器件号'))?.[1] || '';
-              // 剥离 "设备编号-" 前缀（设备端元器件编号格式为 {设备编号}-{连接器号}）
-              let connectorNum = String(connectorNumRaw).trim();
-              const connPrefixP = deviceNum + '-';
-              if (connectorNum.startsWith(connPrefixP)) {
-                connectorNum = connectorNum.slice(connPrefixP.length);
-              }
-              if (!connectorNum) {
-                sPinsError++;
-                sPinsErrors.push(`第${rowNum}行: 连接器号为空，跳过`);
-                continue;
-              }
-
-              const connector = await db.get(
-                'SELECT id FROM connectors WHERE device_id = ? AND 连接器号 = ?',
-                [device.id, connectorNum]
-              );
-              if (!connector) {
-                sPinsError++;
-                sPinsErrors.push(`第${rowNum}行: 找不到连接器 ${deviceNum}.${connectorNum}`);
-                continue;
-              }
-
-              // 找针孔号
-              const pinNumRaw =
-                allFields['针孔号'] ||
-                Object.entries(allFields).find(([k]) => k.includes('针孔号'))?.[1] || '';
-              const pinNum = String(pinNumRaw).trim();
-              if (!pinNum) {
-                sPinsError++;
-                sPinsErrors.push(`第${rowNum}行: 针孔号为空，跳过`);
-                continue;
-              }
-
-              // 构建 pin 字段
-              const pinFields: Record<string, any> = { '针孔号': pinNum };
-              for (const [excelCol, val] of Object.entries(allFields)) {
-                const dbCol = resolveColumn(excelCol, PINS_EXCEL_TO_DB);
-                if (dbCol && dbCol !== '针孔号') {
-                  pinFields[dbCol] = val !== undefined && val !== null ? String(val) : '';
-                }
-              }
-
-              const pinCols = Object.keys(pinFields).map(k => `"${k}"`).join(', ');
-              const pinPlaceholders = Object.keys(pinFields).map(() => '?').join(', ');
-              const pinResult = await db.run(
-                `INSERT INTO pins (connector_id, ${pinCols})
-                 VALUES (?, ${pinPlaceholders})
-                 ON CONFLICT(connector_id, 针孔号) DO NOTHING`,
-                [connector.id, ...Object.values(pinFields)]
-              );
-              if (pinResult.changes === 0) { sPinsSkipped++; } else { sPinsSuccess++; }
-            } catch (err: any) {
-              sPinsError++;
-              sPinsErrors.push(`第${rowNum}行: ${err.message}`);
-            }
-          }
-          results[`sheet${pinsSheetIdx}`] = {
-            name: workbook.SheetNames[pinsSheetIdx],
-            success: sPinsSuccess,
-            skipped: sPinsSkipped,
-            errors: sPinsErrors,
-          };
-        }
-
-        // ─── 信号表 → signals + signal_endpoints ─────────────
-
-        let s2Success = 0, s2Skipped = 0, s2Error = 0;
+        let s2Success = 0, s2Error = 0;
+        const s2Skipped: string[] = [];
         const s2Errors: string[] = [];
 
-        if (signalsSheetIdx !== -1) {
-          const sheet2 = workbook.Sheets[workbook.SheetNames[signalsSheetIdx]];
-          const rows2: any[] = xlsx.utils.sheet_to_json(sheet2, { defval: '' }).map(normalizeRowKeys);
+        if (doSignals) { for (const sigSheetName of signalSheetNames) {
+          const sheet2 = workbook.Sheets[sigSheetName];
 
-          // （从）/（到）端点列名集合 —— 这些列作为端点数据单独处理，不写入 sigFields
-          const ENDPOINT_ONLY_COLS = new Set([
-            '设备（从）', '连接器（从）', '针孔号（从）', '端接尺寸（从）', '屏蔽类型（从）', '信号名称（从）', '信号定义（从）',
-            '设备（到）', '连接器（到）', '针孔号（到）', '端接尺寸（到）', '屏蔽类型（到）',
-            '信号名称（到）', '信号定义（到）',
-          ]);
+          // 用 header:1 读原始二维数组，避免 xlsx 合并同名列的问题
+          const rawRows: any[][] = xlsx.utils.sheet_to_json(sheet2, { header: 1, defval: '' }) as any[][];
 
-          for (let i = 0; i < rows2.length; i++) {
-            const row = rows2[i];
-            const rowNum = i + 2;
+          let sheetS2 = 0, sheetE2 = 0;
+          const sheetErrors2: string[] = [];
+          const sheetSk2: string[] = [];
+
+          if (rawRows.length < 3) {
+            results[sigSheetName] = { name: sigSheetName, success: 0, skipped: [], errors: ['Sheet 行数不足（需要至少3行：列名行、填写说明行、数据行）'] };
+            continue;
+          }
+
+          // 构建列名→列索引映射：首次出现 → colIdx，第二次出现 → colIdx2
+          // "设备（从）"/"设备（到）"各有两列：第一列=设备编号，第二列=设备LIN号（DOORS）
+          const normH = (h: any) => String(h).replace(/[\r\n\t]+/g, '').trim();
+          const colIdx: Record<string, number> = {};
+          const colIdx2: Record<string, number> = {};
+          for (let ci = 0; ci < rawRows[0].length; ci++) {
+            const h = normH(rawRows[0][ci]);
+            if (h) {
+              if (!(h in colIdx)) colIdx[h] = ci;          // 首次出现
+              else if (!(h in colIdx2)) colIdx2[h] = ci;   // 第二次出现
+            }
+          }
+          const getV = (row: any[], headerName: string) =>
+            String(row[colIdx[headerName] ?? -1] ?? '').trim();
+          // 取同名列第二次出现的值（"设备（从/到）"第二列 = 设备LIN号（DOORS））
+          const getV2 = (row: any[], headerName: string) =>
+            String(row[colIdx2[headerName] ?? -1] ?? '').trim();
+
+          // 数据从第3行（index=2）开始，index=1 是填写说明
+          for (let i = 2; i < rawRows.length; i++) {
+            const row = rawRows[i];
+            const rowNum = i + 1; // Excel 行号（1-indexed）
+            if (String(row[0] ?? '').includes('示例')) {
+              sheetSk2.push(`第${rowNum}行（A列含"示例"，跳过）`); continue;
+            }
             try {
+              // ── 构建 signals 字段 ──────────────────────────────────────
               const sigFields: Record<string, any> = {};
-              let devicesRaw: any = null;
+              const setF = (dbCol: string, header: string) => {
+                const v = getV(row, header);
+                if (v !== '') sigFields[dbCol] = v;
+              };
+              setF('unique_id',             '信号编号');
+              setF('信号方向',              '信号方向（从）');
+              setF('推荐导线线规',          '推荐导线线规');
+              setF('推荐导线线型',          '推荐导线线型');
+              setF('独立电源代码',          '独立电源代码');
+              setF('敷设代码',              '敷设代码');
+              setF('电磁兼容代码',          '电磁兼容代码');
+              setF('余度代码',              '余度代码');
+              setF('功能代码',              '功能代码');
+              setF('接地代码',              '接地代码');
+              setF('极性',                  '极性');
+              setF('信号ATA',               '信号ATA');
+              setF('信号架次有效性',        '信号架次有效性');
+              setF('额定电压',              '额定电压（V）');
+              setF('设备正常工作电压范围',  '设备正常工作电压范围（V）');
+              setF('额定电流',              '额定电流（A）');
+              setF('是否成品线',            '是否为成品线');
+              setF('成品线件号',            '成品线件号');
+              setF('成品线线规',            '成品线线规');
+              setF('成品线类型',            '成品线类型');
+              setF('成品线长度',            '成品线长度（MM）');
+              setF('成品线载流量',          '成品线载流量（A）');
+              setF('成品线线路压降',        '成品线线路压降（V）');
+              setF('成品线标识',            '成品线标识');
+              setF('成品线与机上线束对接方式', '成品线与机上线束对接方式');
+              setF('成品线安装责任',        '成品线安装责任');
+              setF('备注',                  '备注');
 
-              for (const [excelCol, val] of Object.entries(row)) {
-                const trimCol = excelCol.trim();
-                // 跳过端点专用列（由后续逻辑处理）
-                if (ENDPOINT_ONLY_COLS.has(trimCol)) continue;
-                // 特殊处理：设备 JSON 列
-                if (trimCol === '设备' || trimCol === '设备(JSON)') {
-                  devicesRaw = val;
-                  continue;
-                }
-                const dbCol = resolveColumn(trimCol, SIGNALS_EXCEL_TO_DB);
-                if (dbCol) {
-                  sigFields[dbCol] = val !== undefined && val !== null ? String(val) : '';
-                }
-              }
+              // ── 端点原始值 ─────────────────────────────────────────────
+              // "设备（从/到）"各有两列：第一列=设备编号（仅用于报错提示），第二列=设备LIN号（DOORS）（查找用）
+              const fromDevNum  = getV(row,  '设备（从）');  // 设备编号（参考/报错）
+              const fromLinNo   = getV2(row, '设备（从）');  // 设备LIN号（DOORS）（查找用）
+              const fromConn    = getV(row, '连接器（从）');
+              const fromPin     = getV(row, '针孔号（从）');
+              const fromSize    = getV(row, '端接尺寸（从）');
+              const fromShield  = getV(row, '屏蔽类型（从）');
+              const fromSigName = getV(row, '信号名称（从）');
+              const fromSigDef  = getV(row, '信号定义（从）');
 
-              // 跳过已存在的信号（按 unique_id 查重）
-              if (sigFields['unique_id'] && sigFields['unique_id'] !== '') {
+              const toDevNum    = getV(row,  '设备（到）');  // 设备编号（参考/报错）
+              const toLinNo     = getV2(row, '设备（到）');  // 设备LIN号（DOORS）（查找用）
+              const toConn      = getV(row, '连接器（到）');
+              const toPin       = getV(row, '针孔号（到）');
+              const toSize      = getV(row, '端接尺寸（到）');
+              const toShield    = getV(row, '屏蔽类型（到）');
+              const toSigName   = getV(row, '信号名称（到）');
+              const toSigDef    = getV(row, '信号定义（到）');
+
+              // 全空行跳过
+              if (!sigFields['unique_id'] && !fromLinNo && !toLinNo) continue;
+
+              // ── 去重（按 unique_id）──────────────────────────────────
+              if (sigFields['unique_id']) {
                 const dup = await db.get(
                   'SELECT id FROM signals WHERE project_id = ? AND unique_id = ?',
                   [projectId, sigFields['unique_id']]
                 );
-                if (dup) { s2Skipped++; continue; }
-              }
-
-              // 自动生成 unique_id
-              if ((!sigFields['unique_id'] || sigFields['unique_id'] === '') && sigFields['连接类型']) {
-                const connType = sigFields['连接类型'];
-                let prefix = '';
-                if (connType === '1to1信号' || connType === '1to1') prefix = 'DATA_';
-                else if (connType === '网络') prefix = 'NET_';
-                else if (connType === 'ERN' || connType === '接地') prefix = 'ERN_';
-                if (prefix) {
-                  const existingIds = await db.query(
-                    `SELECT unique_id FROM signals WHERE project_id = ? AND unique_id LIKE ?`,
-                    [projectId, `${prefix}%`]
-                  );
-                  let maxNum = 0;
-                  for (const r of existingIds) {
-                    const match = r.unique_id?.match(new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\d+)$`));
-                    if (match) { const n = parseInt(match[1], 10); if (n > maxNum) maxNum = n; }
-                  }
-                  sigFields['unique_id'] = `${prefix}${String(maxNum + 1).padStart(5, '0')}`;
+                if (dup) {
+                  sheetSk2.push(`第${rowNum}行: 信号[${sigFields['unique_id']}] 已存在，跳过`);
+                  continue;
                 }
               }
 
-              // ── 解析端点（在 INSERT signal 之前，便于整行校验）──────────────
-              // 优先级1：（从）/（到）列格式
-              // 优先级2：设备 JSON 列
-              // 优先级3：扁平 _N 后缀列
-              let endpointList: any[] = [];
+              // ── 端点校验与解析 ────────────────────────────────────────
+              let rowFailed = false;
+              type ResolvedEp = {
+                connectorId: number; pinNum: string;
+                termSize: string; shield: string;
+                sigName: string; sigDef: string; epIndex: number;
+              };
+              const resolvedEps: ResolvedEp[] = [];
 
-              const fromDev = String(row['设备（从）'] || '').trim();
-              const fromConn = String(row['连接器（从）'] || '').trim();
-              const fromPin = String(row['针孔号（从）'] || '').trim();
-              const toDev = String(row['设备（到）'] || '').trim();
-              const toConn = String(row['连接器（到）'] || '').trim();
-              const toPin = String(row['针孔号（到）'] || '').trim();
+              const epDefs = [
+                { devNum: fromDevNum, linNo: fromLinNo, conn: fromConn, pin: fromPin, size: fromSize, shield: fromShield, sigName: fromSigName, sigDef: fromSigDef, label: '从', epIndex: 0 },
+                { devNum: toDevNum,   linNo: toLinNo,   conn: toConn,   pin: toPin,   size: toSize,   shield: toShield,   sigName: toSigName,   sigDef: toSigDef,   label: '到', epIndex: 1 },
+              ];
 
-              if (fromDev || fromPin || toDev || toPin) {
-                // （从）/（到）格式
-                if (fromDev || fromConn || fromPin) {
-                  endpointList.push({
-                    '设备编号': fromDev,
-                    '连接器号': fromConn,
-                    '针孔号': fromPin,
-                    '屏蔽类型': String(row['屏蔽类型（从）'] || '').trim(),
-                    '端接尺寸': String(row['端接尺寸（从）'] || '').trim(),
-                    '信号名称': String(row['信号名称（从）'] || '').trim(),
-                    '信号定义': String(row['信号定义（从）'] || '').trim(),
-                  });
+              for (const ep of epDefs) {
+                const { devNum, linNo, conn, pin, size, shield, sigName, sigDef, label, epIndex } = ep;
+
+                // 端点完全空：跳过（不报错）
+                if (!linNo && !conn && !pin) continue;
+
+                // 条件5：无法通过设备LIN号定位设备
+                if (!linNo) {
+                  sheetE2++;
+                  sheetErrors2.push(`第${rowNum}行: 端点（${label}）设备LIN号为空，跳过整行`);
+                  rowFailed = true; break;
                 }
-                if (toDev || toConn || toPin) {
-                  endpointList.push({
-                    '设备编号': toDev,
-                    '连接器号': toConn,
-                    '针孔号': toPin,
-                    '屏蔽类型': String(row['屏蔽类型（到）'] || '').trim(),
-                    '端接尺寸': String(row['端接尺寸（到）'] || '').trim(),
-                    '信号名称': String(row['信号名称（到）'] || '').trim(),
-                    '信号定义': String(row['信号定义（到）'] || '').trim(),
-                  });
-                }
-              } else if (devicesRaw) {
-                try {
-                  const parsed = typeof devicesRaw === 'string' ? JSON.parse(devicesRaw) : devicesRaw;
-                  const list = Array.isArray(parsed) ? parsed : [parsed];
-                  for (const item of list) {
-                    endpointList.push({
-                      '设备编号': String(item['设备编号'] || '').trim(),
-                      '连接器号': String(item['连接器号'] || item['端元器件号'] || '').trim(),
-                      '针孔号': String(item['针孔号'] || '').trim(),
-                      '屏蔽类型': String(item['屏蔽类型'] || '').trim(),
-                      '端接尺寸': String(item['端接尺寸'] || '').trim(),
-                    });
-                  }
-                } catch { /* 跳过无效JSON */ }
-              } else {
-                // 扁平列 设备编号_1, 连接器号_1, 针孔号_1 等
-                for (let n = 1; n <= 10; n++) {
-                  const devNum = row[`设备编号_${n}`] || row[`设备编号${n}`] || '';
-                  const connNum = row[`连接器号_${n}`] || row[`端元器件号_${n}`] || row[`连接器号${n}`] || '';
-                  const pinNum = row[`针孔号_${n}`] || row[`针孔号${n}`] || '';
-                  if (!devNum && !connNum && !pinNum) break;
-                  endpointList.push({
-                    '设备编号': String(devNum).trim(),
-                    '连接器号': String(connNum).trim(),
-                    '针孔号': String(pinNum).trim(),
-                    '屏蔽类型': String(row[`屏蔽类型_${n}`] || row[`屏蔽类型${n}`] || '').trim(),
-                    '端接尺寸': String(row[`端接尺寸_${n}`] || row[`端接尺寸${n}`] || '').trim(),
-                  });
-                }
-              }
-
-              // ── 预校验 + 解析端点（INSERT signal 之前）────────────────────
-              // 同时检查：① 连接器前缀与设备编号一致；② 设备在库中存在；③ 连接器在设备中存在
-              // 任一端点不通过 → 跳过整行（不插入 signal）
-              let rowValidationFailed = false;
-              type ResolvedEp = { ep: any; connNum: string; device: any; connectorRow: any; rawConnNum: string; pinNum: string; epIndex: number };
-              const resolvedEndpoints: ResolvedEp[] = [];
-
-              for (let idx = 0; idx < endpointList.length; idx++) {
-                const ep = endpointList[idx];
-                const devIdentifier = String(ep['设备编号'] || '').trim();
-                const rawConnNum = String(ep['连接器号'] || ep['端元器件号（连接器号）'] || ep['端元器件号'] || '').trim();
-                const pinNum = String(ep['针孔号'] || '').trim();
-                const epLabel = idx === 0 ? '（从）' : '（到）';
-
-                // 三项均空：跳过此端点（不报错）
-                if (!devIdentifier && !rawConnNum && !pinNum) continue;
-
-                // ① 前缀校验
-                let connNum: string;
-                if (!rawConnNum) {
-                  s2Error++;
-                  s2Errors.push(`第${rowNum}行: 端点${epLabel}连接器号为空，跳过整行`);
-                  rowValidationFailed = true;
-                  break;
-                } else if (rawConnNum.startsWith(devIdentifier + '-')) {
-                  connNum = rawConnNum.slice(devIdentifier.length + 1);
-                } else if (!rawConnNum.includes('-')) {
-                  connNum = rawConnNum;
-                } else {
-                  const lastDash = rawConnNum.lastIndexOf('-');
-                  const actualPrefix = rawConnNum.slice(0, lastDash);
-                  s2Error++;
-                  s2Errors.push(
-                    `第${rowNum}行: 连接器${epLabel}"${rawConnNum}"的设备前缀"${actualPrefix}"与设备${epLabel}"${devIdentifier}"不一致，请检查数据，跳过整行`
-                  );
-                  rowValidationFailed = true;
-                  break;
-                }
-
-                // ② 设备存在性校验
                 const device = await db.get(
-                  `SELECT id FROM devices WHERE project_id = ? AND (设备编号 = ? OR 设备中文名称 = ? OR 设备英文缩写 = ?)`,
-                  [projectId, devIdentifier, devIdentifier, devIdentifier]
+                  `SELECT id, "设备LIN号（DOORS）" as linNo, "设备编号" as devNumDb FROM devices WHERE project_id = ? AND "设备LIN号（DOORS）" = ?`,
+                  [projectId, linNo]
                 );
                 if (!device) {
-                  s2Error++;
-                  s2Errors.push(`第${rowNum}行: 找不到设备${epLabel}"${devIdentifier}"，请检查数据，跳过整行`);
-                  rowValidationFailed = true;
-                  break;
+                  sheetE2++;
+                  sheetErrors2.push(`第${rowNum}行: 端点（${label}）设备LIN号"${linNo}"（设备编号"${devNum}"）在devices中不存在，跳过整行`);
+                  rowFailed = true; break;
                 }
 
-                // ③ 连接器存在性校验
-                const connectorRow = await db.get(
-                  `SELECT id FROM connectors WHERE device_id = ? AND 连接器号 = ?`,
-                  [device.id, connNum]
+                if (!conn) {
+                  sheetE2++;
+                  sheetErrors2.push(`第${rowNum}行: 端点（${label}）连接器号为空，跳过整行`);
+                  rowFailed = true; break;
+                }
+
+                // 查找连接器，同时取回其所属设备LIN号用于条件6校验
+                const connRow = await db.get(
+                  `SELECT c.id, d."设备LIN号（DOORS）" as linNo
+                   FROM connectors c JOIN devices d ON c.device_id = d.id
+                   WHERE c.device_id = ? AND c."连接器号" = ?`,
+                  [device.id, conn]
                 );
-                if (!connectorRow) {
-                  s2Error++;
-                  s2Errors.push(`第${rowNum}行: 设备${epLabel}"${devIdentifier}"中找不到连接器${epLabel}"${connNum}"，请检查数据，跳过整行`);
-                  rowValidationFailed = true;
-                  break;
+                if (!connRow) {
+                  sheetE2++;
+                  sheetErrors2.push(`第${rowNum}行: 端点（${label}）设备LIN号"${linNo}"（设备编号"${device.devNumDb}"）下不存在连接器"${conn}"，跳过整行`);
+                  rowFailed = true; break;
                 }
 
-                resolvedEndpoints.push({ ep, connNum, device, connectorRow, rawConnNum, pinNum, epIndex: idx });
-              }
-              if (rowValidationFailed) continue;
+                // 条件6：连接器所属设备LIN号与指定设备LIN号精确匹配
+                if (connRow.linNo !== linNo) {
+                  sheetE2++;
+                  sheetErrors2.push(`第${rowNum}行: 端点（${label}）连接器"${conn}"所属设备LIN号"${connRow.linNo}"与指定LIN号"${linNo}"不精确匹配，跳过整行`);
+                  rowFailed = true; break;
+                }
 
-              // 插入 signal
-              const sigCols = Object.keys(sigFields).map(k => `"${k}"`).join(', ');
-              const sigPlaceholders = Object.keys(sigFields).map(() => '?').join(', ');
+                resolvedEps.push({ connectorId: connRow.id, pinNum: pin, termSize: size, shield, sigName, sigDef, epIndex });
+              }
+              if (rowFailed) continue;
+
+              // ── 插入 signal ────────────────────────────────────────────
+              sigFields['created_by'] = req.user!.username;
+              sigFields['status'] = 'Active';
+              const sigCols2 = Object.keys(sigFields).map(k => `"${k}"`).join(', ');
+              const sigPh2   = Object.keys(sigFields).map(() => '?').join(', ');
               const sigResult = await db.run(
-                `INSERT INTO signals (project_id${sigCols ? ', ' + sigCols : ''})
-                 VALUES (?${sigPlaceholders ? ', ' + sigPlaceholders : ''})`,
+                `INSERT INTO signals (project_id${sigCols2 ? ', ' + sigCols2 : ''})
+                 VALUES (?${sigPh2 ? ', ' + sigPh2 : ''})`,
                 [projectId, ...Object.values(sigFields)]
               );
               const signalId = sigResult.lastID;
 
-              // ── 处理端点：查找或创建 pin，再写 signal_endpoints ──
-              // 连接器已在预校验阶段确认存在，直接使用 resolvedEndpoints 中的结果
-              for (const { ep, connectorRow, pinNum, epIndex } of resolvedEndpoints) {
-
-                // 查找针孔，不存在则自动创建（补充端接尺寸）
+              // ── 处理端点：查找/创建 pin → 写 signal_endpoints ──────────
+              for (const { connectorId, pinNum, termSize, shield, sigName, sigDef, epIndex } of resolvedEps) {
+                if (!pinNum) continue;
                 let pinRow = await db.get(
-                  `SELECT id FROM pins WHERE connector_id = ? AND 针孔号 = ?`,
-                  [connectorRow.id, pinNum]
+                  `SELECT id FROM pins WHERE connector_id = ? AND "针孔号" = ?`,
+                  [connectorId, pinNum]
                 );
                 if (!pinRow) {
-                  const termSize = ep['端接尺寸'] || null;
-                  const shieldType = ep['屏蔽类型'] || null;
                   const pinRes = await db.run(
-                    `INSERT INTO pins (connector_id, 针孔号, 端接尺寸, 屏蔽类型) VALUES (?, ?, ?, ?) ON CONFLICT(connector_id, 针孔号) DO NOTHING`,
-                    [connectorRow.id, pinNum, termSize, shieldType]
+                    `INSERT INTO pins (connector_id, "针孔号", "端接尺寸", "屏蔽类型")
+                     VALUES (?, ?, ?, ?)
+                     ON CONFLICT(connector_id, "针孔号") DO NOTHING`,
+                    [connectorId, pinNum, termSize || null, shield || null]
                   );
                   if (pinRes.changes > 0) {
                     pinRow = { id: pinRes.lastID };
                   } else {
                     pinRow = await db.get(
-                      `SELECT id FROM pins WHERE connector_id = ? AND 针孔号 = ?`,
-                      [connectorRow.id, pinNum]
+                      `SELECT id FROM pins WHERE connector_id = ? AND "针孔号" = ?`,
+                      [connectorId, pinNum]
                     );
                   }
                 }
                 if (!pinRow) continue;
-
                 await db.run(
-                  `INSERT INTO signal_endpoints (signal_id, pin_id, endpoint_index, 端接尺寸, 信号名称, 信号定义)
+                  `INSERT INTO signal_endpoints
+                     (signal_id, pin_id, endpoint_index, "端接尺寸", "信号名称", "信号定义")
                    VALUES (?, ?, ?, ?, ?, ?)`,
-                  [signalId, pinRow.id, epIndex, ep['端接尺寸'] || null, ep['信号名称'] || null, ep['信号定义'] || null]
+                  [signalId, pinRow.id, epIndex, termSize || null, sigName || null, sigDef || null]
                 );
               }
 
-              s2Success++;
+              sheetS2++;
             } catch (err: any) {
-              s2Error++;
-              s2Errors.push(`第${rowNum}行: ${err.message}`);
+              sheetE2++;
+              sheetErrors2.push(`第${rowNum}行: ${err.message}`);
             }
           }
-          results[`sheet${signalsSheetIdx}`] = {
-            name: workbook.SheetNames[signalsSheetIdx],
-            success: s2Success,
-            skipped: s2Skipped,
-            errors: s2Errors,
-          };
-        }
+          s2Success += sheetS2; s2Skipped.push(...sheetSk2); s2Error += sheetE2;
+          s2Errors.push(...sheetErrors2);
+          results[sigSheetName] = { name: sigSheetName, success: sheetS2, skipped: sheetSk2, errors: sheetErrors2 };
+        } } // end for signalSheetNames + end doSignals
 
-        // 合并所有 Sheet 的错误详情
-        const allErrors: string[] = [
-          ...s0Errors,
-          ...s1Errors,
-          ...sPinsErrors,
-          ...s2Errors,
-        ];
-        const errorDetailsJson = JSON.stringify(allErrors);
+        // 按 Sheet 分组记录详情
+        const errorDetailsJson = JSON.stringify({ sheets: results });
+        const allErrors: string[] = [...s0Errors, ...s1Errors, ...s2Errors];
+        const allSkipped: string[] = [...s0Skipped, ...s1Skipped, ...s2Skipped];
 
         // 记录上传文件
-        const fileSize = fs.statSync(req.file.path).size;
+        const fileSize = fs.statSync(req.file!.path).size;
         await db.run(
-          `INSERT INTO uploaded_files (filename, original_filename, table_name, uploaded_by, total_rows, success_count, error_count, file_size, status, error_details)
-           VALUES (?, ?, 'relational_import', ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO uploaded_files (filename, original_filename, table_name, table_type, uploaded_by, total_rows, success_count, skipped_count, error_count, file_size, status, error_details)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
-            req.file.filename,
-            req.file.originalname,
+            req.file!.filename,
+            originalName,
+            `project_${projectId}`,
+            phase,
             req.user!.id,
-            s0Success + s1Success + sPinsSuccess + s2Success + s0Error + s1Error + sPinsError + s2Error,
-            s0Success + s1Success + sPinsSuccess + s2Success,
-            s0Error + s1Error + sPinsError + s2Error,
+            s0Success + s1Success + s2Success + s0Skipped.length + s1Skipped.length + s2Skipped.length + s0Error + s1Error + s2Error,
+            s0Success + s1Success + s2Success,
+            s0Skipped.length + s1Skipped.length + s2Skipped.length,
+            s0Error + s1Error + s2Error,
             fileSize,
-            'completed',
+            (s0Error + s1Error + s2Error) > 0 ? 'completed_with_errors' : 'completed',
             errorDetailsJson
           ]
         );
 
+        fs.unlink(req.file.path, () => {});
         res.json({
           success: true,
           message: '导入完成',
@@ -844,6 +1065,7 @@ export function projectRoutes(db: Database) {
         });
       } catch (error: any) {
         console.error('导入项目数据失败:', error);
+        if (req.file) fs.unlink(req.file.path, () => {});
         res.status(500).json({ error: error.message || '导入项目数据失败' });
       }
     }
@@ -879,16 +1101,14 @@ export function projectRoutes(db: Database) {
         xlsx.utils.book_append_sheet(workbook, ws, sheetNames[i]);
       }
 
-      // ── 全机设备清单 Sheet ──────────────────────────────────
+      // ── 全机设备清单 Sheet（DOORS 格式，11列）─────────────
       const adlCols = [
-        'Object Identifier', '系统名称', 'Object Text', '设备编号（DOORS）', '设备LIN号（DOORS）',
-        '设备布置区域', '飞机构型', '是否有供应商数模', '是否已布置在样机',
-        '电设备编号', '是否有EICD', '是否确认设备选型', '是否已确认MICD', '模型成熟度',
+        'Object Identifier', '系统名称', '电设备编号', '设备编号', 'LIN号',
+        'Object Text', '设备布置区域', '飞机构型', '是否有EICD', '是否是用电设备', '类型',
       ];
       const adlDbCols = [
-        'object_identifier', '系统名称', 'object_text', '设备编号_DOORS', 'LIN号_DOORS',
-        '设备布置区域', '飞机构型', '是否有供应商数模', '是否已布置在样机',
-        '电设备编号', '是否有EICD', '是否确认设备选型', '是否已确认MICD', '模型成熟度',
+        'object_identifier', '系统名称', '电设备编号', '设备编号_DOORS', 'LIN号_DOORS',
+        'object_text', '设备布置区域', '飞机构型', '是否有EICD', '是否是用电设备', '类型',
       ];
       const adlRows = await db.query(
         'SELECT * FROM aircraft_device_list WHERE project_id = ? ORDER BY id',
@@ -985,16 +1205,48 @@ export function projectRoutes(db: Database) {
     }
   });
 
+  // 新增单行
+  router.post('/:id/aircraft-devices', authenticate, requireRole('admin'), async (req: AuthRequest, res) => {
+    try {
+      const projectId = Number(req.params.id);
+      const { id: _id, project_id: _pid, created_at: _ca, ...fields } = req.body;
+      const cols = Object.keys(fields).map(k => `"${k}"`).join(', ');
+      const placeholders = Object.keys(fields).map(() => '?').join(', ');
+      const result = await db.run(
+        `INSERT INTO aircraft_device_list (project_id, ${cols}) VALUES (?, ${placeholders})`,
+        [projectId, ...Object.values(fields)]
+      );
+      res.json({ id: result.lastID });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 编辑单行
+  router.put('/:id/aircraft-devices/:rowId', authenticate, requireRole('admin'), async (req: AuthRequest, res) => {
+    try {
+      const rowId = Number(req.params.rowId);
+      const { id: _id, project_id: _pid, created_at: _ca, ...fields } = req.body;
+      const setClauses = Object.keys(fields).map(k => `"${k}" = ?`).join(', ');
+      await db.run(
+        `UPDATE aircraft_device_list SET ${setClauses} WHERE id = ?`,
+        [...Object.values(fields), rowId]
+      );
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // 导入清单（仅管理员，Excel 单 Sheet）
   router.post('/:id/aircraft-devices/import', authenticate, requireRole('admin'), upload.single('file'), async (req: AuthRequest, res) => {
     if (!req.file) return res.status(400).json({ error: '未上传文件' });
     try {
       const projectId = Number(req.params.id);
       const workbook = xlsx.readFile(req.file.path);
-      const TARGET_SHEET = '5-全机设备清单';
-      const exactMatch = workbook.SheetNames.find(n => n.trim() === TARGET_SHEET);
-      const fuzzyMatch = workbook.SheetNames.find(n => n.includes('全机设备清单'));
-      const sheetName = exactMatch ?? fuzzyMatch;
+      // DOORS 导出文件，精确匹配 Sheet 名
+      const TARGET_SHEET = '00设备编号管理';
+      const sheetName = workbook.SheetNames.find(n => n.trim() === TARGET_SHEET);
       if (!sheetName) {
         fs.unlink(req.file.path, () => {});
         return res.status(400).json({
@@ -1004,48 +1256,29 @@ export function projectRoutes(db: Database) {
       const sheet = workbook.Sheets[sheetName];
       const jsonData: any[] = xlsx.utils.sheet_to_json(sheet);
 
-      // 列名映射：Excel列名 → DB列名（支持全角/半角括号及无括号变体）
+      // 列名映射：DOORS Excel列名 → DB列名（精确匹配）
       const COL_MAP: Record<string, string> = {
         'Object Identifier': 'object_identifier',
-        '系统名称': '系统名称',
-        'Object Text': 'object_text',
-        '设备编号': '设备编号_DOORS',
-        '设备编号（DOORS）': '设备编号_DOORS',
-        '设备编号(DOORS)': '设备编号_DOORS',
-        'LIN号': 'LIN号_DOORS',
-        'LIN号（DOORS）': 'LIN号_DOORS',
-        'LIN号(DOORS)': 'LIN号_DOORS',
-        '设备布置区域': '设备布置区域',
-        '飞机构型': '飞机构型',
-        '是否有供应商数模': '是否有供应商数模',
-        '是否已布置在样机': '是否已布置在样机',
-        '电设备编号': '电设备编号',
-        '是否有EICD': '是否有EICD',
-        '是否确认设备选型': '是否确认设备选型',
-        '是否已确认MICD': '是否已确认MICD',
-        '模型成熟度': '模型成熟度',
+        '系统名称':          '系统名称',
+        '电设备编号':        '电设备编号',
+        '设备编号':          '设备编号_DOORS',
+        'LIN号':             'LIN号_DOORS',
+        'Object Text':       'object_text',
+        '设备布置区域':      '设备布置区域',
+        '飞机构型':          '飞机构型',
+        '是否有EICD':        '是否有EICD',
+        '是否是用电设备':    '是否是用电设备',
+        '类型':              '类型',
       };
+      // 11 个有效 DB 列（用于指纹去重）
       const ALL_DB_COLS = [
-        'object_identifier','系统名称','object_text','设备编号_DOORS','LIN号_DOORS',
-        '设备布置区域','飞机构型','是否有供应商数模','是否已布置在样机',
-        '电设备编号','是否有EICD','是否确认设备选型','是否已确认MICD','模型成熟度',
+        'object_identifier', '系统名称', '电设备编号', '设备编号_DOORS', 'LIN号_DOORS',
+        'object_text', '设备布置区域', '飞机构型', '是否有EICD', '是否是用电设备', '类型',
       ];
 
-      // 校验 Excel 列名：不允许出现 COL_MAP 之外的列
-      if (jsonData.length > 0) {
-        const knownKeys = new Set(Object.keys(COL_MAP));
-        const unknownCols = Object.keys(jsonData[0] as Record<string, unknown>)
-          .map(k => k.trim())
-          .filter(k => !knownKeys.has(k));
-        if (unknownCols.length > 0) {
-          fs.unlink(req.file.path, () => {});
-          return res.status(400).json({
-            error: `Sheet"${sheetName}"包含未知列，请检查后重新上传。未知列：${unknownCols.join('、')}`
-          });
-        }
-      }
+      // DOORS 文件可能含额外列，仅忽略，不报错
 
-      // 预加载已有记录的14列指纹（拼接后放入 Set，O(1) 查重）
+      // 预加载已有记录的指纹（拼接后放入 Set，O(1) 查重）
       const existingRows = await db.query(
         `SELECT ${ALL_DB_COLS.map(c => `"${c}"`).join(', ')} FROM aircraft_device_list WHERE project_id = ?`,
         [projectId]
@@ -1061,11 +1294,9 @@ export function projectRoutes(db: Database) {
         const mapped: Record<string, string> = {};
         // 先将所有 DB 列初始化为 '-'
         for (const dbCol of ALL_DB_COLS) mapped[dbCol] = '-';
-        // 再用 Excel 数据覆盖能匹配的列
+        // 精确匹配列名（trim）
         for (const [excelKey, dbKey] of Object.entries(COL_MAP)) {
-          const found = Object.keys(raw).find(k =>
-            k.trim() === excelKey || k.trim().includes(excelKey) || excelKey.includes(k.trim())
-          );
+          const found = Object.keys(raw).find(k => k.trim() === excelKey);
           if (found !== undefined && raw[found] != null && String(raw[found]).trim() !== '') {
             mapped[dbKey] = String(raw[found]).trim();
           }
@@ -1079,17 +1310,14 @@ export function projectRoutes(db: Database) {
 
         await db.run(
           `INSERT INTO aircraft_device_list
-            (project_id, object_identifier, 系统名称, object_text, 设备编号_DOORS, LIN号_DOORS,
-             设备布置区域, 飞机构型, 是否有供应商数模, 是否已布置在样机,
-             电设备编号, 是否有EICD, 是否确认设备选型, 是否已确认MICD, 模型成熟度)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            (project_id, object_identifier, 系统名称, 电设备编号, 设备编号_DOORS, LIN号_DOORS,
+             object_text, 设备布置区域, 飞机构型, 是否有EICD, 是否是用电设备, 类型)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [projectId,
-           mapped['object_identifier'], mapped['系统名称'], mapped['object_text'],
-           mapped['设备编号_DOORS'],    mapped['LIN号_DOORS'],
-           mapped['设备布置区域'],      mapped['飞机构型'],
-           mapped['是否有供应商数模'],  mapped['是否已布置在样机'],
-           mapped['电设备编号'],        mapped['是否有EICD'],
-           mapped['是否确认设备选型'],  mapped['是否已确认MICD'], mapped['模型成熟度']]
+           mapped['object_identifier'], mapped['系统名称'],    mapped['电设备编号'],
+           mapped['设备编号_DOORS'],    mapped['LIN号_DOORS'], mapped['object_text'],
+           mapped['设备布置区域'],      mapped['飞机构型'],    mapped['是否有EICD'],
+           mapped['是否是用电设备'],    mapped['类型']]
         );
         existingFingerprints.add(fingerprint);
         inserted++;

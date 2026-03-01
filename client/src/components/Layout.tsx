@@ -30,6 +30,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [showNotifications, setShowNotifications] = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [myPermissions, setMyPermissions] = useState<{ project_name: string; project_role: string }[]>([]);
 
   const fetchUnreadCount = useCallback(async () => {
     if (!user) return;
@@ -56,6 +57,15 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       setNotifications(prev => prev.map(n => ({ ...n, is_read: 1 })));
     } catch { }
   };
+
+  // 获取当前用户权限（用于导航栏显示"审批管理"）
+  useEffect(() => {
+    if (!user || user.role === 'admin') return;
+    fetch('/api/users/me/permissions', { headers: API_HEADERS() })
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data?.permissions) setMyPermissions(data.permissions); })
+      .catch(() => {});
+  }, [user]);
 
   // 轮询未读数（30秒）
   useEffect(() => {
@@ -89,7 +99,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           <div className="flex justify-between h-16">
             <div className="flex">
               <Link to="/" className="flex items-center">
-                <span className="text-xl font-bold text-blue-600">MBSE综合管理平台</span>
+                <span className="text-xl font-bold text-blue-600">EICD综合管理平台</span>
               </Link>
               <div className="hidden sm:ml-6 sm:flex sm:space-x-8">
                 {user?.role === 'admin' && (
@@ -110,6 +120,19 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 >
                   项目数据
                 </Link>
+                {/* 审批管理：项目管理员、设备管理员、admin 均可见 */}
+                {(user?.role === 'admin' ||
+                  myPermissions.some(p => p.project_role === '项目管理员') ||
+                  myPermissions.some(p => p.project_role === '设备管理员')) && (
+                  <Link
+                    to="/approvals"
+                    className={`${
+                      isActive('/approvals') ? 'border-blue-500 text-gray-900' : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
+                    } inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium`}
+                  >
+                    审批管理
+                  </Link>
+                )}
                 {user?.role === 'admin' && (
                   <>
                     <Link
@@ -165,6 +188,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                   }`}>
                     {user?.role === 'admin' ? '管理员' : '普通用户'}
                   </span>
+                  {user?.role !== 'admin' && myPermissions.length > 0 && (
+                    <span className="text-xs text-gray-500">
+                      {[...new Set(myPermissions.map(p => p.project_role))].join(' / ')}
+                    </span>
+                  )}
                   {/* 铃铛通知 */}
                   <div className="relative" ref={notifRef}>
                     <button

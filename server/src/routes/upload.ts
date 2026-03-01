@@ -145,11 +145,6 @@ export function uploadRoutes(db: Database) {
         )
       `);
       
-      // 记录到custom_tables（original_columns将在导入时更新）
-      await db.run(
-        'INSERT INTO custom_tables (table_name, display_name, original_columns, created_by) VALUES (?, ?, ?, ?)',
-        [tableName, tableName, JSON.stringify(originalColumns), userId]
-      );
     }
   };
 
@@ -159,14 +154,6 @@ export function uploadRoutes(db: Database) {
       // 删除表
       await db.run(`DROP TABLE IF EXISTS "${tableName}"`);
       console.log(`已删除数据表: ${tableName}`);
-      
-      // 删除表元数据
-      await db.run('DELETE FROM table_metadata WHERE table_name = ?', [tableName]);
-      console.log(`已删除表元数据: ${tableName}`);
-      
-      // 从custom_tables中删除记录
-      await db.run('DELETE FROM custom_tables WHERE table_name = ?', [tableName]);
-      console.log(`已删除custom_tables记录: ${tableName}`);
     } catch (error) {
       console.error(`删除表失败: ${tableName}`, error);
     }
@@ -179,112 +166,6 @@ export function uploadRoutes(db: Database) {
     cleanName = cleanName.replace(/[()]/g, '_');
     cleanName = cleanName.replace(/\.(\d+)/g, '_$1');
     return cleanName;
-  };
-
-  // 更新表元数据的辅助函数
-  const updateTableMetadata = async (
-    tableName: string, 
-    rowData: any, 
-    originalColumns: string[]
-  ) => {
-    try {
-
-      // 提取connection编号
-      if (originalColumns.includes('connection编号')) {
-        const connectionCol = cleanColumnName('connection编号');
-        const connectionValue = rowData[connectionCol] || rowData['connection编号'];
-        if (connectionValue && String(connectionValue).trim() !== '') {
-          await db.run(
-            `INSERT OR IGNORE INTO table_metadata (table_name, metadata_type, value) VALUES (?, ?, ?)`,
-            [tableName, 'connection_number', String(connectionValue).trim()]
-          );
-        }
-      }
-
-      // 提取Unique ID
-      if (originalColumns.includes('Unique ID')) {
-        const uniqueIdCol = cleanColumnName('Unique ID');
-        const uniqueIdValue = rowData[uniqueIdCol] || rowData['Unique ID'];
-        if (uniqueIdValue && String(uniqueIdValue).trim() !== '') {
-          await db.run(
-            `INSERT OR IGNORE INTO table_metadata (table_name, metadata_type, value) VALUES (?, ?, ?)`,
-            [tableName, 'unique_id', String(uniqueIdValue).trim()]
-          );
-        }
-      }
-
-      // 提取设备、连接器、针孔号（支持多种可能的列名）
-      const deviceColumnNames = ['设备', '设备_从'];
-      const connectorColumnNames = ['连接器', '连接器_从'];
-      const pinColumnNames = ['针孔号', '针孔号_从'];
-
-      let deviceValue = '';
-      let connectorValue = '';
-      let pinValue = '';
-
-      // 查找设备列
-      for (const colName of deviceColumnNames) {
-        if (originalColumns.includes(colName)) {
-          const cleanCol = cleanColumnName(colName);
-          deviceValue = rowData[cleanCol] || rowData[colName] || '';
-          if (deviceValue && String(deviceValue).trim() !== '') {
-            deviceValue = String(deviceValue).trim();
-            break;
-          }
-        }
-      }
-
-      // 查找连接器列
-      for (const colName of connectorColumnNames) {
-        if (originalColumns.includes(colName)) {
-          const cleanCol = cleanColumnName(colName);
-          connectorValue = rowData[cleanCol] || rowData[colName] || '';
-          if (connectorValue && String(connectorValue).trim() !== '') {
-            connectorValue = String(connectorValue).trim();
-            break;
-          }
-        }
-      }
-
-      // 查找针孔号列
-      for (const colName of pinColumnNames) {
-        if (originalColumns.includes(colName)) {
-          const cleanCol = cleanColumnName(colName);
-          pinValue = rowData[cleanCol] || rowData[colName] || '';
-          if (pinValue && String(pinValue).trim() !== '') {
-            pinValue = String(pinValue).trim();
-            break;
-          }
-        }
-      }
-
-      // 保存设备
-      if (deviceValue) {
-        await db.run(
-          `INSERT OR IGNORE INTO table_metadata (table_name, metadata_type, value) VALUES (?, ?, ?)`,
-          [tableName, 'device', deviceValue]
-        );
-      }
-
-      // 保存连接器（关联到设备）
-      if (connectorValue && deviceValue) {
-        await db.run(
-          `INSERT OR IGNORE INTO table_metadata (table_name, metadata_type, value, parent_value) VALUES (?, ?, ?, ?)`,
-          [tableName, 'connector', connectorValue, deviceValue]
-        );
-      }
-
-      // 保存针孔号（关联到连接器）
-      if (pinValue && connectorValue) {
-        await db.run(
-          `INSERT OR IGNORE INTO table_metadata (table_name, metadata_type, value, parent_value) VALUES (?, ?, ?, ?)`,
-          [tableName, 'pin', pinValue, connectorValue]
-        );
-      }
-    } catch (error) {
-      console.error(`更新表元数据失败 (${tableName}):`, error);
-      // 不抛出错误，避免影响主流程
-    }
   };
 
   // 上传并导入xlsx文件
@@ -309,7 +190,7 @@ export function uploadRoutes(db: Database) {
         }
         
         // 表名必须唯一，禁止使用系统默认表
-        const reservedTables = ['users', 'tasks', 'change_logs', 'uploaded_files', 'custom_tables', 'eicd_data'];
+        const reservedTables = ['users', 'tasks', 'change_logs', 'uploaded_files', 'eicd_data'];
         if (reservedTables.includes(tableName.toLowerCase())) {
           return res.status(400).json({ 
             error: `表名 "${tableName}" 是系统保留名称，请使用其他表名。建议使用有意义的名称，如：project_a_2024、module_b_data 等` 
@@ -387,15 +268,6 @@ export function uploadRoutes(db: Database) {
               `INSERT INTO "${tableName}" (${columnNames}) VALUES (${placeholders})`,
               values
             );
-
-            // 更新表元数据
-            const insertedRow: any = {};
-            originalColumns.forEach((colName, idx) => {
-              const cleanName = cleanColumnName(colName);
-              insertedRow[cleanName] = values[idx];
-              insertedRow[colName] = values[idx]; // 也保存原始列名
-            });
-            await updateTableMetadata(tableName, insertedRow, originalColumns);
 
             successCount++;
           } catch (error: any) {
@@ -478,7 +350,7 @@ export function uploadRoutes(db: Database) {
         `SELECT uf.*, u.username as uploaded_by_name
          FROM uploaded_files uf
          JOIN users u ON uf.uploaded_by = u.id
-         ORDER BY uf.uploaded_at DESC`
+         ORDER BY uf.id ASC`
       );
       
       // 为每个文件查找对应的项目名称
@@ -495,21 +367,9 @@ export function uploadRoutes(db: Database) {
               if (project) {
                 projectName = project.name;
               }
-            } else {
-              // 如果 table_name 是 project_X_xxx 格式，通过 project_tables 查找
-              const projectTable = await db.get(
-                `SELECT p.name as project_name
-                 FROM project_tables pt
-                 JOIN projects p ON pt.project_id = p.id
-                 WHERE pt.table_name = ?`,
-                [file.table_name]
-              );
-              if (projectTable) {
-                projectName = projectTable.project_name;
-              }
             }
           }
-          
+
           return {
             ...file,
             original_filename: fixFilenameEncoding(file.original_filename || ''),
@@ -552,18 +412,6 @@ export function uploadRoutes(db: Database) {
           const project = await db.get('SELECT name FROM projects WHERE id = ?', [projectId]);
           if (project) {
             projectName = project.name;
-          }
-        } else {
-          // 如果 table_name 是 project_X_xxx 格式，通过 project_tables 查找
-          const projectTable = await db.get(
-            `SELECT p.name as project_name
-             FROM project_tables pt
-             JOIN projects p ON pt.project_id = p.id
-             WHERE pt.table_name = ?`,
-            [file.table_name]
-          );
-          if (projectTable) {
-            projectName = projectTable.project_name;
           }
         }
       }
@@ -610,6 +458,17 @@ export function uploadRoutes(db: Database) {
     } catch (error) {
       console.error('下载文件失败:', error);
       res.status(500).json({ error: '下载文件失败' });
+    }
+  });
+
+  // 清空所有上传文件记录（必须在 /files/:id 之前注册）
+  router.delete('/files/all', authenticate, requireRole('admin'), async (req, res) => {
+    try {
+      const result = await db.run('DELETE FROM uploaded_files');
+      res.json({ deleted: result.changes });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: '清空失败' });
     }
   });
 
@@ -829,19 +688,7 @@ export function uploadRoutes(db: Database) {
         )
       `);
       
-      // 记录到custom_tables
-      await db.run(
-        'INSERT INTO custom_tables (table_name, display_name, original_columns, created_by, record_count) VALUES (?, ?, ?, ?, ?)',
-        [
-          finalTableName,
-          displayName && displayName.trim() ? displayName.trim() : finalTableName,
-          JSON.stringify(columns),
-          userId,
-          0
-        ]
-      );
-
-      res.json({ 
+      res.json({
         success: true, 
         message: '空白表格创建成功',
         tableName: finalTableName,

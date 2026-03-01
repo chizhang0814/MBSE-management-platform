@@ -496,19 +496,18 @@ export default function UserManagement() {
                                 onChange={(e) => {
                                   const newValue = e.target.value;
                                   const newPerms = [...formData.permissions];
-                                  
-                                  // 检查是否重复
-                                  const isDuplicate = newPerms.some((p, i) => 
-                                    i !== idx && 
-                                    p.project_name === newValue && 
-                                    p.project_role === newPerms[idx].project_role
+
+                                  // 一个用户在同一项目只能有一种角色
+                                  const isDuplicate = newPerms.some((p, i) =>
+                                    i !== idx &&
+                                    p.project_name === newValue
                                   );
-                                  
+
                                   if (isDuplicate) {
-                                    alert('该权限已存在，不能重复添加');
+                                    alert('该用户在此项目下已有角色，每个项目只能分配一种角色');
                                     return;
                                   }
-                                  
+
                                   newPerms[idx] = { ...newPerms[idx], project_name: newValue };
                                   setFormData({ ...formData, permissions: newPerms });
                                 }}
@@ -527,30 +526,18 @@ export default function UserManagement() {
                               <select
                                 value={perm.project_role}
                                 onChange={(e) => {
-                                  const newValue = e.target.value;
                                   const newPerms = [...formData.permissions];
-                                  
-                                  // 检查是否重复
-                                  const isDuplicate = newPerms.some((p, i) => 
-                                    i !== idx && 
-                                    p.project_name === newPerms[idx].project_name && 
-                                    p.project_role === newValue
-                                  );
-                                  
-                                  if (isDuplicate) {
-                                    alert('该权限已存在，不能重复添加');
-                                    return;
-                                  }
-                                  
-                                  newPerms[idx] = { ...newPerms[idx], project_role: newValue };
+                                  newPerms[idx] = { ...newPerms[idx], project_role: e.target.value };
                                   setFormData({ ...formData, permissions: newPerms });
                                 }}
                                 className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
                               >
                                 <option value="">选择角色</option>
+                                <option value="项目管理员">项目管理员</option>
+                                <option value="设备管理员">设备管理员</option>
                                 <option value="一级包长">一级包长</option>
                                 <option value="二级包长">二级包长</option>
-                                <option value="设备管理员">设备管理员</option>
+                                <option value="只读">只读</option>
                               </select>
                             </div>
                             <button
