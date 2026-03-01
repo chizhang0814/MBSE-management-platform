@@ -876,6 +876,17 @@ export class Database {
     await this.run(`CREATE INDEX IF NOT EXISTS idx_approval_project ON approval_requests(project_id)`);
     await this.run(`CREATE INDEX IF NOT EXISTS idx_approval_status  ON approval_requests(status)`);
 
+    // 新增 employees 表（人员管理：EID ↔ 姓名 映射）
+    await this.run(`
+      CREATE TABLE IF NOT EXISTS employees (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        eid TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        remarks TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
     // 清理废弃表
     try {
       await this.run('DROP TABLE IF EXISTS project_tables');

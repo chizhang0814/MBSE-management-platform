@@ -175,6 +175,14 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                     >
                       用户管理
                     </Link>
+                    <Link
+                      to="/employees"
+                      className={`${
+                        isActive('/employees') ? 'border-blue-500 text-gray-900' : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
+                      } inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium`}
+                    >
+                      人员管理
+                    </Link>
                   </>
                 )}
               </div>
@@ -182,7 +190,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             <div className="flex items-center">
               <div className="flex items-center space-x-4">
                 <div className="flex items-center space-x-2">
-                  <span className="text-gray-700">{user?.display_name || user?.username}</span>
+                  <span className="text-gray-700">
+                    {user?.username}
+                    {user?.employee_name && <span className="text-gray-500 ml-1">({user.employee_name})</span>}
+                  </span>
                   <span className={`px-2 py-1 rounded text-xs font-semibold ${
                     user?.role === 'admin' ? 'bg-purple-100 text-purple-800' : 'bg-blue-100 text-blue-800'
                   }`}>

@@ -30,12 +30,16 @@ export function authRoutes(db: Database) {
         { expiresIn: '7d' }
       );
 
+      // 查找 employees 表中 EID 与用户名匹配的员工姓名
+      const emp = await db.get('SELECT name FROM employees WHERE eid = ?', [user.username]);
+
       res.json({
         token,
         user: {
           id: user.id,
           username: user.username,
           display_name: user.display_name || null,
+          employee_name: emp?.name || null,
           role: user.role,
         },
       });
@@ -82,7 +86,8 @@ export function authRoutes(db: Database) {
   router.get('/me', authenticate, async (req: any, res) => {
     try {
       const user = await db.get('SELECT id, username, display_name, role FROM users WHERE id = ?', [req.user.id]);
-      res.json({ user });
+      const emp = await db.get('SELECT name FROM employees WHERE eid = ?', [user.username]);
+      res.json({ user: { ...user, employee_name: emp?.name || null } });
     } catch (error) {
       res.status(500).json({ error: '获取用户信息失败' });
     }
