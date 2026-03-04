@@ -391,6 +391,7 @@ export function deviceRoutes(db: Database) {
       delete fields.设备负责人姓名;
       delete fields.pending_item_type;
       delete fields.pending_sub_item_type;
+      delete fields.has_pending_sub;
 
       // 去除 设备部件所属系统（4位ATA） 首尾各类引号（含中文弯引号）
       const ATA_KEY = '设备部件所属系统（4位ATA）';

@@ -114,6 +114,7 @@ export default function UserManagement() {
   };
 
   const handleOpenModal = (user?: User) => {
+    fetchProjects();
     if (user) {
       setEditingUser(user);
       setFormData({
