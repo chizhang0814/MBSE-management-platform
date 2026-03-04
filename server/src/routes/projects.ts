@@ -587,7 +587,7 @@ export function projectRoutes(db: Database) {
           const rows1: any[] = xlsx.utils.sheet_to_json(sheet1, { defval: '' }).map(normalizeRowKeys);
 
           // 连接器比对时跳过的列
-          const CONN_SKIP_COMPARE = new Set(['连接器号', '导入来源']);
+          const CONN_SKIP_COMPARE = new Set(['导入来源']);
 
           for (let i = 0; i < rows1.length; i++) {
             if (i === 0) continue; // 第2行为填写说明，跳过
@@ -609,8 +609,7 @@ export function projectRoutes(db: Database) {
 
               // ② 查找父设备
               const device: any = await db.get(
-                `SELECT id, "设备LIN号（DOORS）" as linNo FROM devices
-                 WHERE project_id = ? AND "设备编号" = ?`,
+                `SELECT id FROM devices WHERE project_id = ? AND "设备编号" = ?`,
                 [projectId, colA]
               );
               if (!device) {
@@ -619,11 +618,9 @@ export function projectRoutes(db: Database) {
                 continue;
               }
 
-              const deviceLinNo = (device.linNo || '').trim();
               const importSource = `${originalName} / ${connectorSheetName} / 第${rowNum}行`;
               let connStatus = 'normal';
               const connConflicts: string[] = [];
-              const connVeErrors: string[] = [];
 
               // ③ 构建插入字段（映射 Excel 列→DB 列）
               const connFields: Record<string, any> = {};
@@ -647,31 +644,15 @@ export function projectRoutes(db: Database) {
                 }
               }
 
-              // ④ 读取并解析 设备端元器件编号
+              // ④ 检查 设备端元器件编号 是否存在
               const compId = String(connFields['设备端元器件编号'] || '').trim();
-
               if (!compId) {
-                // 设备端元器件编号为空 → 依旧插入，status=Draft
-                connStatus = 'Draft';
-                connConflicts.push(`[${importSource}] 缺少设备端元器件编号`);
-                connVeErrors.push('设备端元器件编号');
-                // 连接器号置为占位符以便插入
-                connFields['连接器号'] = connFields['连接器号'] || `_empty_${rowNum}`;
-                connFields['设备端元器件编号'] = '';
-                connFields['导入来源'] = importSource;
-
-                const ccols = Object.keys(connFields).map(k => `"${k}"`).join(', ');
-                const cph = Object.keys(connFields).map(() => '?').join(', ');
-                await db.run(
-                  `INSERT INTO connectors (device_id, status, import_conflicts, validation_errors, ${ccols})
-                   VALUES (?, ?, ?, ?, ${cph})
-                   ON CONFLICT(device_id, 连接器号) DO NOTHING`,
-                  [device.id, connStatus, JSON.stringify(connConflicts), JSON.stringify(connVeErrors), ...Object.values(connFields)]
-                );
                 s1Error++;
-                s1Errors.push(`第${rowNum}行: 设备端元器件编号为空，已插入为Draft [${rowContext}]`);
+                s1Errors.push(`第${rowNum}行: 设备端元器件编号为空，跳过 [${rowContext}]`);
                 continue;
               }
+
+              connFields['导入来源'] = importSource;
 
               // ⑤ 检查数据库中是否已存在同 设备端元器件编号 的旧记录
               const existingConn: any = await db.get(
@@ -709,80 +690,19 @@ export function projectRoutes(db: Database) {
                 continue;
               }
 
-              // ⑥ 新记录：解析 设备端元器件编号 得到连接器号
-              let connectorNum: string;
-              const lastDash = compId.lastIndexOf('-');
-              if (lastDash === -1) {
-                // 不含 "-"：整体作为连接器号
-                connectorNum = compId;
-                connStatus = 'Draft';
-                connConflicts.push(`[${importSource}] 设备端元器件编号应为"设备LIN号（DOORS）-连接器号"的组合，当前值"${compId}"不含"-"`);
-              } else {
-                // 含 "-"：最后一个 "-" 后为连接器号，前缀与 LIN 号比对
-                connectorNum = compId.slice(lastDash + 1);
-                const prefix = compId.slice(0, lastDash);
-                if (prefix !== deviceLinNo) {
-                  connStatus = 'Draft';
-                  connConflicts.push(`[${importSource}] 设备端元器件编号前缀"${prefix}"与设备LIN号（DOORS）"${deviceLinNo}"不匹配`);
-                }
-              }
-
-              if (!connectorNum) {
-                // 解析后连接器号为空
-                connectorNum = `_empty_${rowNum}`;
-                connStatus = 'Draft';
-                connConflicts.push(`[${importSource}] 设备端元器件编号"${compId}"解析后连接器号为空`);
-              }
-
-              connFields['连接器号'] = connectorNum;
-              connFields['导入来源'] = importSource;
-
-              // ⑦ 插入新记录（device_id + 连接器号 冲突则跳过）
+              // ⑥ 新记录：直接插入（device_id + 设备端元器件编号 冲突则跳过）
               const connCols = Object.keys(connFields).map(k => `"${k}"`).join(', ');
               const connPlaceholders = Object.keys(connFields).map(() => '?').join(', ');
               const connResult = await db.run(
-                `INSERT INTO connectors (device_id, status, import_conflicts, validation_errors, ${connCols})
-                 VALUES (?, ?, ?, ?, ${connPlaceholders})
-                 ON CONFLICT(device_id, 连接器号) DO NOTHING`,
+                `INSERT INTO connectors (device_id, status, import_conflicts, ${connCols})
+                 VALUES (?, ?, ?, ${connPlaceholders})
+                 ON CONFLICT(device_id, "设备端元器件编号") DO NOTHING`,
                 [device.id, connStatus,
                  connConflicts.length > 0 ? JSON.stringify(connConflicts) : null,
-                 connVeErrors.length > 0 ? JSON.stringify(connVeErrors) : null,
                  ...Object.values(connFields)]
               );
               if (connResult.changes === 0) {
-                // UNIQUE 冲突（device_id + 连接器号）→ 逐列比对旧记录
-                const existByNum: any = await db.get(
-                  `SELECT * FROM connectors WHERE device_id = ? AND "连接器号" = ?`,
-                  [device.id, connectorNum]
-                );
-                if (existByNum) {
-                  const diffCols: string[] = [];
-                  for (const [col, newVal] of Object.entries(connFields)) {
-                    if (CONN_SKIP_COMPARE.has(col)) continue;
-                    const oldVal = String(existByNum[col] ?? '').trim();
-                    const newValStr = String(newVal ?? '').trim();
-                    if (oldVal !== newValStr) {
-                      diffCols.push(`${col}: "${oldVal}" → "${newValStr}"`);
-                    }
-                  }
-                  if (diffCols.length === 0) {
-                    s1Skipped.push(`第${rowNum}行: 连接器号[${connectorNum}] 已存在且所有列匹配，跳过`);
-                  } else {
-                    const oldSource = existByNum['导入来源'] || '未知来源';
-                    const conflictMsg = `${oldSource}（旧）和 ${importSource}（新）均有此连接器，以下列不匹配: ${diffCols.join('；')}`;
-                    const prevConflicts: string[] = (() => {
-                      try { return JSON.parse(existByNum.import_conflicts || '[]'); } catch { return []; }
-                    })();
-                    prevConflicts.push(conflictMsg);
-                    await db.run(
-                      `UPDATE connectors SET status = 'Draft', import_conflicts = ? WHERE id = ?`,
-                      [JSON.stringify(prevConflicts), existByNum.id]
-                    );
-                    s1Skipped.push(`第${rowNum}行: 连接器号[${connectorNum}] 已存在，${conflictMsg}`);
-                  }
-                } else {
-                  s1Skipped.push(`第${rowNum}行: 连接器号[${connectorNum}] 已存在，跳过`);
-                }
+                s1Skipped.push(`第${rowNum}行: 连接器[${compId}] 已存在，跳过`);
               } else {
                 s1Success++;
               }
@@ -816,78 +736,73 @@ export function projectRoutes(db: Database) {
           }
 
           // 构建列名→列索引映射：首次出现 → colIdx，第二次出现 → colIdx2
-          // "设备（从）"/"设备（到）"各有两列：第一列=设备编号，第二列=设备LIN号（DOORS）
           const normH = (h: any) => String(h).replace(/[\r\n\t]+/g, '').trim();
           const colIdx: Record<string, number> = {};
           const colIdx2: Record<string, number> = {};
           for (let ci = 0; ci < rawRows[0].length; ci++) {
             const h = normH(rawRows[0][ci]);
             if (h) {
-              if (!(h in colIdx)) colIdx[h] = ci;          // 首次出现
-              else if (!(h in colIdx2)) colIdx2[h] = ci;   // 第二次出现
+              if (!(h in colIdx)) colIdx[h] = ci;
+              else if (!(h in colIdx2)) colIdx2[h] = ci;
             }
           }
           const getV = (row: any[], headerName: string) =>
             String(row[colIdx[headerName] ?? -1] ?? '').trim();
-          // 取同名列第二次出现的值（"设备（从/到）"第二列 = 设备LIN号（DOORS））
           const getV2 = (row: any[], headerName: string) =>
             String(row[colIdx2[headerName] ?? -1] ?? '').trim();
 
           // 数据从第3行（index=2）开始，index=1 是填写说明
           for (let i = 2; i < rawRows.length; i++) {
             const row = rawRows[i];
-            const rowNum = i + 1; // Excel 行号（1-indexed）
+            const rowNum = i + 1;
             if (String(row[0] ?? '').includes('示例')) {
               sheetSk2.push(`第${rowNum}行（A列含"示例"，跳过）`); continue;
             }
             try {
-              // ── 构建 signals 字段 ──────────────────────────────────────
+              // ── 步骤1：构建 signals 字段 ──────────────────────────────
               const sigFields: Record<string, any> = {};
               const setF = (dbCol: string, header: string) => {
                 const v = getV(row, header);
                 if (v !== '') sigFields[dbCol] = v;
               };
-              setF('unique_id',             '信号编号');
-              setF('信号方向',              '信号方向（从）');
-              setF('推荐导线线规',          '推荐导线线规');
-              setF('推荐导线线型',          '推荐导线线型');
-              setF('独立电源代码',          '独立电源代码');
-              setF('敷设代码',              '敷设代码');
-              setF('电磁兼容代码',          '电磁兼容代码');
-              setF('余度代码',              '余度代码');
-              setF('功能代码',              '功能代码');
-              setF('接地代码',              '接地代码');
-              setF('极性',                  '极性');
-              setF('信号ATA',               '信号ATA');
-              setF('信号架次有效性',        '信号架次有效性');
-              setF('额定电压',              '额定电压（V）');
-              setF('设备正常工作电压范围',  '设备正常工作电压范围（V）');
-              setF('额定电流',              '额定电流（A）');
-              setF('是否成品线',            '是否为成品线');
-              setF('成品线件号',            '成品线件号');
-              setF('成品线线规',            '成品线线规');
-              setF('成品线类型',            '成品线类型');
-              setF('成品线长度',            '成品线长度（MM）');
-              setF('成品线载流量',          '成品线载流量（A）');
-              setF('成品线线路压降',        '成品线线路压降（V）');
-              setF('成品线标识',            '成品线标识');
-              setF('成品线与机上线束对接方式', '成品线与机上线束对接方式');
-              setF('成品线安装责任',        '成品线安装责任');
-              setF('备注',                  '备注');
+              setF('unique_id',                   '信号编号');
+              setF('推荐导线线规',                '推荐导线线规');
+              setF('推荐导线线型',                '推荐导线线型');
+              setF('独立电源代码',                '独立电源代码');
+              setF('敷设代码',                    '敷设代码');
+              setF('电磁兼容代码',                '电磁兼容代码');
+              setF('余度代码',                    '余度代码');
+              setF('功能代码',                    '功能代码');
+              setF('接地代码',                    '接地代码');
+              setF('极性',                        '极性');
+              setF('信号ATA',                     '信号ATA');
+              setF('信号架次有效性',              '信号架次有效性');
+              setF('额定电压',                    '额定电压（V）');
+              setF('设备正常工作电压范围',        '设备正常工作电压范围（V）');
+              setF('额定电流',                    '额定电流（A）');
+              setF('是否成品线',                  '是否为成品线');
+              setF('成品线件号',                  '成品线件号');
+              setF('成品线线规',                  '成品线线规');
+              setF('成品线类型',                  '成品线类型');
+              setF('成品线长度',                  '成品线长度（MM）');
+              setF('成品线载流量',                '成品线载流量（A）');
+              setF('成品线线路压降',              '成品线线路压降（V）');
+              setF('成品线标识',                  '成品线标识');
+              setF('成品线与机上线束对接方式',    '成品线与机上线束对接方式');
+              setF('成品线安装责任',              '成品线安装责任');
+              setF('备注',                        '备注');
 
               // ── 端点原始值 ─────────────────────────────────────────────
-              // "设备（从/到）"各有两列：第一列=设备编号（仅用于报错提示），第二列=设备LIN号（DOORS）（查找用）
-              const fromDevNum  = getV(row,  '设备（从）');  // 设备编号（参考/报错）
-              const fromLinNo   = getV2(row, '设备（从）');  // 设备LIN号（DOORS）（查找用）
+              const fromDevNum  = getV(row,  '设备（从）');
+              const fromLinNo   = getV2(row, '设备（从）');
               const fromConn    = getV(row, '连接器（从）');
               const fromPin     = getV(row, '针孔号（从）');
               const fromSize    = getV(row, '端接尺寸（从）');
               const fromShield  = getV(row, '屏蔽类型（从）');
               const fromSigName = getV(row, '信号名称（从）');
               const fromSigDef  = getV(row, '信号定义（从）');
-
-              const toDevNum    = getV(row,  '设备（到）');  // 设备编号（参考/报错）
-              const toLinNo     = getV2(row, '设备（到）');  // 设备LIN号（DOORS）（查找用）
+              const toDevNum    = getV(row,  '设备（到）');
+              const toLinNo     = getV2(row, '设备（到）');
               const toConn      = getV(row, '连接器（到）');
               const toPin       = getV(row, '针孔号（到）');
               const toSize      = getV(row, '端接尺寸（到）');
@@ -898,24 +813,14 @@ export function projectRoutes(db: Database) {
               // 全空行跳过
               if (!sigFields['unique_id'] && !fromLinNo && !toLinNo) continue;
 
-              // ── 去重（按 unique_id）──────────────────────────────────
-              if (sigFields['unique_id']) {
-                const dup = await db.get(
-                  'SELECT id FROM signals WHERE project_id = ? AND unique_id = ?',
-                  [projectId, sigFields['unique_id']]
-                );
-                if (dup) {
-                  sheetSk2.push(`第${rowNum}行: 信号[${sigFields['unique_id']}] 已存在，跳过`);
-                  continue;
-                }
-              }
-
-              // ── 端点校验与解析 ────────────────────────────────────────
+              // ── 步骤2：端点校验（先于 unique_id 判断，整行通过后再处理去重）
               let rowFailed = false;
               type ResolvedEp = {
-                connectorId: number; pinNum: string;
-                termSize: string; shield: string;
+                deviceId: number; devNum: string; linNo: string;
+                connectorId: number; compId: string;
+                pinNum: string; termSize: string; shield: string;
                 sigName: string; sigDef: string; epIndex: number;
+                pinId: number | null;
               };
               const resolvedEps: ResolvedEp[] = [];
 
@@ -926,11 +831,8 @@ export function projectRoutes(db: Database) {
 
               for (const ep of epDefs) {
                 const { devNum, linNo, conn, pin, size, shield, sigName, sigDef, label, epIndex } = ep;
+                if (!linNo && !conn && !pin) continue; // 端点完全空
 
-                // 端点完全空：跳过（不报错）
-                if (!linNo && !conn && !pin) continue;
-
-                // 条件5：无法通过设备LIN号定位设备
                 if (!linNo) {
                   sheetE2++;
                   sheetErrors2.push(`第${rowNum}行: 端点（${label}）设备LIN号为空，跳过整行`);
@@ -945,18 +847,15 @@ export function projectRoutes(db: Database) {
                   sheetErrors2.push(`第${rowNum}行: 端点（${label}）设备LIN号"${linNo}"（设备编号"${devNum}"）在devices中不存在，跳过整行`);
                   rowFailed = true; break;
                 }
-
                 if (!conn) {
                   sheetE2++;
-                  sheetErrors2.push(`第${rowNum}行: 端点（${label}）连接器号为空，跳过整行`);
+                  sheetErrors2.push(`第${rowNum}行: 端点（${label}）连接器号（设备端元器件编号）为空，跳过整行`);
                   rowFailed = true; break;
                 }
-
-                // 查找连接器，同时取回其所属设备LIN号用于条件6校验
                 const connRow = await db.get(
                   `SELECT c.id, d."设备LIN号（DOORS）" as linNo
                    FROM connectors c JOIN devices d ON c.device_id = d.id
-                   WHERE c.device_id = ? AND c."连接器号" = ?`,
+                   WHERE c.device_id = ? AND c."设备端元器件编号" = ?`,
                   [device.id, conn]
                 );
                 if (!connRow) {
@@ -964,63 +863,154 @@ export function projectRoutes(db: Database) {
                   sheetErrors2.push(`第${rowNum}行: 端点（${label}）设备LIN号"${linNo}"（设备编号"${device.devNumDb}"）下不存在连接器"${conn}"，跳过整行`);
                   rowFailed = true; break;
                 }
-
-                // 条件6：连接器所属设备LIN号与指定设备LIN号精确匹配
                 if (connRow.linNo !== linNo) {
                   sheetE2++;
                   sheetErrors2.push(`第${rowNum}行: 端点（${label}）连接器"${conn}"所属设备LIN号"${connRow.linNo}"与指定LIN号"${linNo}"不精确匹配，跳过整行`);
                   rowFailed = true; break;
                 }
-
-                resolvedEps.push({ connectorId: connRow.id, pinNum: pin, termSize: size, shield, sigName, sigDef, epIndex });
+                resolvedEps.push({ deviceId: device.id, devNum: device.devNumDb, linNo, connectorId: connRow.id, compId: conn, pinNum: pin, termSize: size, shield, sigName, sigDef, epIndex, pinId: null });
               }
               if (rowFailed) continue;
 
-              // ── 插入 signal ────────────────────────────────────────────
-              sigFields['created_by'] = req.user!.username;
-              sigFields['status'] = 'Active';
-              const sigCols2 = Object.keys(sigFields).map(k => `"${k}"`).join(', ');
-              const sigPh2   = Object.keys(sigFields).map(() => '?').join(', ');
-              const sigResult = await db.run(
-                `INSERT INTO signals (project_id${sigCols2 ? ', ' + sigCols2 : ''})
-                 VALUES (?${sigPh2 ? ', ' + sigPh2 : ''})`,
-                [projectId, ...Object.values(sigFields)]
-              );
-              const signalId = sigResult.lastID;
+              // ── 步骤3：信号方向解析 ──────────────────────────────────
+              const dirRaw = getV(row, '信号方向（从）').toUpperCase().trim();
+              let fromInput = 0, fromOutput = 0, toInput = 0, toOutput = 0;
+              let fromRemark: string | null = null, toRemark: string | null = null;
+              if (dirRaw === 'INPUT' || dirRaw === 'IN') {
+                fromInput = 1; toOutput = 1;
+              } else if (dirRaw === 'OUTPUT' || dirRaw === 'OUT') {
+                fromOutput = 1; toInput = 1;
+              } else if (dirRaw === 'BI-DIR' || dirRaw === 'BI_DIR' || dirRaw === 'INPUT/OUTPUT' || dirRaw === 'IN&OUT') {
+                fromInput = 1; fromOutput = 1; toInput = 1; toOutput = 1;
+              } else if (dirRaw === 'N/A' || dirRaw === '接地' || dirRaw === '无信号（同步）') {
+                fromRemark = dirRaw; toRemark = dirRaw;
+              }
 
-              // ── 处理端点：查找/创建 pin → 写 signal_endpoints ──────────
-              for (const { connectorId, pinNum, termSize, shield, sigName, sigDef, epIndex } of resolvedEps) {
-                if (!pinNum) continue;
+              // ── 步骤4：查找/创建 pin ──────────────────────────────────
+              for (const ep of resolvedEps) {
+                if (!ep.pinNum) { ep.pinId = null; continue; }
                 let pinRow = await db.get(
                   `SELECT id FROM pins WHERE connector_id = ? AND "针孔号" = ?`,
-                  [connectorId, pinNum]
+                  [ep.connectorId, ep.pinNum]
                 );
                 if (!pinRow) {
                   const pinRes = await db.run(
                     `INSERT INTO pins (connector_id, "针孔号", "端接尺寸", "屏蔽类型")
                      VALUES (?, ?, ?, ?)
                      ON CONFLICT(connector_id, "针孔号") DO NOTHING`,
-                    [connectorId, pinNum, termSize || null, shield || null]
+                    [ep.connectorId, ep.pinNum, ep.termSize || null, ep.shield || null]
                   );
                   if (pinRes.changes > 0) {
-                    pinRow = { id: pinRes.lastID };
+                    ep.pinId = pinRes.lastID;
                   } else {
-                    pinRow = await db.get(
-                      `SELECT id FROM pins WHERE connector_id = ? AND "针孔号" = ?`,
-                      [connectorId, pinNum]
-                    );
+                    pinRow = await db.get(`SELECT id FROM pins WHERE connector_id = ? AND "针孔号" = ?`, [ep.connectorId, ep.pinNum]);
+                    ep.pinId = pinRow?.id ?? null;
                   }
+                } else {
+                  ep.pinId = pinRow.id;
                 }
-                if (!pinRow) continue;
-                await db.run(
-                  `INSERT INTO signal_endpoints
-                     (signal_id, pin_id, endpoint_index, "端接尺寸", "信号名称", "信号定义")
-                   VALUES (?, ?, ?, ?, ?, ?)`,
-                  [signalId, pinRow.id, epIndex, termSize || null, sigName || null, sigDef || null]
-                );
               }
 
-              sheetS2++;
+              // ── 步骤5/6：根据 unique_id 是否存在分支处理 ─────────────
+              const existingSignal = sigFields['unique_id']
+                ? await db.get(
+                    'SELECT id, import_conflicts FROM signals WHERE project_id = ? AND unique_id = ?',
+                    [projectId, sigFields['unique_id']]
+                  )
+                : null;
+
+              if (existingSignal) {
+                // 查已有信号的端点（用于匹配判断）
+                const existingEps: Array<{ devNum: string; linNo: string; compId: string; pinNum: string }> = await db.query(
+                  `SELECT d."设备编号" as devNum, d."设备LIN号（DOORS）" as linNo,
+                          c."设备端元器件编号" as compId, p."针孔号" as pinNum
+                   FROM signal_endpoints se
+                   JOIN devices d ON se.device_id = d.id
+                   LEFT JOIN pins p ON se.pin_id = p.id
+                   LEFT JOIN connectors c ON p.connector_id = c.id
+                   WHERE se.signal_id = ?`,
+                  [existingSignal.id]
+                );
+
+                // 找出在旧记录中不存在的端点（四字段完全匹配）
+                const newEps = resolvedEps.filter(ep =>
+                  !existingEps.some(eep =>
+                    eep.devNum === ep.devNum &&
+                    eep.linNo  === ep.linNo  &&
+                    eep.compId === ep.compId &&
+                    eep.pinNum === ep.pinNum
+                  )
+                );
+
+                if (newEps.length === 0) {
+                  // 所有端点均已存在 → 整行失败
+                  sheetE2++;
+                  sheetErrors2.push(`第${rowNum}行: 信号[${sigFields['unique_id']}]已存在且所有端点均已存在，跳过`);
+                  continue;
+                }
+
+                // 追加新端点，endpoint_index 接续最大值
+                const maxIdxRow = await db.get(
+                  'SELECT MAX(endpoint_index) as m FROM signal_endpoints WHERE signal_id = ?',
+                  [existingSignal.id]
+                );
+                let nextIdx: number = (maxIdxRow?.m ?? -1) + 1;
+
+                for (const ep of newEps) {
+                  if (!ep.pinId) continue;
+                  const epInput  = ep.epIndex === 0 ? fromInput  : toInput;
+                  const epOutput = ep.epIndex === 0 ? fromOutput : toOutput;
+                  const epRemark = ep.epIndex === 0 ? fromRemark : toRemark;
+                  await db.run(
+                    `INSERT INTO signal_endpoints
+                       (signal_id, device_id, pin_id, endpoint_index, "端接尺寸", "信号名称", "信号定义", "input", "output", "备注")
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                    [existingSignal.id, ep.deviceId, ep.pinId, nextIdx++,
+                     ep.termSize || null, ep.sigName || null, ep.sigDef || null, epInput, epOutput, epRemark]
+                  );
+                }
+
+                // 在 import_conflicts 记录本次合并
+                const mergeNote = `[${originalName}/${sigSheetName}/第${rowNum}行] 合并新增端点: ${newEps.map(ep => `${ep.devNum}/${ep.compId}/${ep.pinNum}`).join(', ')}`;
+                const prevConflicts: string[] = (() => {
+                  try { return JSON.parse(existingSignal.import_conflicts || '[]'); } catch { return []; }
+                })();
+                prevConflicts.push(mergeNote);
+                await db.run('UPDATE signals SET import_conflicts = ? WHERE id = ?', [JSON.stringify(prevConflicts), existingSignal.id]);
+
+                sheetSk2.push(`第${rowNum}行: 信号[${sigFields['unique_id']}]已存在，已合并新增${newEps.length}个端点`);
+                sheetS2++;
+
+              } else {
+                // unique_id 不存在 → 新建信号 + 所有端点
+                sigFields['created_by'] = req.user!.username;
+                sigFields['status'] = 'Active';
+                const sigCols2 = Object.keys(sigFields).map(k => `"${k}"`).join(', ');
+                const sigPh2   = Object.keys(sigFields).map(() => '?').join(', ');
+                const sigResult = await db.run(
+                  `INSERT INTO signals (project_id${sigCols2 ? ', ' + sigCols2 : ''})
+                   VALUES (?${sigPh2 ? ', ' + sigPh2 : ''})`,
+                  [projectId, ...Object.values(sigFields)]
+                );
+                const signalId = sigResult.lastID;
+
+                for (const ep of resolvedEps) {
+                  if (!ep.pinId) continue;
+                  const epInput  = ep.epIndex === 0 ? fromInput  : toInput;
+                  const epOutput = ep.epIndex === 0 ? fromOutput : toOutput;
+                  const epRemark = ep.epIndex === 0 ? fromRemark : toRemark;
+                  await db.run(
+                    `INSERT INTO signal_endpoints
+                       (signal_id, device_id, pin_id, endpoint_index, "端接尺寸", "信号名称", "信号定义", "input", "output", "备注")
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                    [signalId, ep.deviceId, ep.pinId, ep.epIndex,
+                     ep.termSize || null, ep.sigName || null, ep.sigDef || null, epInput, epOutput, epRemark]
+                  );
+                }
+
+                sheetS2++;
+              }
+
             } catch (err: any) {
               sheetE2++;
               sheetErrors2.push(`第${rowNum}行: ${err.message}`);

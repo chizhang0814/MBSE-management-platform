@@ -25,7 +25,7 @@ interface Props {
   onClose: () => void;
 }
 
-const PROJECT_ROLES = ['一级包长', '二级包长', '设备管理员'];
+const PROJECT_ROLES = ['总体人员', 'EWIS管理员', '设备管理员', '一级包长', '二级包长'];
 
 export default function ProfileModal({ onClose }: Props) {
   const { user: currentUser, token, updateUser } = useAuth();
@@ -300,26 +300,18 @@ export default function ProfileModal({ onClose }: Props) {
             {!isAdmin && <section>
               <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">申请项目权限</h3>
 
-              {/* 待审批申请列表 */}
-              {requests.length > 0 && (
+              {/* 待审批申请列表（只显示pending的，已处理的不再展示以避免与实际权限混淆） */}
+              {requests.filter(r => r.status === 'pending').length > 0 && (
                 <div className="mb-3 space-y-1">
-                  {requests.map(r => (
+                  {requests.filter(r => r.status === 'pending').map(r => (
                     <div
                       key={r.id}
-                      className={`flex items-center gap-2 text-sm px-3 py-2 rounded-lg ${
-                        r.status === 'pending'
-                          ? 'bg-gray-50 text-gray-400'
-                          : r.status === 'approved'
-                          ? 'bg-green-50 text-green-700'
-                          : 'bg-red-50 text-red-600'
-                      }`}
+                      className="flex items-center gap-2 text-sm px-3 py-2 rounded-lg bg-gray-50 text-gray-400"
                     >
                       <span className="flex-1">
                         {r.project_name} → {r.project_role}
                       </span>
-                      <span className="text-xs">
-                        {r.status === 'pending' ? '待审批' : r.status === 'approved' ? '已批准' : '已驳回'}
-                      </span>
+                      <span className="text-xs">待审批</span>
                     </div>
                   ))}
                 </div>

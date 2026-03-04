@@ -10,7 +10,6 @@ import UploadedFiles from './pages/UploadedFiles';
 import ProjectManagement from './pages/ProjectManagement';
 import ProjectDataView from './pages/ProjectDataView';
 import SysmlBrowser from './pages/SysmlBrowser';
-import ApprovalManagement from './pages/ApprovalManagement';
 import EmployeeManagement from './pages/EmployeeManagement';
 import PrivateRoute from './components/PrivateRoute';
 
@@ -30,7 +29,6 @@ function App() {
             <Route path="/files" element={<UploadedFiles />} />
             <Route path="/projects" element={<ProjectManagement />} />
             <Route path="/sysml-browser" element={<SysmlBrowser />} />
-            <Route path="/approvals" element={<ApprovalManagement />} />
             <Route path="/employees" element={<EmployeeManagement />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />

@@ -87,17 +87,37 @@ export function usersRoutes(db: Database) {
     }
   });
 
-  // 获取所有待审批的权限申请（管理员）
+  // 获取待审批的权限申请（admin 看全部，总体人员看自己项目的）
   // 注意：必须在 /:id 路由之前，否则会被 /:id 拦截
-  router.get('/permission-requests', authenticate, requireRole('admin'), async (req, res) => {
+  router.get('/permission-requests', authenticate, async (req: any, res) => {
     try {
+      const isAdmin = req.user.role === 'admin';
+      if (isAdmin) {
+        const requests = await db.query(`
+          SELECT pr.id, pr.user_id, u.username, u.display_name, pr.project_name, pr.project_role,
+                 pr.status, pr.created_at, pr.reviewed_at
+          FROM permission_requests pr
+          JOIN users u ON pr.user_id = u.id
+          ORDER BY pr.created_at DESC
+        `);
+        return res.json({ requests });
+      }
+
+      // 普通用户：只返回自己是总体人员的项目的 pending 申请
+      const userRow = await db.get('SELECT permissions FROM users WHERE id = ?', [req.user.id]);
+      const perms: Array<{ project_name: string; project_role: string }> = userRow?.permissions ? JSON.parse(userRow.permissions) : [];
+      const zontiProjects = perms.filter(p => p.project_role === '总体人员').map(p => p.project_name);
+      if (zontiProjects.length === 0) return res.json({ requests: [] });
+
+      const ph = zontiProjects.map(() => '?').join(',');
       const requests = await db.query(`
         SELECT pr.id, pr.user_id, u.username, u.display_name, pr.project_name, pr.project_role,
                pr.status, pr.created_at, pr.reviewed_at
         FROM permission_requests pr
         JOIN users u ON pr.user_id = u.id
+        WHERE pr.project_name IN (${ph}) AND pr.status = 'pending'
         ORDER BY pr.created_at DESC
-      `);
+      `, zontiProjects);
       res.json({ requests });
     } catch (error) {
       console.error(error);
@@ -105,8 +125,8 @@ export function usersRoutes(db: Database) {
     }
   });
 
-  // 审批权限申请（管理员）
-  router.put('/permission-requests/:id', authenticate, requireRole('admin'), async (req: any, res) => {
+  // 审批权限申请（admin 或该项目的总体人员）
+  router.put('/permission-requests/:id', authenticate, async (req: any, res) => {
     try {
       const { action } = req.body; // 'approve' | 'reject'
       const requestId = req.params.id;
@@ -121,6 +141,15 @@ export function usersRoutes(db: Database) {
       );
       if (!request) {
         return res.status(404).json({ error: '申请不存在或已处理' });
+      }
+
+      // 权限检查：admin 或该项目的总体人员
+      const isAdmin = req.user.role === 'admin';
+      if (!isAdmin) {
+        const userRow = await db.get('SELECT permissions FROM users WHERE id = ?', [req.user.id]);
+        const perms: Array<{ project_name: string; project_role: string }> = userRow?.permissions ? JSON.parse(userRow.permissions) : [];
+        const isZonti = perms.some(p => p.project_name === request.project_name && p.project_role === '总体人员');
+        if (!isZonti) return res.status(403).json({ error: '无权审批此申请' });
       }
 
       const newStatus = action === 'approve' ? 'approved' : 'rejected';
@@ -140,6 +169,26 @@ export function usersRoutes(db: Database) {
           perms.push({ project_name: request.project_name, project_role: request.project_role });
           await db.run('UPDATE users SET permissions = ? WHERE id = ?', [JSON.stringify(perms), request.user_id]);
         }
+      }
+
+      // 将所有总体人员收到的该申请通知标记为已处理（按钮消失）
+      await db.run(
+        `UPDATE notifications SET type = 'permission_processed' WHERE type = 'permission_request' AND reference_id = ?`,
+        [requestId]
+      );
+
+      // 通知申请人
+      const applicant = await db.get('SELECT username FROM users WHERE id = ?', [request.user_id]);
+      if (applicant) {
+        const statusText = action === 'approve' ? '已通过' : '已被拒绝';
+        await db.run(
+          `INSERT INTO notifications (recipient_username, type, title, message)
+           VALUES (?, ?, ?, ?)`,
+          [applicant.username,
+           action === 'approve' ? 'permission_approved' : 'permission_rejected',
+           `权限申请${statusText}`,
+           `您申请 ${request.project_name} 的「${request.project_role}」角色${statusText}`]
+        );
       }
 
       res.json({ message: action === 'approve' ? '已批准' : '已驳回' });
@@ -284,10 +333,21 @@ export function usersRoutes(db: Database) {
       }
 
       // 检查用户是否存在
-      const existing = await db.get('SELECT id FROM users WHERE id = ?', [userId]);
+      const existing = await db.get('SELECT id, username FROM users WHERE id = ?', [userId]);
       if (!existing) {
         return res.status(404).json({ error: '用户不存在' });
       }
+
+      // 清理所有引用该用户的外键关联记录
+      await db.run('DELETE FROM edit_locks WHERE locked_by = ?', [userId]);
+      await db.run('DELETE FROM tasks WHERE assigned_by = ? OR assigned_to = ?', [userId, userId]);
+      await db.run('DELETE FROM change_logs WHERE changed_by = ?', [userId]);
+      await db.run('DELETE FROM uploaded_files WHERE uploaded_by = ?', [userId]);
+      await db.run('DELETE FROM approval_requests WHERE requester_id = ?', [userId]);
+      await db.run('UPDATE approval_requests SET reviewed_by_username = NULL WHERE reviewed_by_username = ?', [existing.username]);
+      await db.run('UPDATE permission_requests SET reviewed_by = NULL WHERE reviewed_by = ?', [userId]);
+      // 将该用户创建的项目转给 admin (id=1)
+      await db.run('UPDATE projects SET created_by = 1 WHERE created_by = ?', [userId]);
 
       await db.run('DELETE FROM users WHERE id = ?', [userId]);
 

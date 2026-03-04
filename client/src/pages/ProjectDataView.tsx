@@ -21,11 +21,15 @@ interface DeviceRow {
   导入来源?: string; created_by?: string;
   status?: string; validation_errors?: string; import_conflicts?: string;
   connector_count?: number;
+  设备负责人姓名?: string;
+  pending_item_type?: 'approval' | 'completion' | null;
+  has_pending_sub?: boolean;
+  pending_sub_item_type?: 'approval' | 'completion' | null;
 }
 
 interface ConnectorRow {
   id: number; device_id: number;
-  连接器号: string; 设备端元器件编号?: string; 设备端元器件名称及类型?: string;
+  设备端元器件编号: string; 设备端元器件名称及类型?: string;
   设备端元器件件号类型及件号?: string; 设备端元器件供应商名称?: string;
   匹配的线束端元器件件号?: string; 匹配的线束线型?: string;
   设备端元器件匹配的元器件是否随设备交付?: string; 备注?: string;
@@ -57,12 +61,13 @@ interface SCPinRow {
 interface PinRow {
   id: number; connector_id: number;
   针孔号: string; 端接尺寸?: string; 屏蔽类型?: string; 备注?: string;
+  status?: string;
 }
 
 interface SignalRow {
   id: number; project_id: number;
   created_by?: string;
-  unique_id?: string; 信号名称摘要?: string; 连接类型?: string; 信号方向?: string; 信号ATA?: string;
+  unique_id?: string; 信号名称摘要?: string; 连接类型?: string; 信号ATA?: string;
   信号架次有效性?: string;
   推荐导线线规?: string; 推荐导线线型?: string;
   独立电源代码?: string; 敷设代码?: string; 电磁兼容代码?: string;
@@ -75,14 +80,15 @@ interface SignalRow {
   can_edit?: boolean;
   has_unconfirmed?: number;
   status?: string;
+  pending_item_type?: 'approval' | 'completion' | null;
 }
 
 interface SignalEndpoint {
   id?: number; signal_id?: number; endpoint_index?: number;
   device_id?: number; connector_id?: number;
-  设备编号: string; 连接器号: string; 针孔号: string;
-  信号方向?: string; 屏蔽类型?: string; 端接尺寸?: string; 信号名称?: string; 信号定义?: string;
-  设备端元器件编号?: string; 设备中文名称?: string; 设备负责人?: string;
+  设备编号: string; 设备端元器件编号: string; 针孔号: string;
+  屏蔽类型?: string; 端接尺寸?: string; 信号名称?: string; 信号定义?: string;
+  设备中文名称?: string; 设备负责人?: string;
   confirmed?: number;
 }
 
@@ -134,7 +140,6 @@ const DEVICE_FIELDS: { key: keyof DeviceRow; label: string }[] = [
 const SIGNAL_FIELDS: { key: keyof SignalRow; label: string }[] = [
   { key: 'unique_id', label: 'Unique ID' },
   { key: '连接类型', label: '连接类型' },
-  { key: '信号方向', label: '信号方向' },
   { key: '信号ATA', label: '信号ATA' },
   { key: '信号架次有效性', label: '信号架次有效性' },
   { key: '推荐导线线规', label: '推荐导线线规' },
@@ -176,7 +181,11 @@ export default function ProjectDataView() {
 
   // ── 视图切换 ──
   const [activeView, setActiveView] = useState<'devices' | 'signals' | 'section-connectors'>('devices');
-  const [filterMode, setFilterMode] = useState<'all' | 'my'>('all');
+  const [filterMode, setFilterMode] = useState<'all' | 'my' | 'pending' | 'my_approval' | 'my_completion'>('all');
+
+  type ApprovalItem = { id: number; recipient_username: string; item_type: string; status: string; rejection_reason?: string; responded_at?: string; };
+  type ApprovalInfo = { request: { id: number; current_phase: string; status: string; action_type: string; requester_username: string; created_at: string; } | null; items: ApprovalItem[]; my_pending_item: ApprovalItem | null; };
+  const [approvalInfoMap, setApprovalInfoMap] = useState<Record<string, ApprovalInfo>>({});
 
   // ── 设备视图状态 ──
   const [devices, setDevices] = useState<DeviceRow[]>([]);
@@ -244,8 +253,8 @@ export default function ProjectDataView() {
   const [editingSignal, setEditingSignal] = useState<SignalRow | null>(null);
   const [signalForm, setSignalForm] = useState<Partial<SignalRow>>({});
   const [signalEndpoints, setSignalEndpoints] = useState<SignalEndpoint[]>([
-    { 设备编号: '', 连接器号: '', 针孔号: '', 信号名称: '', 信号定义: '' },
-    { 设备编号: '', 连接器号: '', 针孔号: '', 信号名称: '', 信号定义: '' },
+    { 设备编号: '', 设备端元器件编号: '', 针孔号: '', 信号名称: '', 信号定义: '' },
+    { 设备编号: '', 设备端元器件编号: '', 针孔号: '', 信号名称: '', 信号定义: '' },
   ]);
   // 端点搜索
   const [epDeviceSearch, setEpDeviceSearch] = useState<string[]>(['', '']);
@@ -257,6 +266,7 @@ export default function ProjectDataView() {
   const [myPermissions, setMyPermissions] = useState<Array<{ project_name: string; project_role: string }>>([]);
   const [projectMembers, setProjectMembers] = useState<string[]>([]);
   const [memberRoles, setMemberRoles] = useState<Array<{ username: string; project_role: string }>>([]);
+  const [employeeNameMap, setEmployeeNameMap] = useState<Record<string, string>>({});
 
   // ── 初始化 ────────────────────────────────────────────────
 
@@ -292,6 +302,15 @@ export default function ProjectDataView() {
       .then(r => r.json())
       .then(d => { setProjectMembers(d.members || []); setMemberRoles(d.memberRoles || []); })
       .catch(() => { setProjectMembers([]); setMemberRoles([]); });
+    // 从 employees 表获取所有员工 EID→姓名 映射
+    fetch('/api/employees', { headers: API_HEADERS() })
+      .then(r => r.json())
+      .then(d => {
+        const map: Record<string, string> = {};
+        for (const e of (d.employees || [])) map[e.eid] = e.name;
+        setEmployeeNameMap(map);
+      })
+      .catch(() => {});
   }, [selectedProjectId]);
 
   // ── 锁轮询 ────────────────────────────────────────────────
@@ -345,7 +364,8 @@ export default function ProjectDataView() {
       const myQ = filterMode === 'my' ? '&myDevices=true' : '';
       const res = await fetch(`/api/devices?projectId=${selectedProjectId}${myQ}`, { headers: API_HEADERS() });
       const data = await res.json();
-      setDevices(data.devices || []);
+      const devs = data.devices || [];
+      setDevices(devs);
       setStatusSummary(data.statusSummary || null);
       setExpandedDeviceId(null);
       setConnectors({});
@@ -401,6 +421,34 @@ export default function ProjectDataView() {
     finally { setLoading(false); }
   };
 
+  const loadApprovalInfo = async (entityType: string, entityId: number) => {
+    try {
+      const res = await fetch(`/api/approvals/by-entity?entity_type=${entityType}&entity_id=${entityId}`, { headers: API_HEADERS() });
+      const data = await res.json();
+      setApprovalInfoMap(prev => ({ ...prev, [`${entityType}_${entityId}`]: data }));
+    } catch { }
+  };
+
+  const handleApprove = async (approvalId: number, entityType: string, entityId: number) => {
+    try {
+      const res = await fetch(`/api/approvals/${approvalId}/approve`, { method: 'POST', headers: API_JSON_HEADERS(), body: JSON.stringify({}) });
+      if (!res.ok) throw new Error((await res.json()).error || '审批失败');
+      await loadApprovalInfo(entityType, entityId);
+      if (activeView === 'devices') await loadDevices(); else await loadSignals();
+    } catch (e: any) { alert(e.message || '审批失败'); }
+  };
+
+  const handleReject = async (approvalId: number, entityType: string, entityId: number) => {
+    const reason = prompt('请输入拒绝理由（必填）：');
+    if (!reason || !reason.trim()) { if (reason !== null) alert('拒绝理由不能为空'); return; }
+    try {
+      const res = await fetch(`/api/approvals/${approvalId}/reject`, { method: 'POST', headers: API_JSON_HEADERS(), body: JSON.stringify({ reason: reason.trim() }) });
+      if (!res.ok) throw new Error((await res.json()).error || '拒绝失败');
+      await loadApprovalInfo(entityType, entityId);
+      if (activeView === 'devices') await loadDevices(); else await loadSignals();
+    } catch (e: any) { alert(e.message || '拒绝失败'); }
+  };
+
   const loadConnectors = async (deviceId: number, force = false) => {
     if (!force && connectors[deviceId]) return;
     try {
@@ -419,8 +467,8 @@ export default function ProjectDataView() {
     } catch (e) { console.error('加载针孔失败', e); }
   };
 
-  const loadSignalDetail = async (signalId: number) => {
-    if (signalDetails[signalId]) return;
+  const loadSignalDetail = async (signalId: number, forceRefresh = false) => {
+    if (!forceRefresh && signalDetails[signalId]) return;
     try {
       const res = await fetch(`/api/signals/${signalId}`, { headers: API_HEADERS() });
       const data = await res.json();
@@ -479,7 +527,9 @@ export default function ProjectDataView() {
 
   const openAddDevice = () => {
     setEditingDevice(null);
-    setDeviceForm({ '设备负责人': user?.username || '' });
+    // 设备管理员：默认负责人为自己；总体人员/admin：不预设
+    const defaultOwner = myProjectRole === '设备管理员' ? (user?.username || '') : '';
+    setDeviceForm({ '设备负责人': defaultOwner });
     setFieldWarnings({});
     setShowDeviceModal(true);
   };
@@ -547,14 +597,17 @@ export default function ProjectDataView() {
         : { project_id: selectedProjectId, ...deviceForm, forceDraft };
       const res = await fetch(url, { method, headers: API_JSON_HEADERS(), body: JSON.stringify(body) });
       if (res.status === 202) {
-        alert('已提交审批，等待项目管理员审核');
+        alert('已提交审批，等待审批通过后生效');
         await closeDeviceModal();
         await loadDevices();
         return;
       }
       if (!res.ok) throw new Error((await res.json()).error || '保存失败');
+      const result = await res.json();
       await closeDeviceModal();
       await loadDevices();
+      if (result.message === '完善提交成功') alert('完善已提交，等待审批');
+      else if (result.message === '编辑并审批通过') alert('已编辑并审批通过');
     } catch (e: any) { alert(e.message || '保存失败'); }
   };
 
@@ -562,6 +615,11 @@ export default function ProjectDataView() {
     if (!confirm(`确定要删除设备 ${device.设备编号} 吗？这将同时删除其所有连接器和针孔。`)) return;
     try {
       const res = await fetch(`/api/devices/${device.id}`, { method: 'DELETE', headers: API_HEADERS() });
+      if (res.status === 202) {
+        alert('删除请求已提交，等待审批通过后执行删除');
+        await loadDevices();
+        return;
+      }
       if (!res.ok) throw new Error((await res.json()).error || '删除失败');
       await loadDevices();
     } catch (e: any) { alert(e.message || '删除失败'); }
@@ -616,8 +674,7 @@ export default function ProjectDataView() {
   };
 
   const saveConnector = async () => {
-    if (!connectorTargetDeviceId || !connectorForm['连接器号']) { alert('连接器号不能为空'); return; }
-    if (!(connectorForm as any)['设备端元器件编号']) { alert('设备端元器件编号不能为空'); return; }
+    if (!connectorTargetDeviceId || !(connectorForm as any)['设备端元器件编号']) { alert('设备端元器件编号不能为空'); return; }
     try {
       const url = editingConnector
         ? `/api/devices/${connectorTargetDeviceId}/connectors/${editingConnector.id}`
@@ -625,8 +682,9 @@ export default function ProjectDataView() {
       const method = editingConnector ? 'PUT' : 'POST';
       const res = await fetch(url, { method, headers: API_JSON_HEADERS(), body: JSON.stringify(connectorForm) });
       if (res.status === 202) {
-        alert('已提交审批，等待项目管理员审核');
+        alert('已提交审批，等待审批通过后生效');
         await closeConnectorModal();
+        await loadConnectors(connectorTargetDeviceId!, true);
         return;
       }
       if (!res.ok) throw new Error((await res.json()).error || '保存失败');
@@ -641,9 +699,14 @@ export default function ProjectDataView() {
   };
 
   const deleteConnector = async (deviceId: number, connector: ConnectorRow) => {
-    if (!confirm(`确定要删除连接器 ${connector.连接器号} 吗？`)) return;
+    if (!confirm(`确定要删除连接器 ${connector.设备端元器件编号} 吗？`)) return;
     try {
       const res = await fetch(`/api/devices/${deviceId}/connectors/${connector.id}`, { method: 'DELETE', headers: API_HEADERS() });
+      if (res.status === 202) {
+        alert('删除请求已提交，等待审批通过后执行删除');
+        await loadConnectors(deviceId, true);
+        return;
+      }
       if (!res.ok) throw new Error((await res.json()).error || '删除失败');
       setDevices(prev => prev.map(d =>
         d.id === deviceId ? { ...d, connector_count: Math.max(0, (d.connector_count ?? 0) - 1) } : d
@@ -867,6 +930,11 @@ export default function ProjectDataView() {
     if (!confirm(`确定要删除针孔 ${pin.针孔号} 吗？`)) return;
     try {
       const res = await fetch(`/api/devices/${deviceId}/connectors/${connectorId}/pins/${pin.id}`, { method: 'DELETE', headers: API_HEADERS() });
+      if (res.status === 202) {
+        alert('删除请求已提交，等待审批通过后执行删除');
+        await loadPins(deviceId, connectorId, true);
+        return;
+      }
       if (!res.ok) throw new Error((await res.json()).error || '删除失败');
       await loadPins(deviceId, connectorId, true);
     } catch (e: any) { alert(e.message || '删除失败'); }
@@ -878,8 +946,8 @@ export default function ProjectDataView() {
     setEditingSignal(null);
     setSignalForm({});
     setSignalEndpoints([
-      { 设备编号: '', 连接器号: '', 针孔号: '', 信号名称: '', 信号定义: '' },
-      { 设备编号: '', 连接器号: '', 针孔号: '', 信号名称: '', 信号定义: '' },
+      { 设备编号: '', 设备端元器件编号: '', 针孔号: '', 信号名称: '', 信号定义: '' },
+      { 设备编号: '', 设备端元器件编号: '', 针孔号: '', 信号名称: '', 信号定义: '' },
     ]);
     setEpDeviceSearch(['', '']);
     setEpDeviceResults([[], []]);
@@ -930,14 +998,14 @@ export default function ProjectDataView() {
     const epList: SignalEndpoint[] = freshEndpoints.length > 0
       ? freshEndpoints.map((e: any) => ({
           设备编号: e.设备编号 || '',
-          连接器号: e.连接器号 || '',
+          设备端元器件编号: e.设备端元器件编号 || '',
           针孔号: e.针孔号 || '',
           信号名称: e.信号名称 || '',
           信号定义: e.信号定义 || '',
           设备负责人: e.设备负责人 || '',
           confirmed: e.confirmed,
         }))
-      : [{ 设备编号: '', 连接器号: '', 针孔号: '', 信号名称: '', 信号定义: '', 设备负责人: '' }];
+      : [{ 设备编号: '', 设备端元器件编号: '', 针孔号: '', 信号名称: '', 信号定义: '', 设备负责人: '' }];
     setSignalEndpoints(epList);
     setEpDeviceSearch(epList.map(e => e.设备编号));
     setEpDeviceResults(epList.map(() => []));
@@ -996,14 +1064,34 @@ export default function ProjectDataView() {
     // 草稿允许跳过必填校验
     if (!isDraft) {
       if (!editingSignal && !sf.unique_id?.trim()) { alert('Unique ID 不能为空'); return; }
-      if (!sf['信号方向']) { alert('信号方向不能为空'); return; }
       if (!sf['连接类型']) { alert('连接类型不能为空'); return; }
       if (!sf['是否成品线']) { alert('是否成品线不能为空'); return; }
     } else {
       if (!sf.unique_id?.trim()) { alert('草稿也需要填写 Unique ID'); return; }
     }
     try {
-      const validEndpoints = signalEndpoints.filter(ep => ep.设备编号 && ep.连接器号 && ep.针孔号);
+      // 校验端点
+      const emptyDeviceEp = signalEndpoints.find(ep => !ep.设备编号);
+      if (emptyDeviceEp) {
+        alert('每个端点都必须选择设备');
+        return;
+      }
+      for (const ep of signalEndpoints) {
+        const isOwn = ep.设备负责人 === user?.username;
+        // 设备端元器件编号和针孔必须同时有或同时没有
+        if ((ep.设备端元器件编号 && !ep.针孔号) || (!ep.设备端元器件编号 && ep.针孔号)) {
+          alert(`端点"${ep.设备编号}"的设备端元器件编号和针孔号必须同时填写或同时留空`);
+          return;
+        }
+        // 自己负责的设备：设备端元器件编号、针孔号、信号名称、信号定义全部必填
+        if (isOwn) {
+          if (!ep.设备端元器件编号 || !ep.针孔号 || !ep.信号名称 || !ep.信号定义) {
+            alert(`端点"${ep.设备编号}"是您负责的设备，设备端元器件编号、针孔号、信号名称、信号定义必须全部填写`);
+            return;
+          }
+        }
+      }
+      const validEndpoints = signalEndpoints;
       const body: any = {
         project_id: selectedProjectId,
         ...signalForm,
@@ -1014,6 +1102,12 @@ export default function ProjectDataView() {
       const url = editingSignal ? `/api/signals/${editingSignal.id}` : '/api/signals';
       const method = editingSignal ? 'PUT' : 'POST';
       const res = await fetch(url, { method, headers: API_JSON_HEADERS(), body: JSON.stringify(body) });
+      if (res.status === 202) {
+        alert('已提交审批，等待审批通过后生效');
+        await closeSignalModal();
+        await loadSignals();
+        return;
+      }
       if (!res.ok) throw new Error((await res.json()).error || '保存失败');
       const result = await res.json();
       if (result.merged) {
@@ -1025,6 +1119,7 @@ export default function ProjectDataView() {
       await closeSignalModal();
       await loadSignals();
       if (prevEditingSignal) setSignalDetails(prev => { const n = { ...prev }; delete n[prevEditingSignal.id]; return n; });
+      if (result.message === '完善提交成功') alert('完善已提交，等待审批');
     } catch (e: any) { alert(e.message || '保存失败'); }
   };
 
@@ -1032,6 +1127,11 @@ export default function ProjectDataView() {
     if (!confirm(`确定要删除信号 ${signal.unique_id || signal.id} 吗？`)) return;
     try {
       const res = await fetch(`/api/signals/${signal.id}`, { method: 'DELETE', headers: API_HEADERS() });
+      if (res.status === 202) {
+        alert('删除请求已提交，等待审批通过后执行删除');
+        await loadSignals();
+        return;
+      }
       if (!res.ok) throw new Error((await res.json()).error || '删除失败');
       await loadSignals();
     } catch (e: any) { alert(e.message || '删除失败'); }
@@ -1057,7 +1157,7 @@ export default function ProjectDataView() {
     const newResults = [...epDeviceResults]; newResults[idx] = [];
     setEpDeviceResults(newResults);
     const newEp = [...signalEndpoints];
-    newEp[idx] = { ...newEp[idx], 设备编号: device.设备编号, 连接器号: '', 针孔号: '', 设备负责人: device.设备负责人 || '' };
+    newEp[idx] = { ...newEp[idx], 设备编号: device.设备编号, 设备端元器件编号: '', 针孔号: '', 设备负责人: device.设备负责人 || '' };
     setSignalEndpoints(newEp);
     // 加载连接器
     try {
@@ -1070,7 +1170,7 @@ export default function ProjectDataView() {
 
   const selectEpConnector = async (idx: number, connector: ConnectorRow) => {
     const newEp = [...signalEndpoints];
-    newEp[idx] = { ...newEp[idx], 连接器号: connector.连接器号, 针孔号: '' };
+    newEp[idx] = { ...newEp[idx], 设备端元器件编号: connector.设备端元器件编号, 针孔号: '' };
     setSignalEndpoints(newEp);
     // 加载针孔
     const deviceId = connector.device_id;
@@ -1087,10 +1187,16 @@ export default function ProjectDataView() {
   const selectedProjectName = projects.find(p => p.id === selectedProjectId)?.name;
   const myProjectRole = myPermissions.find(p => p.project_name === selectedProjectName)?.project_role;
   const isReadOnly = myProjectRole === '只读';
-  const canManageDevices = isAdmin || myProjectRole === '项目管理员' || myProjectRole === '设备管理员';
-  const canManageSignals = isAdmin || myProjectRole === '项目管理员' || myProjectRole === '设备管理员';
-  const isDeviceOwner = (device: DeviceRow) => !isReadOnly && (isAdmin || device.设备负责人 === user?.username);
-  const canDeleteSignal = (signal: SignalRow) => !isReadOnly && (isAdmin || signal.created_by === user?.username);
+  const canManageDevices = isAdmin || myProjectRole === '总体人员' || myProjectRole === '设备管理员';
+  const canManageSignals = isAdmin || myProjectRole === '总体人员' || myProjectRole === 'EWIS管理员' || myProjectRole === '设备管理员';
+  // 总体人员可编辑任意设备（通过审批）；设备管理员/负责人仅自己的设备
+  const canEditDevice = (device: DeviceRow) => {
+    if (isReadOnly) return false;
+    if (isAdmin || myProjectRole === '总体人员') return true;
+    if (device.设备负责人 === user?.username) return true;
+    return false;
+  };
+  const canDeleteSignal = (signal: SignalRow) => !isReadOnly && (isAdmin || signal.can_edit === true);
 
   // ── 渲染：设备视图 ────────────────────────────────────────
 
@@ -1142,8 +1248,25 @@ export default function ProjectDataView() {
         <div className="text-center py-8 text-gray-400">暂无设备数据</div>
       ) : (() => {
         const filteredDevices = devices.filter(d => {
+          // 状态筛选（也包含有待审批子项的设备）
+          if (filterMode === 'pending' && d.status !== 'Pending' && !d.has_pending_sub) return false;
+          if (filterMode === 'my_approval' && !(
+            (d.status === 'Pending' && d.pending_item_type === 'approval') || d.pending_sub_item_type === 'approval'
+          )) return false;
+          if (filterMode === 'my_completion' && !(
+            (d.status === 'Pending' && d.pending_item_type === 'completion') || d.pending_sub_item_type === 'completion'
+          )) return false;
+          // 列过滤
           for (const [key, val] of Object.entries(deviceFilters)) {
             if (!val) continue;
+            if (key === '_status') {
+              if (val === 'sub_pending') {
+                if (!d.has_pending_sub) return false;
+              } else {
+                if (d.status !== val) return false;
+              }
+              continue;
+            }
             const kw = val.toLowerCase();
             if (key === '设备部件所属系统（4位ATA）') {
               const ata2 = (d['设备部件所属系统（4位ATA）'] || '').substring(0, 2);
@@ -1165,6 +1288,7 @@ export default function ProjectDataView() {
               <tr>
                 <th className="px-4 py-2 text-left text-xs text-gray-500 w-8"></th>
                 <th className="px-4 py-2 text-left text-xs text-gray-500">设备编号</th>
+                <th className="px-4 py-2 text-left text-xs text-gray-500 min-w-[120px]">状态</th>
                 <th className="px-4 py-2 text-left text-xs text-gray-500">设备LIN号（DOORS）</th>
                 <th className="px-4 py-2 text-left text-xs text-gray-500">设备中文名称</th>
                 <th className="px-4 py-2 text-left text-xs text-gray-500">ATA（前2位筛选）</th>
@@ -1175,7 +1299,37 @@ export default function ProjectDataView() {
               </tr>
               <tr className="bg-white border-b">
                 <th className="px-4 py-1"></th>
-                {['设备编号', '设备LIN号（DOORS）', '设备中文名称', '设备部件所属系统（4位ATA）', '设备DAL', '设备负责人'].map(col => (
+                {['设备编号'].map(col => (
+                  <th key={col} className="px-4 py-1">
+                    <div className="relative">
+                      <input
+                        type="text"
+                        placeholder="筛选..."
+                        value={deviceFilters[col] || ''}
+                        onChange={e => setDeviceFilters(prev => ({ ...prev, [col]: e.target.value }))}
+                        className="w-full px-1.5 py-0.5 pr-5 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-400"
+                      />
+                      {deviceFilters[col] && (
+                        <button onClick={() => setDeviceFilters(prev => ({ ...prev, [col]: '' }))}
+                          className="absolute right-1 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs leading-none">&times;</button>
+                      )}
+                    </div>
+                  </th>
+                ))}
+                <th className="px-4 py-1">
+                  <select
+                    value={deviceFilters['_status'] || ''}
+                    onChange={e => setDeviceFilters(prev => ({ ...prev, _status: e.target.value }))}
+                    className="w-full px-1 py-0.5 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-400 bg-white"
+                  >
+                    <option value="">全部状态</option>
+                    <option value="Draft">Draft</option>
+                    <option value="Pending">审批中</option>
+                    <option value="normal">已生效</option>
+                    <option value="sub_pending">子项待审批/完善</option>
+                  </select>
+                </th>
+                {['设备LIN号（DOORS）', '设备中文名称', '设备部件所属系统（4位ATA）', '设备DAL', '设备负责人'].map(col => (
                   <th key={col} className="px-4 py-1">
                     <div className="relative">
                       <input
@@ -1221,13 +1375,16 @@ export default function ProjectDataView() {
               {filteredDevices.map(device => {
                 const isExpanded = expandedDeviceId === device.id;
                 const lock = lockMap[device.id];
-                const canEditDevice = isDeviceOwner(device);
                 return (
                   <React.Fragment key={device.id}>
                     <tr
                       className={`hover:bg-gray-50 ${hasTodo(device) ? 'bg-orange-100' : isExpanded ? 'bg-blue-50' : ''} cursor-pointer`}
                       onDoubleClick={async () => {
-                        if (!isExpanded) { setExpandedDeviceId(device.id); await loadConnectors(device.id); }
+                        if (!isExpanded) {
+                          setExpandedDeviceId(device.id);
+                          await loadConnectors(device.id);
+                          if (device.status === 'Pending') await loadApprovalInfo('device', device.id);
+                        }
                         else { setExpandedDeviceId(null); }
                       }}
                     >
@@ -1235,28 +1392,51 @@ export default function ProjectDataView() {
                         <button
                           onClick={async () => {
                             if (isExpanded) { setExpandedDeviceId(null); }
-                            else { setExpandedDeviceId(device.id); await loadConnectors(device.id); }
+                            else {
+                              setExpandedDeviceId(device.id);
+                              await loadConnectors(device.id);
+                              if (device.status === 'Pending') await loadApprovalInfo('device', device.id);
+                            }
                           }}
                           className="text-gray-400 hover:text-blue-600 font-mono text-xs"
                         >
                           {isExpanded ? '▼' : '▶'}
                         </button>
-                        {device.status === 'Draft' && (
-                          <span className="ml-1 px-1 py-0.5 text-xs bg-yellow-100 text-yellow-700 rounded">Draft</span>
-                        )}
-                        {device.status === 'Pending' && (
-                          <span className="ml-1 px-1 py-0.5 text-xs bg-blue-100 text-blue-700 rounded">Pending</span>
-                        )}
                       </td>
                       <td className="px-4 py-2 font-medium">{device.设备编号}</td>
+                      <td className="px-4 py-2">
+                        {device.status === 'Draft' && (
+                          <span className="px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700 text-xs font-semibold">Draft</span>
+                        )}
+                        {device.status === 'Pending' && (
+                          <>
+                            <span className="px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 text-xs font-semibold">审批中</span>
+                            {device.pending_item_type === 'approval' && <span className="ml-1 px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 text-xs">待我审批</span>}
+                            {device.pending_item_type === 'completion' && <span className="ml-1 px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 text-xs">待我完善</span>}
+                          </>
+                        )}
+                        {device.status === 'normal' && (
+                          <span className="px-1.5 py-0.5 rounded bg-green-100 text-green-700 text-xs font-semibold">已生效</span>
+                        )}
+                        {device.has_pending_sub && (
+                          <span className="ml-1 px-1.5 py-0.5 rounded bg-orange-50 text-orange-600 text-xs" title="包含待审批的连接器或针孔">
+                            子项{device.pending_sub_item_type === 'completion' ? '待完善' : '待审批'}
+                          </span>
+                        )}
+                      </td>
                       <td className="px-4 py-2 text-gray-600">{device['设备LIN号（DOORS）'] || '-'}</td>
                       <td className="px-4 py-2 text-gray-700">{device.设备中文名称 || '-'}</td>
                       <td className="px-4 py-2 text-gray-600">{device['设备部件所属系统（4位ATA）'] || '-'}</td>
                       <td className="px-4 py-2 text-gray-600">{device.设备DAL || '-'}</td>
-                      <td className="px-4 py-2 text-gray-600">{device.设备负责人 || '-'}</td>
+                      <td className="px-4 py-2 text-gray-600">
+                        {device.设备负责人 || '-'}
+                        {device.设备负责人姓名 && <span className="text-gray-400 ml-1">({device.设备负责人姓名})</span>}
+                      </td>
                       <td className="px-4 py-2 text-gray-600">{device.connector_count ?? 0}</td>
                       <td className="px-4 py-2 space-x-2">
-                          {canEditDevice && (lock ? (
+                          {canEditDevice(device) && (device.status === 'Pending' ? (
+                            <span className="text-xs text-gray-400 cursor-not-allowed" title="记录审批中，不可编辑">编辑/删除</span>
+                          ) : lock ? (
                             <span className="text-xs text-amber-600">🔒{lock.lockedBy}</span>
                           ) : (
                             <>
@@ -1272,7 +1452,7 @@ export default function ProjectDataView() {
                       <>
                     {/* 设备详情 */}
                     <tr>
-                      <td colSpan={9} className="px-0 py-0 bg-gray-50 border-b border-gray-200">
+                      <td colSpan={10} className="px-0 py-0 bg-gray-50 border-b border-gray-200">
                         <div className="pl-8 pr-4 py-3">
                           {device.status === 'Draft' && device.import_conflicts && (() => {
                             const conflicts: string[] = (() => {
@@ -1325,13 +1505,77 @@ export default function ProjectDataView() {
                       </td>
                     </tr>
 
+                    {/* 审批进度面板 */}
+                    {device.status === 'Pending' && (() => {
+                      const approvalInfo = approvalInfoMap[`device_${device.id}`];
+                      if (!approvalInfo?.request) return null;
+                      const { request, items, my_pending_item } = approvalInfo;
+                      const completionItems = items.filter((i: any) => i.item_type === 'completion');
+                      const approvalItems = items.filter((i: any) => i.item_type === 'approval');
+                      return (
+                        <tr key={`${device.id}-approval`}>
+                          <td colSpan={10} className="px-0 py-0 bg-yellow-50 border-b border-yellow-200">
+                            <div className="pl-8 pr-4 py-3">
+                              <div className="text-xs font-semibold text-gray-600 mb-2">审批进度（{request.action_type}）</div>
+                              {completionItems.length > 0 && (
+                                <div className="mb-2">
+                                  <div className="text-xs text-gray-400 mb-1">完善阶段</div>
+                                  {completionItems.map((item: any) => (
+                                    <div key={item.id} className="flex items-center gap-1.5 text-xs mb-0.5">
+                                      <span>{item.status === 'done' ? '✅' : item.status === 'cancelled' ? '❌' : '⏳'}</span>
+                                      <span className="font-medium">{item.recipient_username}</span>
+                                      <span className="text-gray-500">{item.status === 'done' ? '已完善' : item.status === 'cancelled' ? '已取消' : '待完善'}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                              {(request.current_phase === 'approval' || completionItems.every((i: any) => i.status !== 'pending')) && (
+                                <div className="mb-2">
+                                  <div className="text-xs text-gray-400 mb-1">审批阶段</div>
+                                  {approvalItems.map((item: any) => (
+                                    <div key={item.id} className="flex items-center gap-1.5 text-xs mb-0.5">
+                                      <span>{item.status === 'done' && !item.rejection_reason ? '✅' : item.status === 'cancelled' ? '❌' : '⏳'}</span>
+                                      <span className="font-medium">{item.recipient_username}</span>
+                                      <span className="text-gray-500">{item.status === 'done' && !item.rejection_reason ? '已通过' : item.status === 'done' && item.rejection_reason ? `已拒绝：${item.rejection_reason}` : item.status === 'cancelled' ? '已取消' : '待审批'}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                              {my_pending_item && (
+                                <div className="flex gap-2 mt-2">
+                                  {my_pending_item.item_type === 'completion' && (
+                                    <button
+                                      onClick={() => openEditDevice(device)}
+                                      className="px-2 py-1 bg-purple-600 text-white text-xs rounded hover:bg-purple-700"
+                                    >完善并提交</button>
+                                  )}
+                                  {my_pending_item.item_type === 'approval' && request.current_phase === 'approval' && (
+                                    <>
+                                      <button
+                                        onClick={() => handleApprove(request.id, 'device', device.id)}
+                                        className="px-2 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700"
+                                      >审批通过</button>
+                                      <button
+                                        onClick={() => handleReject(request.id, 'device', device.id)}
+                                        className="px-2 py-1 bg-red-600 text-white text-xs rounded hover:bg-red-700"
+                                      >拒绝</button>
+                                    </>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })()}
+
                     {/* 连接器展开 */}
                     <tr key={`${device.id}-connectors`}>
-                        <td colSpan={9} className="px-0 py-0 bg-blue-50">
+                        <td colSpan={10} className="px-0 py-0 bg-blue-50">
                           <div className="pl-8 pr-4 py-2">
                             <div className="flex justify-between items-center mb-1">
                               <span className="text-xs font-semibold text-blue-700">连接器列表</span>
-                              {isDeviceOwner(device) && (
+                              {canEditDevice(device) && device.status !== 'Pending' && (
                                 <button onClick={() => openAddConnector(device.id)} className="text-xs text-blue-600 hover:text-blue-800">+ 添加连接器</button>
                               )}
                             </div>
@@ -1344,11 +1588,10 @@ export default function ProjectDataView() {
                                 <thead>
                                   <tr className="bg-blue-100">
                                     <th className="px-2 py-1 text-left text-gray-600 w-6"></th>
-                                    <th className="px-2 py-1 text-left text-gray-600">连接器号</th>
                                     <th className="px-2 py-1 text-left text-gray-600">元器件编号</th>
                                     <th className="px-2 py-1 text-left text-gray-600">元器件名称</th>
                                     <th className="px-2 py-1 text-left text-gray-600">针孔数</th>
-                                    {isDeviceOwner(device) && <th className="px-2 py-1 text-left text-gray-600">操作</th>}
+                                    {canEditDevice(device) && <th className="px-2 py-1 text-left text-gray-600">操作</th>}
                                   </tr>
                                 </thead>
                                 <tbody>
@@ -1360,7 +1603,11 @@ export default function ProjectDataView() {
                                           key={conn.id}
                                           className={`border-b border-blue-100 hover:bg-blue-50 ${hasTodo(conn) ? 'bg-orange-100' : connExpanded ? 'bg-indigo-50' : ''} cursor-pointer`}
                                           onDoubleClick={async () => {
-                                            if (!connExpanded) { setExpandedConnectorId(conn.id); await loadPins(device.id, conn.id); }
+                                            if (!connExpanded) {
+                                              setExpandedConnectorId(conn.id);
+                                              await loadPins(device.id, conn.id);
+                                              if (conn.status === 'Pending') await loadApprovalInfo('connector', conn.id);
+                                            }
                                             else { setExpandedConnectorId(null); }
                                           }}
                                         >
@@ -1368,7 +1615,11 @@ export default function ProjectDataView() {
                                             <button
                                               onClick={async () => {
                                                 if (connExpanded) setExpandedConnectorId(null);
-                                                else { setExpandedConnectorId(conn.id); await loadPins(device.id, conn.id); }
+                                                else {
+                                                  setExpandedConnectorId(conn.id);
+                                                  await loadPins(device.id, conn.id);
+                                                  if (conn.status === 'Pending') await loadApprovalInfo('connector', conn.id);
+                                                }
                                               }}
                                               className="text-gray-400 hover:text-indigo-600"
                                             >
@@ -1376,16 +1627,23 @@ export default function ProjectDataView() {
                                             </button>
                                           </td>
                                           <td className="px-2 py-1 font-medium">
-                                            {conn.连接器号}
+                                            {conn.设备端元器件编号}
                                             {conn.status === 'Draft' && (
                                               <span className="ml-1 px-1 py-0.5 text-xs bg-yellow-100 text-yellow-700 rounded">Draft</span>
                                             )}
+                                            {conn.status === 'Pending' && (
+                                              <span className="ml-1 px-1 py-0.5 text-xs bg-blue-100 text-blue-700 rounded">审批中</span>
+                                            )}
+                                            {conn.status === 'normal' && (
+                                              <span className="ml-1 px-1 py-0.5 text-xs bg-green-100 text-green-700 rounded">已生效</span>
+                                            )}
                                           </td>
-                                          <td className="px-2 py-1">{conn.设备端元器件编号 || '-'}</td>
                                           <td className="px-2 py-1">{conn.设备端元器件名称及类型 || '-'}</td>
                                           <td className="px-2 py-1">{conn.pin_count ?? 0}</td>
                                           <td className="px-2 py-1 space-x-1">
-                                              {isDeviceOwner(device) && (connectorLockMap[conn.id] ? (
+                                              {canEditDevice(device) && (conn.status === 'Pending' ? (
+                                                <span className="text-xs text-gray-400">审批中</span>
+                                              ) : connectorLockMap[conn.id] ? (
                                                 <span className="text-xs text-amber-600">🔒{connectorLockMap[conn.id].lockedBy}</span>
                                               ) : (
                                                 <>
@@ -1393,14 +1651,14 @@ export default function ProjectDataView() {
                                                   <button onClick={() => deleteConnector(device.id, conn)} className="text-red-600">删除</button>
                                                 </>
                                               ))}
-                                              <button onClick={() => setHistoryTarget({ entityTable: 'connectors', entityId: conn.id, entityLabel: `连接器 ${conn.连接器号}` })} className="text-gray-500 hover:text-gray-700">历史</button>
+                                              <button onClick={() => setHistoryTarget({ entityTable: 'connectors', entityId: conn.id, entityLabel: `连接器 ${conn.设备端元器件编号}` })} className="text-gray-500 hover:text-gray-700">历史</button>
                                             </td>
                                         </tr>
 
                                         {/* 针孔展开 */}
                                         {connExpanded && (
                                           <tr key={`${conn.id}-pins`}>
-                                            <td colSpan={isDeviceOwner(device) ? 6 : 5} className="px-0 py-0">
+                                            <td colSpan={canEditDevice(device) ? 6 : 5} className="px-0 py-0">
                                               <div className="pl-8 pr-2 py-1 bg-indigo-50">
                                                 {/* 连接器详情 */}
                                                 <div className="mb-2 p-2 bg-white border border-indigo-100 rounded text-xs">
@@ -1439,7 +1697,6 @@ export default function ProjectDataView() {
 
                                                   <div className="grid grid-cols-2 gap-x-4 gap-y-0.5">
                                                     {([
-                                                      ['连接器号', conn.连接器号],
                                                       ['设备端元器件编号', conn.设备端元器件编号],
                                                       ['设备端元器件名称及类型', conn.设备端元器件名称及类型],
                                                       ['设备端元器件件号类型及件号', conn.设备端元器件件号类型及件号],
@@ -1467,9 +1724,33 @@ export default function ProjectDataView() {
                                                     })}
                                                   </div>
                                                 </div>
+                                                {/* 连接器审批进度 */}
+                                                {conn.status === 'Pending' && (() => {
+                                                  const ai = approvalInfoMap[`connector_${conn.id}`];
+                                                  if (!ai?.request) return null;
+                                                  const { request: ar, items: ais, my_pending_item: mpi } = ai;
+                                                  return (
+                                                    <div className="mb-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs">
+                                                      <div className="font-semibold text-gray-600 mb-1">审批进度（{ar.action_type}）</div>
+                                                      {ais.map((it: any) => (
+                                                        <div key={it.id} className="flex items-center gap-1.5 mb-0.5">
+                                                          <span>{it.status === 'done' && !it.rejection_reason ? '✅' : it.status === 'cancelled' ? '❌' : '⏳'}</span>
+                                                          <span className="font-medium">{it.recipient_username}</span>
+                                                          <span className="text-gray-500">{it.status === 'done' && !it.rejection_reason ? '已通过' : it.status === 'cancelled' ? '已取消' : it.item_type === 'completion' ? '待完善' : '待审批'}</span>
+                                                        </div>
+                                                      ))}
+                                                      {mpi && mpi.item_type === 'approval' && ar.current_phase === 'approval' && (
+                                                        <div className="flex gap-2 mt-1">
+                                                          <button onClick={() => handleApprove(ar.id, 'connector', conn.id)} className="px-2 py-0.5 bg-green-600 text-white rounded hover:bg-green-700">审批通过</button>
+                                                          <button onClick={() => handleReject(ar.id, 'connector', conn.id)} className="px-2 py-0.5 bg-red-600 text-white rounded hover:bg-red-700">拒绝</button>
+                                                        </div>
+                                                      )}
+                                                    </div>
+                                                  );
+                                                })()}
                                                 <div className="flex justify-between items-center mb-1">
                                                   <span className="text-xs font-semibold text-indigo-600">针孔列表</span>
-                                                  {isDeviceOwner(device) && (
+                                                  {canEditDevice(device) && conn.status !== 'Pending' && (
                                                     <button onClick={() => openAddPin(device.id, conn.id)} className="text-xs text-indigo-600">+ 添加针孔</button>
                                                   )}
                                                 </div>
@@ -1484,25 +1765,60 @@ export default function ProjectDataView() {
                                                         <th className="px-2 py-1 text-left text-gray-600">针孔号</th>
                                                         <th className="px-2 py-1 text-left text-gray-600">端接尺寸</th>
                                                         <th className="px-2 py-1 text-left text-gray-600">屏蔽类型</th>
-                                                        {isDeviceOwner(device) && <th className="px-2 py-1 text-left text-gray-600">操作</th>}
+                                                        {canEditDevice(device) && <th className="px-2 py-1 text-left text-gray-600">操作</th>}
                                                       </tr>
                                                     </thead>
                                                     <tbody>
                                                       {pins[conn.id].map(pin => (
-                                                        <tr key={pin.id} className={`border-b border-indigo-100 ${hasTodo(pin) ? 'bg-orange-100' : ''}`}>
-                                                          <td className="px-2 py-1">{pin.针孔号}</td>
+                                                        <React.Fragment key={pin.id}>
+                                                        <tr className={`border-b border-indigo-100 ${hasTodo(pin) ? 'bg-orange-100' : ''}`}>
+                                                          <td className="px-2 py-1">
+                                                            {pin.针孔号}
+                                                            {pin.status === 'Pending' && <span className="ml-1 px-1 py-0.5 text-xs bg-blue-100 text-blue-700 rounded">审批中</span>}
+                                                            {pin.status === 'normal' && <span className="ml-1 px-1 py-0.5 text-xs bg-green-100 text-green-700 rounded">已生效</span>}
+                                                          </td>
                                                           <td className="px-2 py-1">{pin.端接尺寸 || '-'}</td>
                                                           <td className="px-2 py-1">{pin.屏蔽类型 || '-'}</td>
                                                           <td className="px-2 py-1 space-x-1">
-                                                              {isDeviceOwner(device) && (
+                                                              {canEditDevice(device) && (pin.status === 'Pending' ? (
+                                                                <button onClick={() => loadApprovalInfo('pin', pin.id)} className="text-xs text-blue-600 hover:text-blue-800">审批详情</button>
+                                                              ) : (
                                                                 <>
                                                                   <button onClick={() => openEditPin(device.id, conn.id, pin)} className="text-blue-600">编辑</button>
                                                                   <button onClick={() => deletePin(device.id, conn.id, pin)} className="text-red-600">删除</button>
                                                                 </>
-                                                              )}
+                                                              ))}
                                                               <button onClick={() => setHistoryTarget({ entityTable: 'pins', entityId: pin.id, entityLabel: `针孔 ${pin.针孔号}` })} className="text-gray-500 hover:text-gray-700">历史</button>
                                                             </td>
                                                         </tr>
+                                                        {/* 针孔审批进度（Pending时点击审批详情展示） */}
+                                                        {pin.status === 'Pending' && approvalInfoMap[`pin_${pin.id}`]?.request && (() => {
+                                                          const ai = approvalInfoMap[`pin_${pin.id}`];
+                                                          const { request: ar, items: ais, my_pending_item: mpi } = ai;
+                                                          return (
+                                                            <tr key={`${pin.id}-approval`}>
+                                                              <td colSpan={4} className="px-2 py-1">
+                                                                <div className="p-2 bg-yellow-50 border border-yellow-200 rounded text-xs mb-1">
+                                                                  <div className="font-semibold text-gray-600 mb-1">针孔 {pin.针孔号} 审批进度</div>
+                                                                  {ais.map((it: any) => (
+                                                                    <div key={it.id} className="flex items-center gap-1.5 mb-0.5">
+                                                                      <span>{it.status === 'done' && !it.rejection_reason ? '✅' : it.status === 'cancelled' ? '❌' : '⏳'}</span>
+                                                                      <span className="font-medium">{it.recipient_username}</span>
+                                                                      <span className="text-gray-500">{it.status === 'done' && !it.rejection_reason ? '已通过' : it.status === 'cancelled' ? '已取消' : it.item_type === 'completion' ? '待完善' : '待审批'}</span>
+                                                                    </div>
+                                                                  ))}
+                                                                  {mpi && mpi.item_type === 'approval' && ar!.current_phase === 'approval' && (
+                                                                    <div className="flex gap-2 mt-1">
+                                                                      <button onClick={() => handleApprove(ar!.id, 'pin', pin.id)} className="px-2 py-0.5 bg-green-600 text-white rounded hover:bg-green-700">审批通过</button>
+                                                                      <button onClick={() => handleReject(ar!.id, 'pin', pin.id)} className="px-2 py-0.5 bg-red-600 text-white rounded hover:bg-red-700">拒绝</button>
+                                                                    </div>
+                                                                  )}
+                                                                </div>
+                                                              </td>
+                                                            </tr>
+                                                          );
+                                                        })()}
+                                                        </React.Fragment>
                                                       ))}
                                                     </tbody>
                                                   </table>
@@ -1541,9 +1857,9 @@ export default function ProjectDataView() {
   // ── 渲染：断面连接器视图 ─────────────────────────────────
 
 
-  const canManageSC = isAdmin || myProjectRole === '项目管理员' || myProjectRole === '设备管理员';
+  const canManageSC = isAdmin || myProjectRole === '总体人员' || myProjectRole === '设备管理员';
   const canEditSC = (sc: SectionConnectorRow) =>
-    isAdmin || myProjectRole === '项目管理员' || sc.负责人 === user?.username;
+    isAdmin || myProjectRole === '总体人员' || sc.负责人 === user?.username;
 
   const renderSectionConnectorView = () => (
     <div>
@@ -1777,48 +2093,76 @@ export default function ProjectDataView() {
     <div>
       <div className="flex justify-between items-center mb-3">
         <h2 className="text-lg font-semibold">信号列表（{signals.length}条）</h2>
-        {canManageSignals && (
-          <button onClick={openAddSignal} className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700">
-            + 添加信号
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {isAdmin && (
+            <button
+              onClick={async () => {
+                if (!selectedProjectId) return;
+                if (!confirm('确定要清空当前项目的全部信号及端点数据吗？此操作不可恢复！')) return;
+                const res = await fetch(`/api/signals/project/${selectedProjectId}/all`, { method: 'DELETE', headers: API_HEADERS() });
+                if (res.ok) { await loadSignals(); }
+                else { alert((await res.json()).error || '清空失败'); }
+              }}
+              className="bg-red-500 text-white px-3 py-1.5 rounded text-sm hover:bg-red-600"
+            >清空信号视图数据</button>
+          )}
+          {canManageSignals && (
+            <button onClick={openAddSignal} className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700">
+              + 添加信号
+            </button>
+          )}
+        </div>
       </div>
 
       {loading ? (
         <div className="text-center py-8 text-gray-500">加载中...</div>
       ) : signals.length === 0 ? (
         <div className="text-center py-8 text-gray-400">暂无信号数据</div>
-      ) : (
+      ) : (() => {
+        const filteredSignals = signals.filter(s => {
+          if (filterMode === 'pending' && s.status !== 'Pending') return false;
+          if (filterMode === 'my_approval' && !(s.status === 'Pending' && s.pending_item_type === 'approval')) return false;
+          if (filterMode === 'my_completion' && !(s.status === 'Pending' && s.pending_item_type === 'completion')) return false;
+          return true;
+        });
+        return (
         <div className="bg-white rounded-lg shadow overflow-hidden">
+          {(filterMode === 'pending' || filterMode === 'my_approval' || filterMode === 'my_completion') && (
+            <div className="px-4 py-1.5 text-xs text-gray-500 bg-gray-50 border-b">
+              显示 {filteredSignals.length} / {signals.length} 条信号
+            </div>
+          )}
           <table className="min-w-full text-sm">
             <thead className="bg-gray-50">
               <tr>
                 <th className="px-4 py-2 text-left text-xs text-gray-500 w-8"></th>
                 <th className="px-4 py-2 text-left text-xs text-gray-500">Unique ID</th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500">状态</th>
+                <th className="px-4 py-2 text-left text-xs text-gray-500 min-w-[120px]">状态</th>
                 <th className="px-4 py-2 text-left text-xs text-gray-500">信号名称摘要</th>
                 <th className="px-4 py-2 text-left text-xs text-gray-500">连接类型</th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500">信号方向</th>
                 <th className="px-4 py-2 text-left text-xs text-gray-500">端点摘要</th>
                 <th className="px-4 py-2 text-left text-xs text-gray-500">创建人</th>
                 <th className="px-4 py-2 text-left text-xs text-gray-500">操作</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {signals.map(signal => {
+              {filteredSignals.map(signal => {
                 const isExpanded = expandedSignalId === signal.id;
                 const detail = signalDetails[signal.id];
                 return (
-                  <>
+                  <React.Fragment key={signal.id}>
                     <tr
-                      key={signal.id}
                       className={`hover:bg-gray-50 ${
                         hasTodo(signal) || signalDetails[signal.id]?.endpoints?.some(ep => hasTodo(ep))
                           ? 'bg-orange-100'
                           : isExpanded ? 'bg-green-50' : ''
                       } cursor-pointer`}
                       onDoubleClick={async () => {
-                        if (!isExpanded) { setExpandedSignalId(signal.id); await loadSignalDetail(signal.id); }
+                        if (!isExpanded) {
+                          setExpandedSignalId(signal.id);
+                          await loadSignalDetail(signal.id, true);
+                          if (signal.status === 'Pending') await loadApprovalInfo('signal', signal.id);
+                        }
                         else { setExpandedSignalId(null); }
                       }}
                     >
@@ -1826,7 +2170,11 @@ export default function ProjectDataView() {
                         <button
                           onClick={async () => {
                             if (isExpanded) setExpandedSignalId(null);
-                            else { setExpandedSignalId(signal.id); await loadSignalDetail(signal.id); }
+                            else {
+                              setExpandedSignalId(signal.id);
+                              await loadSignalDetail(signal.id, true);
+                              if (signal.status === 'Pending') await loadApprovalInfo('signal', signal.id);
+                            }
                           }}
                           className="text-gray-400 hover:text-green-600 font-mono text-xs"
                         >
@@ -1836,10 +2184,14 @@ export default function ProjectDataView() {
                       <td className="px-4 py-2 font-mono text-xs">{signal.unique_id || '-'}</td>
                       <td className="px-4 py-2">
                         {signal.status === 'Draft' && (
-                          <span className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 text-xs font-semibold">草稿</span>
+                          <span className="px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700 text-xs font-semibold">Draft</span>
                         )}
                         {signal.status === 'Pending' && (
-                          <span className="px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 text-xs font-semibold">待确认</span>
+                          <>
+                            <span className="px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 text-xs font-semibold">审批中</span>
+                            {signal.pending_item_type === 'approval' && <span className="ml-1 px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 text-xs">待我审批</span>}
+                            {signal.pending_item_type === 'completion' && <span className="ml-1 px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 text-xs">待我完善</span>}
+                          </>
                         )}
                         {signal.status === 'Active' && (
                           <span className="px-1.5 py-0.5 rounded bg-green-100 text-green-700 text-xs font-semibold">已生效</span>
@@ -1847,41 +2199,107 @@ export default function ProjectDataView() {
                       </td>
                       <td className="px-4 py-2 text-xs">{signal.信号名称摘要 || '-'}</td>
                       <td className="px-4 py-2 text-gray-600">{signal.连接类型 || '-'}</td>
-                      <td className="px-4 py-2 text-gray-600 text-xs">{signal.信号方向 || '-'}</td>
                       <td className="px-4 py-2 text-gray-600 text-xs">{signal.endpoint_summary || '-'}</td>
                       <td className="px-4 py-2 text-gray-600 text-xs">{signal.created_by || '-'}</td>
                       <td className="px-4 py-2 space-x-2 text-xs">
-                        {canManageSignals && (isAdmin || signal.can_edit) && (signalLockMap[signal.id] ? (
-                          <span className="text-amber-600">🔒{signalLockMap[signal.id].lockedBy}</span>
+                        {signal.status === 'Pending' ? (
+                          <span className="text-gray-400 cursor-not-allowed" title="记录审批中，不可编辑">编辑/删除</span>
                         ) : (
-                          <button onClick={() => openEditSignal(signal)} className="text-blue-600 hover:text-blue-800">编辑</button>
-                        ))}
-                        {canDeleteSignal(signal) && (
-                          <button onClick={() => deleteSignal(signal)} className="text-red-600 hover:text-red-800">删除</button>
+                          <>
+                            {canManageSignals && (isAdmin || signal.can_edit) && (signalLockMap[signal.id] ? (
+                              <span className="text-amber-600">🔒{signalLockMap[signal.id].lockedBy}</span>
+                            ) : (
+                              <button onClick={() => openEditSignal(signal)} className="text-blue-600 hover:text-blue-800">编辑</button>
+                            ))}
+                            {canDeleteSignal(signal) && (
+                              <button onClick={() => deleteSignal(signal)} className="text-red-600 hover:text-red-800">删除</button>
+                            )}
+                          </>
                         )}
                         <button onClick={() => setHistoryTarget({ entityTable: 'signals', entityId: signal.id, entityLabel: `信号 ${signal.unique_id || signal.id}` })} className="text-gray-500 hover:text-gray-700">历史</button>
                       </td>
                     </tr>
+
+                    {isExpanded && signal.status === 'Pending' && (() => {
+                      const approvalInfo = approvalInfoMap[`signal_${signal.id}`];
+                      if (!approvalInfo?.request) return null;
+                      const { request, items, my_pending_item } = approvalInfo;
+                      const completionItems = items.filter((i: any) => i.item_type === 'completion');
+                      const approvalItems = items.filter((i: any) => i.item_type === 'approval');
+                      return (
+                        <tr key={`${signal.id}-approval`}>
+                          <td colSpan={8} className="px-0 py-0 bg-yellow-50 border-b border-yellow-200">
+                            <div className="pl-8 pr-4 py-3">
+                              <div className="text-xs font-semibold text-gray-600 mb-2">审批进度（{request.action_type}）</div>
+                              {completionItems.length > 0 && (
+                                <div className="mb-2">
+                                  <div className="text-xs text-gray-400 mb-1">完善阶段</div>
+                                  {completionItems.map((item: any) => (
+                                    <div key={item.id} className="flex items-center gap-1.5 text-xs mb-0.5">
+                                      <span>{item.status === 'done' ? '✅' : item.status === 'cancelled' ? '❌' : '⏳'}</span>
+                                      <span className="font-medium">{item.recipient_username}</span>
+                                      <span className="text-gray-500">{item.status === 'done' ? '已完善' : item.status === 'cancelled' ? '已取消' : '待完善'}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                              {(request.current_phase === 'approval' || completionItems.every((i: any) => i.status !== 'pending')) && (
+                                <div className="mb-2">
+                                  <div className="text-xs text-gray-400 mb-1">审批阶段</div>
+                                  {approvalItems.map((item: any) => (
+                                    <div key={item.id} className="flex items-center gap-1.5 text-xs mb-0.5">
+                                      <span>{item.status === 'done' && !item.rejection_reason ? '✅' : item.status === 'cancelled' ? '❌' : '⏳'}</span>
+                                      <span className="font-medium">{item.recipient_username}</span>
+                                      <span className="text-gray-500">{item.status === 'done' && !item.rejection_reason ? '已通过' : item.status === 'done' && item.rejection_reason ? `已拒绝：${item.rejection_reason}` : item.status === 'cancelled' ? '已取消' : '待审批'}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                              {my_pending_item && my_pending_item.item_type === 'approval' && request.current_phase === 'approval' && (
+                                <div className="flex gap-2 mt-2">
+                                  <button
+                                    onClick={() => handleApprove(request.id, 'signal', signal.id)}
+                                    className="px-2 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700"
+                                  >审批通过</button>
+                                  <button
+                                    onClick={() => handleReject(request.id, 'signal', signal.id)}
+                                    className="px-2 py-1 bg-red-600 text-white text-xs rounded hover:bg-red-700"
+                                  >拒绝</button>
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })()}
 
                     {isExpanded && detail && (
                       <tr key={`${signal.id}-detail`}>
                         <td colSpan={7} className="px-0 py-0 bg-green-50">
                           <div className="pl-8 pr-4 py-3 text-xs">
 
-                            {/* 连接摘要：从端 → 到端 */}
-                            {detail.endpoints?.length >= 1 && (() => {
-                              const ep0 = detail.endpoints[0];
-                              const ep1 = detail.endpoints[1];
-                              const id0 = ep0.设备端元器件编号 || `${ep0.设备编号}-${ep0.连接器号}`;
-                              const id1 = ep1 ? (ep1.设备端元器件编号 || `${ep1.设备编号}-${ep1.连接器号}`) : '';
-                              return (
-                                <div className="mb-3 font-semibold text-gray-800 text-sm bg-green-100 px-3 py-1.5 rounded">
-                                  {id0}-{ep0.针孔号}
-                                  {ep1 && <> &nbsp;→&nbsp; {id1}-{ep1.针孔号}</>}
-                                  {(detail as any).信号方向 && <span className="ml-2 text-xs font-normal text-gray-600 bg-white px-1.5 py-0.5 rounded border border-gray-300">{(detail as any).信号方向}</span>}
-                                </div>
-                              );
-                            })()}
+                            {/* 连接摘要 */}
+                            {detail.endpoints?.length >= 1 && (
+                              <div className="mb-3 font-semibold text-gray-800 text-sm bg-green-100 px-3 py-1.5 rounded">
+                                {detail.endpoints.map((ep, i) => {
+                                  if (!ep.pin_id) {
+                                    return (
+                                      <span key={i}>
+                                        {i > 0 && ' - '}
+                                        <span className="text-orange-600">{ep.设备编号}(待完善)</span>
+                                      </span>
+                                    );
+                                  }
+                                  const epId = ep.设备端元器件编号 || `${ep.设备编号}(?)`;
+                                  return (
+                                    <span key={i}>
+                                      {i > 0 && ' - '}
+                                      {epId}-{ep.针孔号}
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            )}
 
                             {/* 信号属性 */}
                             <div className="grid grid-cols-2 gap-x-6 gap-y-1 mb-3">
@@ -1945,26 +2363,48 @@ export default function ProjectDataView() {
                                       <th className="px-2 py-1 text-left">针孔号</th>
                                       <th className="px-2 py-1 text-left">端点信号名称</th>
                                       <th className="px-2 py-1 text-left">信号定义</th>
+                                      <th className="px-2 py-1 text-left">信号方向</th>
+                                      <th className="px-2 py-1 text-left">备注</th>
                                       <th className="px-2 py-1 text-left">状态</th>
                                     </tr>
                                   </thead>
                                   <tbody>
-                                    {detail.endpoints.map((ep, i) => (
-                                      <tr key={i} className="border-b border-green-100">
-                                        <td className="px-2 py-1 text-gray-500">{i === 0 ? '从端点' : '到端点'}</td>
+                                    {detail.endpoints.map((ep, i) => {
+                                      const direction = ep.input && ep.output ? 'BI' : ep.input ? 'IN' : ep.output ? 'OUT' : '-';
+                                      return (
+                                      <tr key={i} className={`border-b border-green-100 ${!ep.pin_id ? 'bg-orange-50' : ''}`}>
+                                        <td className="px-2 py-1 text-gray-500">端点{i + 1}</td>
                                         <td className="px-2 py-1">{ep.设备编号}</td>
-                                        <td className="px-2 py-1 font-mono">{ep.设备端元器件编号 || `${ep.设备编号}-${ep.连接器号}`}</td>
-                                        <td className="px-2 py-1">{ep.针孔号}</td>
+                                        <td className="px-2 py-1 font-mono">
+                                          {ep.pin_id
+                                            ? (ep.设备端元器件编号 || ep.设备编号)
+                                            : <span className="text-orange-500 italic">待完善</span>
+                                          }
+                                        </td>
+                                        <td className="px-2 py-1">
+                                          {ep.pin_id ? ep.针孔号 : <span className="text-orange-500 italic">待完善</span>}
+                                        </td>
                                         <td className="px-2 py-1">{ep.信号名称 || '-'}</td>
                                         <td className="px-2 py-1 text-gray-600">{ep.信号定义 || '-'}</td>
+                                        <td className="px-2 py-1 text-center font-medium">{direction}</td>
+                                        <td className="px-2 py-1 text-gray-600">{(ep as any).备注 || '-'}</td>
                                         <td className="px-2 py-1">
-                                          {ep.confirmed === 0
-                                            ? <span className="px-1.5 py-0.5 rounded bg-orange-100 text-orange-600 text-xs">待确认</span>
-                                            : <span className="px-1.5 py-0.5 rounded bg-green-100 text-green-700 text-xs">已确认</span>
+                                          {!ep.pin_id
+                                            ? (signal.status === 'Pending' && ep.设备负责人 === user?.username
+                                              ? <button
+                                                  onClick={() => openEditSignal(signal)}
+                                                  className="px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 text-xs hover:bg-purple-200 cursor-pointer"
+                                                >待我完善并提交</button>
+                                              : <span className="px-1.5 py-0.5 rounded bg-orange-100 text-orange-600 text-xs">待完善</span>
+                                            )
+                                            : ep.confirmed === 0
+                                              ? <span className="px-1.5 py-0.5 rounded bg-orange-100 text-orange-600 text-xs">待确认</span>
+                                              : <span className="px-1.5 py-0.5 rounded bg-green-100 text-green-700 text-xs">已确认</span>
                                           }
                                         </td>
                                       </tr>
-                                    ))}
+                                      );
+                                    })}
                                   </tbody>
                                 </table>
                               </div>
@@ -1973,13 +2413,14 @@ export default function ProjectDataView() {
                         </td>
                       </tr>
                     )}
-                  </>
+                  </React.Fragment>
                 );
               })}
             </tbody>
           </table>
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 
@@ -1988,29 +2429,21 @@ export default function ProjectDataView() {
   return (
     <Layout>
       <div className="px-4 py-4">
-        {/* 顶部：项目名称 + 视图切换 */}
-        <div className="flex flex-wrap items-center gap-4 mb-4">
-          <div className="flex items-center gap-2">
-            <span className="text-xl font-bold text-gray-900">
-              {selectedProjectId ? projects.find(p => p.id === selectedProjectId)?.name ?? '（未知项目）' : '请选择项目'}
-            </span>
-            {selectedProjectId && !isAdmin && myProjectRole && (
-              <span className={`px-2 py-0.5 rounded text-xs font-semibold ${
-                myProjectRole === '项目管理员' ? 'bg-purple-100 text-purple-800'
-                : myProjectRole === '设备管理员' ? 'bg-blue-100 text-blue-800'
-                : 'bg-gray-100 text-gray-700'
-              }`}>
-                {myProjectRole}
-              </span>
-            )}
-            <button
-              onClick={() => { setSwitchProjectTargetId(selectedProjectId ?? ''); setShowSwitchProjectModal(true); }}
-              className="px-2 py-1 text-xs border border-gray-300 rounded hover:bg-gray-50 text-gray-600"
-            >
-              切换项目
-            </button>
-          </div>
+        {/* 顶部：项目名称 */}
+        <div className="mb-3">
+          <span className="text-xl font-bold text-gray-900">
+            {selectedProjectId ? projects.find(p => p.id === selectedProjectId)?.name ?? '（未知项目）' : '请选择项目'}
+          </span>
+          <button
+            onClick={() => { setSwitchProjectTargetId(selectedProjectId ?? ''); setShowSwitchProjectModal(true); }}
+            className="ml-3 px-2 py-1 text-xs border border-gray-300 rounded hover:bg-gray-50 text-gray-600"
+          >
+            切换项目
+          </button>
+        </div>
 
+        {/* 视图切换 */}
+        <div className="flex flex-wrap items-center gap-3 mb-3">
           <div className="flex bg-gray-100 rounded-md p-0.5">
             <button
               onClick={() => setActiveView('devices')}
@@ -2031,7 +2464,10 @@ export default function ProjectDataView() {
               信号视图
             </button>
           </div>
+        </div>
 
+        {/* 筛选按钮 */}
+        <div className="flex flex-wrap items-center gap-3 mb-4">
           <div className="flex bg-gray-100 rounded-md p-0.5">
             <button
               onClick={() => setFilterMode('all')}
@@ -2045,12 +2481,34 @@ export default function ProjectDataView() {
             >
               我的
             </button>
+            <button
+              onClick={() => setFilterMode('pending')}
+              className={`px-3 py-1 rounded text-sm ${filterMode === 'pending' ? 'bg-white shadow text-orange-600 font-medium' : 'text-gray-600'}`}
+            >
+              待审批
+            </button>
+            <button
+              onClick={() => setFilterMode('my_approval')}
+              className={`px-3 py-1 rounded text-sm ${filterMode === 'my_approval' ? 'bg-white shadow text-orange-600 font-medium' : 'text-gray-600'}`}
+            >
+              待我审批
+            </button>
+            <button
+              onClick={() => setFilterMode('my_completion')}
+              className={`px-3 py-1 rounded text-sm ${filterMode === 'my_completion' ? 'bg-white shadow text-purple-600 font-medium' : 'text-gray-600'}`}
+            >
+              待我完善
+            </button>
           </div>
         </div>
 
         {/* 内容区 */}
         {!selectedProjectId ? (
-          <div className="text-center py-16 text-gray-400">请先选择项目</div>
+          <div className="text-center py-16 text-gray-400">
+            {projects.length === 0 && !isAdmin
+              ? '当前无任何项目权限，请点击右上角灰色齿轮申请项目权限'
+              : '请先选择项目'}
+          </div>
         ) : activeView === 'devices' ? renderDeviceView()
           : activeView === 'section-connectors' ? renderSectionConnectorView()
           : renderSignalView()}
@@ -2119,22 +2577,34 @@ export default function ProjectDataView() {
                         {(deviceForm as any)[f.key] || '-'}
                       </div>
                     ) : f.key === '设备负责人' ? (
-                      !isAdmin ? (
+                      myProjectRole === '设备管理员' && !isAdmin ? (
+                        /* 设备管理员：只读，固定为自己 */
                         <div className="w-full border border-gray-200 bg-gray-50 rounded px-2 py-1 text-sm text-gray-700">
                           {(deviceForm as any)[f.key] || '-'}
+                          {(deviceForm as any)[f.key] && employeeNameMap[(deviceForm as any)[f.key]] && <span className="text-gray-400 ml-1">({employeeNameMap[(deviceForm as any)[f.key]]})</span>}
                         </div>
                       ) : (
+                        /* admin / 总体人员：可选择设备管理员 */
                         <select
                           value={(deviceForm as any)[f.key] || ''}
                           onChange={e => setDeviceForm({ ...deviceForm, [f.key]: e.target.value })}
                           className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
                         >
-                          <option value="">请选择（仅限非项目管理员的成员）</option>
-                          {projectMembers
-                            .filter(m => !memberRoles.some(r => r.username === m && r.project_role === '项目管理员'))
-                            .map(m => (
-                              <option key={m} value={m}>{m}</option>
-                            ))}
+                          <option value="">请选择</option>
+                          {myProjectRole === '总体人员' && !isAdmin
+                            ? /* 总体人员：只能选设备管理员 */
+                              memberRoles
+                                .filter(r => r.project_role === '设备管理员')
+                                .map(r => (
+                                  <option key={r.username} value={r.username}>{r.username}{employeeNameMap[r.username] ? ` (${employeeNameMap[r.username]})` : ''}</option>
+                                ))
+                            : /* admin：可选除总体人员之外的所有成员 */
+                              projectMembers
+                                .filter(m => !memberRoles.some(r => r.username === m && r.project_role === '总体人员'))
+                                .map(m => (
+                                  <option key={m} value={m}>{m}{employeeNameMap[m] ? ` (${employeeNameMap[m]})` : ''}</option>
+                                ))
+                          }
                         </select>
                       )
                     ) : f.key === '设备DAL' ? (
@@ -2208,7 +2678,6 @@ export default function ProjectDataView() {
             <div className="bg-white rounded-lg p-6 max-w-lg w-full max-h-[80vh] overflow-y-auto">
               <h2 className="text-xl font-bold mb-4">{editingConnector ? '编辑连接器' : '添加连接器'}</h2>
               {[
-                { key: '连接器号', label: '连接器号 *' },
                 { key: '设备端元器件编号', label: '设备端元器件编号 *' },
                 { key: '设备端元器件名称及类型', label: '设备端元器件名称及类型' },
                 { key: '设备端元器件件号类型及件号', label: '设备端元器件件号类型及件号' },
@@ -2242,20 +2711,7 @@ export default function ProjectDataView() {
                       type="text"
                       value={(connectorForm as any)[f.key] || ''}
                       onChange={e => {
-                        if (f.key === '连接器号' && !editingConnector) {
-                          const device = devices.find(d => d.id === connectorTargetDeviceId);
-                          const prevNo = (connectorForm as any)['连接器号'] || '';
-                          const prevAuto = device ? `${device.设备编号}-${prevNo}` : '';
-                          const curCompId = (connectorForm as any)['设备端元器件编号'] || '';
-                          const shouldSync = curCompId === '' || curCompId === prevAuto;
-                          setConnectorForm({
-                            ...connectorForm,
-                            '连接器号': e.target.value,
-                            ...(shouldSync && device ? { '设备端元器件编号': `${device.设备编号}-${e.target.value}` } : {}),
-                          });
-                        } else {
-                          setConnectorForm({ ...connectorForm, [f.key]: e.target.value });
-                        }
+                        setConnectorForm({ ...connectorForm, [f.key]: e.target.value });
                       }}
                       className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
                     />
@@ -2460,14 +2916,9 @@ export default function ProjectDataView() {
                   }).map(f => (
                     <div key={f.key}>
                       <label className="block text-xs text-gray-600 mb-1">
-                        {f.label}{(f.key === '信号方向' || f.key === '连接类型' || f.key === '是否成品线') ? <span className="text-red-500"> *</span> : ''}
+                        {f.label}{(f.key === '连接类型' || f.key === '是否成品线') ? <span className="text-red-500"> *</span> : ''}
                       </label>
-                      {f.key === '信号方向' ? (
-                        <select value={(signalForm as any)[f.key] || ''} onChange={e => setSignalForm({ ...signalForm, [f.key]: e.target.value })} className="w-full border border-gray-300 rounded px-2 py-1 text-sm">
-                          <option value="">请选择</option>
-                          {['INPUT', 'OUTPUT', 'BI-Direction', '其他'].map(v => <option key={v} value={v}>{v}</option>)}
-                        </select>
-                      ) : f.key === '连接类型' ? (
+                      {f.key === '连接类型' ? (
                         <select value={(signalForm as any)[f.key] || ''} onChange={e => setSignalForm({ ...signalForm, [f.key]: e.target.value })} className="w-full border border-gray-300 rounded px-2 py-1 text-sm">
                           <option value="">请选择</option>
                           {['A429', 'RS485', 'CAN', 'Discrete'].map(v => <option key={v} value={v}>{v}</option>)}
@@ -2490,7 +2941,13 @@ export default function ProjectDataView() {
                 <div className="flex justify-between items-center mb-3">
                   <h3 className="font-medium text-sm text-gray-700">信号端点</h3>
                   <button
-                    onClick={() => setSignalEndpoints([...signalEndpoints, { 设备编号: '', 连接器号: '', 针孔号: '', 信号名称: '', 信号定义: '' }])}
+                    onClick={() => {
+                      setSignalEndpoints([...signalEndpoints, { 设备编号: '', 设备端元器件编号: '', 针孔号: '', 信号名称: '', 信号定义: '' }]);
+                      setEpDeviceSearch(prev => [...prev, '']);
+                      setEpDeviceResults(prev => [...prev, []]);
+                      setEpConnectorOptions(prev => [...prev, []]);
+                      setEpPinOptions(prev => [...prev, []]);
+                    }}
                     className="text-xs text-blue-600 hover:text-blue-800"
                   >
                     + 添加端点
@@ -2505,7 +2962,13 @@ export default function ProjectDataView() {
                         {ep.confirmed === 1 && <span className="ml-1.5 px-1.5 py-0.5 rounded bg-green-100 text-green-700 text-xs">已确认</span>}
                       </span>
                       {signalEndpoints.length > 1 && (
-                        <button onClick={() => setSignalEndpoints(signalEndpoints.filter((_, i) => i !== idx))} className="text-xs text-red-500">移除</button>
+                        <button onClick={() => {
+                          setSignalEndpoints(signalEndpoints.filter((_, i) => i !== idx));
+                          setEpDeviceSearch(prev => prev.filter((_, i) => i !== idx));
+                          setEpDeviceResults(prev => prev.filter((_, i) => i !== idx));
+                          setEpConnectorOptions(prev => prev.filter((_, i) => i !== idx));
+                          setEpPinOptions(prev => prev.filter((_, i) => i !== idx));
+                        }} className="text-xs text-red-500">移除</button>
                       )}
                     </div>
                     <div className="grid grid-cols-4 gap-2">
@@ -2535,22 +2998,23 @@ export default function ProjectDataView() {
                         <label className="block text-xs text-gray-500 mb-0.5">设备负责人</label>
                         <div className="w-full border border-gray-200 bg-gray-50 rounded px-2 py-1 text-xs text-gray-600 min-h-[26px]">
                           {ep.设备负责人 || '-'}
+                          {ep.设备负责人 && employeeNameMap[ep.设备负责人] && <span className="text-gray-400 ml-1">({employeeNameMap[ep.设备负责人]})</span>}
                         </div>
                       </div>
                       {/* 连接器下拉 */}
                       <div>
-                        <label className="block text-xs text-gray-500 mb-0.5">连接器号</label>
+                        <label className="block text-xs text-gray-500 mb-0.5">设备端元器件编号</label>
                         <select
-                          value={ep.连接器号}
+                          value={ep.设备端元器件编号}
                           onChange={async e => {
-                            const conn = epConnectorOptions[idx].find(c => c.连接器号 === e.target.value);
+                            const conn = epConnectorOptions[idx].find(c => c.设备端元器件编号 === e.target.value);
                             if (conn) await selectEpConnector(idx, conn);
-                            else { const newEp = [...signalEndpoints]; newEp[idx] = { ...newEp[idx], 连接器号: e.target.value, 针孔号: '' }; setSignalEndpoints(newEp); }
+                            else { const newEp = [...signalEndpoints]; newEp[idx] = { ...newEp[idx], 设备端元器件编号: e.target.value, 针孔号: '' }; setSignalEndpoints(newEp); }
                           }}
                           className="w-full border border-gray-300 rounded px-2 py-1 text-xs"
                         >
                           <option value="">选择连接器</option>
-                          {(epConnectorOptions[idx] || []).map(c => <option key={c.id} value={c.连接器号}>{c.连接器号}</option>)}
+                          {(epConnectorOptions[idx] || []).map(c => <option key={c.id} value={c.设备端元器件编号}>{c.设备端元器件编号}</option>)}
                         </select>
                       </div>
                       {/* 针孔下拉 */}
@@ -2592,13 +3056,13 @@ export default function ProjectDataView() {
 
               <div className="flex justify-end gap-2 mt-4">
                 <button onClick={closeSignalModal} className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50">取消</button>
-                {/* 新建信号：存草稿 + 提交 */}
+                {/* 新建信号：保存为Draft + 提交 */}
                 {!editingSignal && (
-                  <button onClick={() => saveSignal(true)} className="px-4 py-2 border border-gray-400 rounded text-gray-700 hover:bg-gray-50">存草稿</button>
+                  <button onClick={() => saveSignal(true)} className="px-4 py-2 bg-yellow-500 text-white rounded hover:bg-yellow-600">保存为Draft</button>
                 )}
-                {/* 编辑草稿：更新草稿 + 提交 */}
+                {/* 编辑草稿：保存为Draft + 提交 */}
                 {editingSignal && editingSignal.status === 'Draft' && (
-                  <button onClick={() => saveSignal(false, false)} className="px-4 py-2 border border-gray-400 rounded text-gray-700 hover:bg-gray-50">更新草稿</button>
+                  <button onClick={() => saveSignal(false, false)} className="px-4 py-2 bg-yellow-500 text-white rounded hover:bg-yellow-600">保存为Draft</button>
                 )}
                 {/* 新建 / 草稿：提交按钮 */}
                 {(!editingSignal || editingSignal.status === 'Draft') && (
@@ -2609,7 +3073,10 @@ export default function ProjectDataView() {
                     提交
                   </button>
                 )}
-                {/* 编辑已有 Pending/Active 信号：普通保存 */}
+                {/* 编辑已有 Pending/Active 信号：保存为Draft + 保存 */}
+                {editingSignal && editingSignal.status !== 'Draft' && (
+                  <button onClick={() => saveSignal(true)} className="px-4 py-2 bg-yellow-500 text-white rounded hover:bg-yellow-600">保存为Draft</button>
+                )}
                 {editingSignal && editingSignal.status !== 'Draft' && (
                   <button onClick={() => saveSignal()} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">保存</button>
                 )}

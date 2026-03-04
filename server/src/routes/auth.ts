@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { Database } from '../database.js';
 import { authenticate } from '../middleware/auth.js';
+import { getProjectRoleMembers } from '../shared/approval-helper.js';
 
 export function authRoutes(db: Database) {
   const router = express.Router();
@@ -175,11 +176,30 @@ export function authRoutes(db: Database) {
         return res.status(400).json({ error: '您已有待审批的申请，请等待管理员处理后再申请' });
       }
 
-      await db.run(
+      const result = await db.run(
         'INSERT INTO permission_requests (user_id, project_name, project_role) VALUES (?, ?, ?)',
         [req.user.id, project_name, project_role]
       );
-      res.json({ message: '申请已提交，请等待管理员审批' });
+
+      // 通知该项目所有总体人员
+      try {
+        const project = await db.get('SELECT id FROM projects WHERE name = ?', [project_name]);
+        if (project) {
+          const zontiList = await getProjectRoleMembers(db, project.id, '总体人员');
+          const displayName = req.user.display_name || req.user.username;
+          for (const u of zontiList) {
+            await db.run(
+              `INSERT INTO notifications (recipient_username, type, title, message, reference_id)
+               VALUES (?, 'permission_request', ?, ?, ?)`,
+              [u, `权限申请：${req.user.username} 申请加入 ${project_name}`,
+               `${displayName} 申请「${project_role}」角色，请审批`,
+               result.lastID]
+            );
+          }
+        }
+      } catch (e) { console.error('发送权限申请通知失败:', e); }
+
+      res.json({ message: '申请已提交，请等待审批' });
     } catch (error) {
       res.status(500).json({ error: '提交申请失败' });
     }

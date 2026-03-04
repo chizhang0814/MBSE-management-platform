@@ -10,6 +10,7 @@ interface Notification {
   message: string;
   is_read: number;
   created_at: string;
+  reference_id?: number;
 }
 
 const API_HEADERS = () => ({
@@ -45,6 +46,17 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       const res = await fetch('/api/notifications', { headers: API_HEADERS() });
       if (res.ok) setNotifications((await res.json()).notifications || []);
     } catch { }
+  };
+
+  const handlePermissionAction = async (referenceId: number, action: 'approve' | 'reject') => {
+    try {
+      const res = await fetch(`/api/users/permission-requests/${referenceId}`, {
+        method: 'PUT', headers: API_JSON_HEADERS(), body: JSON.stringify({ action }),
+      });
+      if (!res.ok) { const d = await res.json(); alert(d.error || '操作失败'); return; }
+      alert(action === 'approve' ? '已批准' : '已驳回');
+      await fetchNotifications();
+    } catch { alert('操作失败'); }
   };
 
   const openNotifications = async () => {
@@ -120,19 +132,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 >
                   项目数据
                 </Link>
-                {/* 审批管理：项目管理员、设备管理员、admin 均可见 */}
-                {(user?.role === 'admin' ||
-                  myPermissions.some(p => p.project_role === '项目管理员') ||
-                  myPermissions.some(p => p.project_role === '设备管理员')) && (
-                  <Link
-                    to="/approvals"
-                    className={`${
-                      isActive('/approvals') ? 'border-blue-500 text-gray-900' : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
-                    } inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium`}
-                  >
-                    审批管理
-                  </Link>
-                )}
                 {user?.role === 'admin' && (
                   <>
                     <Link
@@ -194,11 +193,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                     {user?.username}
                     {user?.employee_name && <span className="text-gray-500 ml-1">({user.employee_name})</span>}
                   </span>
-                  <span className={`px-2 py-1 rounded text-xs font-semibold ${
-                    user?.role === 'admin' ? 'bg-purple-100 text-purple-800' : 'bg-blue-100 text-blue-800'
-                  }`}>
-                    {user?.role === 'admin' ? '管理员' : '普通用户'}
-                  </span>
+
                   {user?.role !== 'admin' && myPermissions.length > 0 && (
                     <span className="text-xs text-gray-500">
                       {[...new Set(myPermissions.map(p => p.project_role))].join(' / ')}
@@ -235,7 +230,21 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                               <div key={n.id} className={`px-4 py-3 border-b border-gray-50 ${n.is_read ? 'bg-white' : 'bg-blue-50'}`}>
                                 <div className="text-xs font-medium text-gray-800 mb-0.5">{n.title}</div>
                                 <div className="text-xs text-gray-600 leading-relaxed">{n.message}</div>
-                                <div className="text-xs text-gray-400 mt-1">{new Date(n.created_at).toLocaleString('zh-CN')}</div>
+                                <div className="flex items-center justify-between mt-1">
+                                  <span className="text-xs text-gray-400">{new Date(n.created_at).toLocaleString('zh-CN')}</span>
+                                  {n.type === 'permission_request' && n.reference_id && (
+                                    <span className="flex gap-1">
+                                      <button
+                                        onClick={() => handlePermissionAction(n.reference_id!, 'approve')}
+                                        className="px-2 py-0.5 text-xs bg-green-500 text-white rounded hover:bg-green-600"
+                                      >通过</button>
+                                      <button
+                                        onClick={() => handlePermissionAction(n.reference_id!, 'reject')}
+                                        className="px-2 py-0.5 text-xs bg-red-500 text-white rounded hover:bg-red-600"
+                                      >拒绝</button>
+                                    </span>
+                                  )}
+                                </div>
                               </div>
                             ))
                           )}

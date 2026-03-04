@@ -46,9 +46,8 @@ export function dataRoutes(db: Database) {
             `SELECT COUNT(DISTINCT s.id) as c FROM signals s
              WHERE s.project_id = ?
                AND EXISTS (
-                 SELECT 1 FROM signal_endpoints se JOIN pins p ON se.pin_id = p.id
-                 JOIN connectors co ON p.connector_id = co.id
-                 JOIN devices d ON co.device_id = d.id
+                 SELECT 1 FROM signal_endpoints se
+                 JOIN devices d ON se.device_id = d.id
                  WHERE se.signal_id = s.id AND d.设备负责人 = ?
                )`,
             [projectId, username]
@@ -87,9 +86,8 @@ export function dataRoutes(db: Database) {
               `SELECT COUNT(DISTINCT s.id) as c FROM signals s
                WHERE s.project_id = ?
                  AND EXISTS (
-                   SELECT 1 FROM signal_endpoints se JOIN pins pi ON se.pin_id = pi.id
-                   JOIN connectors co ON pi.connector_id = co.id
-                   JOIN devices d ON co.device_id = d.id
+                   SELECT 1 FROM signal_endpoints se
+                   JOIN devices d ON se.device_id = d.id
                    WHERE se.signal_id = s.id AND d.设备负责人 = ?
                  )`,
               [p.project_id, username]

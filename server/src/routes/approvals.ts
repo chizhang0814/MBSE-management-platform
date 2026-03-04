@@ -1,220 +1,298 @@
 import express from 'express';
 import { Database } from '../database.js';
 import { authenticate, AuthRequest } from '../middleware/auth.js';
-
-/** 检查用户是否为指定项目的项目管理员 */
-async function isProjectAdmin(db: Database, username: string, projectId: number): Promise<boolean> {
-  const userRow = await db.get('SELECT permissions FROM users WHERE username = ?', [username]);
-  const perms: Array<{ project_name: string; project_role: string }> = userRow?.permissions
-    ? JSON.parse(userRow.permissions)
-    : [];
-  const projectRow = await db.get('SELECT name FROM projects WHERE id = ?', [projectId]);
-  if (!projectRow) return false;
-  return perms.some(p => p.project_name === projectRow.name && p.project_role === '项目管理员');
-}
-
-const ACTION_LABELS: Record<string, string> = {
-  create_device: '新建设备',
-  edit_device: '编辑设备',
-  create_connector: '新建连接器',
-  edit_connector: '编辑连接器',
-};
+import { checkAndAdvancePhase } from '../shared/approval-helper.js';
 
 export function approvalRoutes(db: Database) {
   const router = express.Router();
 
-  // ── GET /api/approvals?status=pending ────────────────────────
-  // 项目管理员/admin 查看审批列表
-  router.get('/', authenticate, async (req: AuthRequest, res) => {
+  // ── GET /api/approvals/by-entity ──────────────────────────────────────────
+  // 返回某实体当前pending的approval_request及所有items（含当前用户的pending item）
+  router.get('/by-entity', authenticate, async (req: AuthRequest, res) => {
     try {
-      const status = (req.query.status as string) || 'pending';
-      const username = req.user!.username;
-      const role = req.user!.role;
+      const entityType = req.query.entity_type as string;
+      const entityId = parseInt(req.query.entity_id as string);
+      if (!entityType || isNaN(entityId)) {
+        return res.status(400).json({ error: '缺少 entity_type 或 entity_id' });
+      }
 
-      const statusFilter = (status === 'all') ? null : status;
+      const request = await db.get(
+        `SELECT ar.*, u.display_name as requester_display_name
+         FROM approval_requests ar
+         LEFT JOIN users u ON ar.requester_id = u.id
+         WHERE ar.entity_type = ? AND ar.entity_id = ? AND ar.status = 'pending'
+         ORDER BY ar.created_at DESC LIMIT 1`,
+        [entityType, entityId]
+      );
 
-      let rows: any[];
-      if (role === 'admin') {
-        const sql = statusFilter
-          ? `SELECT ar.*, p.name as project_name FROM approval_requests ar
-             JOIN projects p ON ar.project_id = p.id
-             WHERE ar.status = ? ORDER BY ar.created_at DESC`
-          : `SELECT ar.*, p.name as project_name FROM approval_requests ar
-             JOIN projects p ON ar.project_id = p.id
-             ORDER BY ar.created_at DESC`;
-        rows = await db.query(sql, statusFilter ? [statusFilter] : []);
-      } else {
-        const userRow = await db.get('SELECT permissions FROM users WHERE username = ?', [username]);
-        const perms: Array<{ project_name: string; project_role: string }> = userRow?.permissions
-          ? JSON.parse(userRow.permissions)
-          : [];
-        const managedProjects = perms
-          .filter(p => p.project_role === '项目管理员')
-          .map(p => p.project_name);
+      if (!request) return res.json({ request: null, items: [], my_pending_item: null });
 
-        if (!managedProjects.length) {
-          // 非项目管理员（如设备管理员）：只能看到自己提交的记录
-          const sql = statusFilter
-            ? `SELECT ar.*, p.name as project_name FROM approval_requests ar
-               JOIN projects p ON ar.project_id = p.id
-               WHERE ar.requester_id = ? AND ar.status = ?
-               ORDER BY ar.created_at DESC`
-            : `SELECT ar.*, p.name as project_name FROM approval_requests ar
-               JOIN projects p ON ar.project_id = p.id
-               WHERE ar.requester_id = ?
-               ORDER BY ar.created_at DESC`;
-          rows = await db.query(sql, statusFilter ? [req.user!.id, statusFilter] : [req.user!.id]);
-        } else {
-          // 项目管理员：看到自己管理的项目的记录 + 自己提交的记录
-          const placeholders = managedProjects.map(() => '?').join(',');
-          const sql = statusFilter
-            ? `SELECT ar.*, p.name as project_name FROM approval_requests ar
-               JOIN projects p ON ar.project_id = p.id
-               WHERE ar.status = ? AND (p.name IN (${placeholders}) OR ar.requester_id = ?)
-               ORDER BY ar.created_at DESC`
-            : `SELECT ar.*, p.name as project_name FROM approval_requests ar
-               JOIN projects p ON ar.project_id = p.id
-               WHERE (p.name IN (${placeholders}) OR ar.requester_id = ?)
-               ORDER BY ar.created_at DESC`;
-          rows = await db.query(sql, statusFilter
-            ? [statusFilter, ...managedProjects, req.user!.id]
-            : [...managedProjects, req.user!.id]);
+      const items = await db.query(
+        `SELECT * FROM approval_items WHERE approval_request_id = ? ORDER BY item_type DESC, created_at ASC`,
+        [request.id]
+      );
+
+      const myPendingItem = items.find(
+        (i: any) => i.recipient_username === req.user!.username && i.status === 'pending'
+      ) || null;
+
+      res.json({ request, items, my_pending_item: myPendingItem });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || '获取审批信息失败' });
+    }
+  });
+
+  // ── GET /api/approvals/history ─────────────────────────────────────────
+  // 返回某实体所有审批请求（含已完成/已拒绝）及其items
+  router.get('/history', authenticate, async (req: AuthRequest, res) => {
+    try {
+      const entityType = req.query.entity_type as string;
+      const entityId = parseInt(req.query.entity_id as string);
+      if (!entityType || isNaN(entityId)) {
+        return res.status(400).json({ error: '缺少 entity_type 或 entity_id' });
+      }
+
+      const requests = await db.query(
+        `SELECT ar.*, u.display_name as requester_display_name
+         FROM approval_requests ar
+         LEFT JOIN users u ON ar.requester_id = u.id
+         WHERE ar.entity_type = ? AND ar.entity_id = ?
+         ORDER BY ar.created_at DESC`,
+        [entityType, entityId]
+      );
+
+      const result = await Promise.all(requests.map(async (r: any) => {
+        const items = await db.query(
+          `SELECT ai.*, u.display_name as recipient_display_name
+           FROM approval_items ai
+           LEFT JOIN users u ON ai.recipient_username = u.username
+           WHERE ai.approval_request_id = ?
+           ORDER BY ai.item_type DESC, ai.created_at ASC`,
+          [r.id]
+        );
+        return { ...r, items };
+      }));
+
+      res.json({ requests: result });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || '获取审批历史失败' });
+    }
+  });
+
+  // ── POST /api/approvals/:id/complete ─────────────────────────────────────
+  // 完善请求：设备负责人填写缺失字段
+  router.post('/:id/complete', authenticate, async (req: AuthRequest, res) => {
+    try {
+      const requestId = parseInt(req.params.id);
+      const { updated_fields } = req.body;
+      if (!updated_fields || typeof updated_fields !== 'object') {
+        return res.status(400).json({ error: '缺少 updated_fields' });
+      }
+
+      const approvalReq = await db.get('SELECT * FROM approval_requests WHERE id = ?', [requestId]);
+      if (!approvalReq) return res.status(404).json({ error: '审批请求不存在' });
+      if (approvalReq.status !== 'pending') return res.status(400).json({ error: '该审批请求已结束' });
+      if (approvalReq.current_phase !== 'completion') {
+        return res.status(400).json({ error: '当前不在完善阶段' });
+      }
+
+      const myItem = await db.get(
+        `SELECT * FROM approval_items WHERE approval_request_id = ? AND recipient_username = ? AND item_type = 'completion' AND status = 'pending'`,
+        [requestId, req.user!.username]
+      );
+      if (!myItem) return res.status(403).json({ error: '您没有待完善的请求' });
+
+      // 将updated_fields写入对应实体
+      const entityTable = approvalReq.entity_type === 'device' ? 'devices'
+        : approvalReq.entity_type === 'signal' ? 'signals'
+        : approvalReq.entity_type === 'connector' ? 'connectors' : null;
+
+      if (entityTable && approvalReq.entity_id && Object.keys(updated_fields).length > 0) {
+        const setClauses = Object.keys(updated_fields).map((k: string) => `"${k}" = ?`).join(', ');
+        await db.run(
+          `UPDATE ${entityTable} SET ${setClauses}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+          [...Object.values(updated_fields), approvalReq.entity_id]
+        );
+      }
+
+      // 标记item为done
+      await db.run(
+        `UPDATE approval_items SET status = 'done', responded_at = CURRENT_TIMESTAMP WHERE id = ?`,
+        [myItem.id]
+      );
+
+      // 写change_log
+      await db.run(
+        `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, new_values, reason, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'approved')`,
+        [approvalReq.entity_type + 's', approvalReq.entity_id, approvalReq.entity_id,
+         approvalReq.entity_type + 's', req.user!.id, JSON.stringify(updated_fields),
+         `${req.user!.username} 完善字段`]
+      );
+
+      await checkAndAdvancePhase(db, requestId);
+
+      res.json({ success: true, message: '完善提交成功' });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || '完善提交失败' });
+    }
+  });
+
+  // ── POST /api/approvals/:id/approve ──────────────────────────────────────
+  // 审批通过（可选：携带edited_payload表示编辑并通过）
+  router.post('/:id/approve', authenticate, async (req: AuthRequest, res) => {
+    try {
+      const requestId = parseInt(req.params.id);
+      const { edited_payload } = req.body;
+
+      const approvalReq = await db.get('SELECT * FROM approval_requests WHERE id = ?', [requestId]);
+      if (!approvalReq) return res.status(404).json({ error: '审批请求不存在' });
+      if (approvalReq.status !== 'pending') return res.status(400).json({ error: '该审批请求已结束' });
+      if (approvalReq.current_phase !== 'approval') {
+        return res.status(400).json({ error: '当前不在审批阶段，请等待完善阶段完成' });
+      }
+
+      const myItem = await db.get(
+        `SELECT * FROM approval_items WHERE approval_request_id = ? AND recipient_username = ? AND item_type = 'approval' AND status = 'pending'`,
+        [requestId, req.user!.username]
+      );
+      if (!myItem) return res.status(403).json({ error: '您没有待审批的请求' });
+
+      // 若携带编辑内容，先更新实体
+      if (edited_payload && typeof edited_payload === 'object' && Object.keys(edited_payload).length > 0) {
+        const entityTable = approvalReq.entity_type === 'device' ? 'devices'
+          : approvalReq.entity_type === 'signal' ? 'signals'
+          : approvalReq.entity_type === 'connector' ? 'connectors'
+          : approvalReq.entity_type === 'pin' ? 'pins' : null;
+
+        if (entityTable && approvalReq.entity_id) {
+          const setClauses = Object.keys(edited_payload).map((k: string) => `"${k}" = ?`).join(', ');
+          await db.run(
+            `UPDATE ${entityTable} SET ${setClauses}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+            [...Object.values(edited_payload), approvalReq.entity_id]
+          );
         }
       }
-      res.json(rows);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message || '获取审批列表失败' });
-    }
-  });
-
-  // ── GET /api/approvals/my ────────────────────────────────────
-  // 申请人查看自己提交的审批记录
-  router.get('/my', authenticate, async (req: AuthRequest, res) => {
-    try {
-      const rows = await db.query(
-        `SELECT ar.*, p.name as project_name FROM approval_requests ar
-         JOIN projects p ON ar.project_id = p.id
-         WHERE ar.requester_id = ? ORDER BY ar.created_at DESC`,
-        [req.user!.id]
-      );
-      res.json(rows);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message || '获取申请记录失败' });
-    }
-  });
-
-  // ── PUT /api/approvals/:id/approve ──────────────────────────
-  router.put('/:id/approve', authenticate, async (req: AuthRequest, res) => {
-    try {
-      const ar = await db.get('SELECT * FROM approval_requests WHERE id = ?', [req.params.id]);
-      if (!ar) return res.status(404).json({ error: '审批请求不存在' });
-      if (ar.status !== 'pending') return res.status(400).json({ error: '该请求已处理' });
-
-      if (req.user!.role !== 'admin' && !await isProjectAdmin(db, req.user!.username, ar.project_id)) {
-        return res.status(403).json({ error: '无审批权限' });
-      }
-
-      const payload = JSON.parse(ar.payload);
-
-      if (ar.action_type === 'create_device') {
-        // 设备已在 POST 时创建（status=Pending），审批通过只需更新状态为 normal
-        await db.run(`UPDATE devices SET status = 'normal' WHERE id = ?`, [ar.entity_id]);
-        await db.run(
-          `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, new_values, reason, status)
-           VALUES ('devices', ?, ?, 'devices', ?, ?, '(审批通过) 新增设备', 'approved')`,
-          [ar.entity_id, ar.entity_id, ar.requester_id, ar.payload]
-        );
-      } else if (ar.action_type === 'edit_device') {
-        const oldDevice = await db.get('SELECT * FROM devices WHERE id = ?', [ar.entity_id]);
-        const setClauses = Object.keys(payload).map(k => `"${k}" = ?`).join(', ');
-        await db.run(
-          `UPDATE devices SET ${setClauses}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-          [...Object.values(payload), ar.entity_id]
-        );
-        await db.run(
-          `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, old_values, new_values, reason, status)
-           VALUES ('devices', ?, ?, 'devices', ?, ?, ?, '(审批通过) 修改设备', 'approved')`,
-          [ar.entity_id, ar.entity_id, ar.requester_id, JSON.stringify(oldDevice), ar.payload]
-        );
-      } else if (ar.action_type === 'create_connector') {
-        const cols = Object.keys(payload).map(k => `"${k}"`).join(', ');
-        const placeholders = Object.keys(payload).map(() => '?').join(', ');
-        const connResult = await db.run(
-          `INSERT INTO connectors (device_id, ${cols}) VALUES (?, ${placeholders})`,
-          [ar.device_id, ...Object.values(payload)]
-        );
-        await db.run(
-          `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, new_values, reason, status)
-           VALUES ('connectors', ?, ?, 'connectors', ?, ?, '(审批通过) 新增连接器', 'approved')`,
-          [connResult.lastID, connResult.lastID, ar.requester_id, ar.payload]
-        );
-      } else if (ar.action_type === 'edit_connector') {
-        const oldConnector = await db.get('SELECT * FROM connectors WHERE id = ?', [ar.entity_id]);
-        const setClauses = Object.keys(payload).map(k => `"${k}" = ?`).join(', ');
-        await db.run(
-          `UPDATE connectors SET ${setClauses}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-          [...Object.values(payload), ar.entity_id]
-        );
-        await db.run(
-          `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, old_values, new_values, reason, status)
-           VALUES ('connectors', ?, ?, 'connectors', ?, ?, ?, '(审批通过) 修改连接器', 'approved')`,
-          [ar.entity_id, ar.entity_id, ar.requester_id, JSON.stringify(oldConnector), ar.payload]
-        );
-      }
 
       await db.run(
-        `UPDATE approval_requests SET status='approved', reviewed_by_username=?, reviewed_at=CURRENT_TIMESTAMP WHERE id=?`,
-        [req.user!.username, ar.id]
+        `UPDATE approval_items SET status = 'done', responded_at = CURRENT_TIMESTAMP, edited_payload = ? WHERE id = ?`,
+        [edited_payload ? JSON.stringify(edited_payload) : null, myItem.id]
       );
+
+      // 记录本次审批通过的change_log
+      const actionLabels: Record<string, string> = {
+        create_device: '新建设备', edit_device: '修改设备', delete_device: '删除设备',
+        create_connector: '新建连接器', edit_connector: '修改连接器', delete_connector: '删除连接器',
+        create_pin: '新建针孔', edit_pin: '修改针孔', delete_pin: '删除针孔',
+        create_signal: '新建信号', edit_signal: '修改信号', delete_signal: '删除信号',
+      };
+      const label = actionLabels[approvalReq.action_type] || approvalReq.action_type;
+      const hasEdits = edited_payload && typeof edited_payload === 'object' && Object.keys(edited_payload).length > 0;
+      const reasonText = hasEdits
+        ? `${req.user!.username} 编辑并审批通过「${label}」`
+        : `${req.user!.username} 审批通过「${label}」`;
       await db.run(
-        `INSERT INTO notifications (recipient_username, type, title, message) VALUES (?,?,?,?)`,
-        [
-          ar.requester_username,
-          'approval_approved',
-          '审批通过',
-          `您提交的"${ACTION_LABELS[ar.action_type] || ar.action_type}"请求已由 ${req.user!.username} 审批通过`,
-        ]
+        `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, new_values, reason, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'approved')`,
+        [approvalReq.entity_type + 's', approvalReq.entity_id, approvalReq.entity_id,
+         approvalReq.entity_type + 's', req.user!.id,
+         hasEdits ? JSON.stringify(edited_payload) : null, reasonText]
       );
-      res.json({ success: true });
+
+      await checkAndAdvancePhase(db, requestId);
+
+      res.json({ success: true, message: '审批通过' });
     } catch (error: any) {
       res.status(500).json({ error: error.message || '审批失败' });
     }
   });
 
-  // ── PUT /api/approvals/:id/reject ───────────────────────────
-  router.put('/:id/reject', authenticate, async (req: AuthRequest, res) => {
+  // ── POST /api/approvals/:id/reject ───────────────────────────────────────
+  // 拒绝审批（必须填写理由）
+  router.post('/:id/reject', authenticate, async (req: AuthRequest, res) => {
     try {
-      const { reason = '' } = req.body;
-      const ar = await db.get('SELECT * FROM approval_requests WHERE id = ?', [req.params.id]);
-      if (!ar) return res.status(404).json({ error: '审批请求不存在' });
-      if (ar.status !== 'pending') return res.status(400).json({ error: '该请求已处理' });
-
-      if (req.user!.role !== 'admin' && !await isProjectAdmin(db, req.user!.username, ar.project_id)) {
-        return res.status(403).json({ error: '无审批权限' });
+      const requestId = parseInt(req.params.id);
+      const { reason } = req.body;
+      if (!reason || !reason.trim()) {
+        return res.status(400).json({ error: '拒绝理由不能为空' });
       }
 
-      await db.run(
-        `UPDATE approval_requests SET status='rejected', rejection_reason=?, reviewed_by_username=?, reviewed_at=CURRENT_TIMESTAMP WHERE id=?`,
-        [reason, req.user!.username, ar.id]
-      );
-
-      // 如果是 create_device，将设备状态恢复为 Draft
-      if (ar.action_type === 'create_device' && ar.entity_id) {
-        await db.run(`UPDATE devices SET status = 'Draft' WHERE id = ?`, [ar.entity_id]);
+      const approvalReq = await db.get('SELECT * FROM approval_requests WHERE id = ?', [requestId]);
+      if (!approvalReq) return res.status(404).json({ error: '审批请求不存在' });
+      if (approvalReq.status !== 'pending') return res.status(400).json({ error: '该审批请求已结束' });
+      if (approvalReq.current_phase !== 'approval') {
+        return res.status(400).json({ error: '当前不在审批阶段' });
       }
 
-      await db.run(
-        `INSERT INTO notifications (recipient_username, type, title, message) VALUES (?,?,?,?)`,
-        [
-          ar.requester_username,
-          'approval_rejected',
-          '审批被拒绝',
-          `您提交的"${ACTION_LABELS[ar.action_type] || ar.action_type}"请求被拒绝。原因：${reason || '（未填写原因）'}`,
-        ]
+      const myItem = await db.get(
+        `SELECT * FROM approval_items WHERE approval_request_id = ? AND recipient_username = ? AND item_type = 'approval' AND status = 'pending'`,
+        [requestId, req.user!.username]
       );
-      res.json({ success: true });
+      if (!myItem) return res.status(403).json({ error: '您没有待审批的请求' });
+
+      // 查询尚未审批的人（用于change_log记录）
+      const pendingOthers = await db.query(
+        `SELECT recipient_username FROM approval_items WHERE approval_request_id = ? AND status = 'pending' AND id != ?`,
+        [requestId, myItem.id]
+      );
+      const pendingNames = pendingOthers.map((i: any) => i.recipient_username);
+
+      await db.run(
+        `UPDATE approval_items SET status = 'done', rejection_reason = ?, responded_at = CURRENT_TIMESTAMP WHERE id = ?`,
+        [reason.trim(), myItem.id]
+      );
+      await db.run(
+        `UPDATE approval_items SET status = 'cancelled' WHERE approval_request_id = ? AND status = 'pending'`,
+        [requestId]
+      );
+      await db.run(
+        `UPDATE approval_requests SET status = 'rejected', rejected_by_username = ?, rejected_at = CURRENT_TIMESTAMP WHERE id = ?`,
+        [req.user!.username, requestId]
+      );
+
+      // 将实体状态回退
+      const entityTable = approvalReq.entity_type === 'device' ? 'devices'
+        : approvalReq.entity_type === 'connector' ? 'connectors'
+        : approvalReq.entity_type === 'pin' ? 'pins'
+        : approvalReq.entity_type === 'signal' ? 'signals' : null;
+
+      if (entityTable && approvalReq.entity_id) {
+        if (approvalReq.action_type.startsWith('delete_')) {
+          // 删除操作被拒绝：恢复为正常状态
+          const restoreStatus = approvalReq.entity_type === 'signal' ? 'Active' : 'normal';
+          await db.run(`UPDATE ${entityTable} SET status = ? WHERE id = ?`, [restoreStatus, approvalReq.entity_id]);
+        } else {
+          await db.run(`UPDATE ${entityTable} SET status = 'Draft' WHERE id = ?`, [approvalReq.entity_id]);
+        }
+      }
+
+      // 写change_log
+      await db.run(
+        `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, reason, status)
+         VALUES (?, ?, ?, ?, ?, ?, 'rejected')`,
+        [approvalReq.entity_type + 's', approvalReq.entity_id, approvalReq.entity_id,
+         approvalReq.entity_type + 's', req.user!.id,
+         `审批被拒绝 by ${req.user!.username}。理由：${reason.trim()}。未审批人：${pendingNames.join('、') || '无'}`]
+      );
+
+      // 向请求人发通知
+      const actionLabels: Record<string, string> = {
+        create_device: '新建设备', edit_device: '修改设备', delete_device: '删除设备',
+        create_connector: '新建连接器', edit_connector: '修改连接器', delete_connector: '删除连接器',
+        create_pin: '新建针孔', edit_pin: '修改针孔', delete_pin: '删除针孔',
+        create_signal: '新建信号', edit_signal: '修改信号', delete_signal: '删除信号',
+        request_device_management: '申请设备管理',
+      };
+      const label = actionLabels[approvalReq.action_type] || approvalReq.action_type;
+      await db.run(
+        `INSERT INTO notifications (recipient_username, type, title, message) VALUES (?, 'approval_rejected', ?, ?)`,
+        [approvalReq.requester_username, `审批被拒绝：${label}`,
+         `您提交的「${label}」请求被 ${req.user!.username} 拒绝。理由：${reason.trim()}`]
+      );
+
+      res.json({ success: true, message: '已拒绝该审批请求' });
     } catch (error: any) {
-      res.status(500).json({ error: error.message || '拒绝失败' });
+      res.status(500).json({ error: error.message || '拒绝审批失败' });
     }
   });
 

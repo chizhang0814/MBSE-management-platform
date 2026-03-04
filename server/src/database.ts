@@ -133,15 +133,16 @@ export class Database {
           CREATE TABLE IF NOT EXISTS connectors (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             device_id INTEGER NOT NULL,
-            连接器号 TEXT NOT NULL,
-            设备端元器件编号 TEXT, 设备端元器件名称及类型 TEXT,
-            设备端元器件件号类型及件号 TEXT, 设备端元器件供应商名称 TEXT,
-            匹配的线束端元器件件号 TEXT, 匹配的线束线型 TEXT,
-            设备端元器件匹配的元器件是否随设备交付 TEXT, 备注 TEXT,
+            "设备端元器件编号" TEXT NOT NULL,
+            "设备端元器件名称及类型" TEXT,
+            "设备端元器件件号类型及件号" TEXT, "设备端元器件供应商名称" TEXT,
+            "匹配的线束端元器件件号" TEXT, "匹配的线束线型" TEXT,
+            "设备端元器件匹配的元器件是否随设备交付" TEXT, 备注 TEXT,
             status TEXT DEFAULT 'normal',
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(device_id, 连接器号),
+            import_conflicts TEXT, validation_errors TEXT, "导入来源" TEXT,
+            UNIQUE(device_id, "设备端元器件编号"),
             FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
           )
         `);
@@ -214,7 +215,7 @@ export class Database {
           CREATE TABLE IF NOT EXISTS signals (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             project_id INTEGER NOT NULL,
-            unique_id TEXT, 连接类型 TEXT, 信号方向 TEXT, 信号ATA TEXT,
+            unique_id TEXT, 连接类型 TEXT, 信号ATA TEXT,
             信号架次有效性 TEXT,
             推荐导线线规 TEXT, 推荐导线线型 TEXT,
             独立电源代码 TEXT, 敷设代码 TEXT, 电磁兼容代码 TEXT,
@@ -557,20 +558,21 @@ export class Database {
       console.log('Migration: uploaded_files color_data:', e.message);
     }
 
-    // 将 信号方向 从 signal_endpoints 迁移至 signals 表
+    // 信号方向已下沉至 signal_endpoints 的 input/output 列，从 signals 表移除
     try {
       const sigColsDir = await this.query('PRAGMA table_info(signals)');
-      if (!sigColsDir.some((c: any) => c.name === '信号方向')) {
-        await this.run('ALTER TABLE signals ADD COLUMN 信号方向 TEXT');
-        console.log('Database migration: added 信号方向 column to signals table');
+      if (sigColsDir.some((c: any) => c.name === '信号方向')) {
+        await this.run('ALTER TABLE signals DROP COLUMN 信号方向');
+        console.log('Database migration: dropped 信号方向 column from signals table');
       }
+      // 同时确保 signal_endpoints 也没有残留的 信号方向 列
       const seColsDir = await this.query('PRAGMA table_info(signal_endpoints)');
       if (seColsDir.some((c: any) => c.name === '信号方向')) {
         await this.run('ALTER TABLE signal_endpoints DROP COLUMN 信号方向');
         console.log('Database migration: dropped 信号方向 column from signal_endpoints table');
       }
     } catch (e: any) {
-      console.log('Migration: 信号方向 signal-level:', e.message);
+      console.log('Migration: drop 信号方向:', e.message);
     }
 
     // 为 users 表添加 display_name 和 department 列
@@ -637,6 +639,17 @@ export class Database {
       console.log('Migration: notifications table:', e.message);
     }
 
+    // 为 notifications 添加 reference_id 列（关联 permission_requests.id 等）
+    try {
+      const notifCols = await this.query('PRAGMA table_info(notifications)');
+      if (!notifCols.some((c: any) => c.name === 'reference_id')) {
+        await this.run('ALTER TABLE notifications ADD COLUMN reference_id INTEGER');
+        console.log('Database migration: added reference_id column to notifications');
+      }
+    } catch (e: any) {
+      console.log('Migration: notifications reference_id:', e.message);
+    }
+
     // 为 signal_endpoints 添加 confirmed 列（端点确认状态）
     try {
       const seColsConf = await this.query('PRAGMA table_info(signal_endpoints)');
@@ -646,6 +659,80 @@ export class Database {
       }
     } catch (e: any) {
       console.log('Migration: signal_endpoints confirmed:', e.message);
+    }
+
+    // 为 signal_endpoints 添加 input / output / 备注 列
+    try {
+      const seCols2 = await this.query('PRAGMA table_info(signal_endpoints)');
+      const seColNames2 = seCols2.map((c: any) => c.name);
+      if (!seColNames2.includes('input')) {
+        await this.run('ALTER TABLE signal_endpoints ADD COLUMN input INTEGER NOT NULL DEFAULT 0');
+        console.log('Database migration: added input column to signal_endpoints');
+      }
+      if (!seColNames2.includes('output')) {
+        await this.run('ALTER TABLE signal_endpoints ADD COLUMN output INTEGER NOT NULL DEFAULT 0');
+        console.log('Database migration: added output column to signal_endpoints');
+      }
+      if (!seColNames2.includes('备注')) {
+        await this.run('ALTER TABLE signal_endpoints ADD COLUMN 备注 TEXT');
+        console.log('Database migration: added 备注 column to signal_endpoints');
+      }
+    } catch (e: any) {
+      console.log('Migration: signal_endpoints input/output/备注:', e.message);
+    }
+
+    // 为 signal_endpoints 添加 device_id 列 + 使 pin_id 可空（支持不完整端点）
+    try {
+      const seColsDev = await this.query('PRAGMA table_info(signal_endpoints)');
+      const hasDeviceId = seColsDev.some((c: any) => c.name === 'device_id');
+      const pinColInfo = seColsDev.find((c: any) => c.name === 'pin_id');
+      const pinIsNotNull = pinColInfo && pinColInfo.notnull === 1;
+
+      console.log(`Migration check: hasDeviceId=${hasDeviceId}, pinIsNotNull=${pinIsNotNull}, pinColInfo=${JSON.stringify(pinColInfo)}`);
+      if (!hasDeviceId || pinIsNotNull) {
+        // 需要重建表：添加 device_id，pin_id 改为可空
+        await this.run('DROP TABLE IF EXISTS signal_endpoints_new');
+        await this.run(`CREATE TABLE signal_endpoints_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          signal_id INTEGER NOT NULL,
+          device_id INTEGER,
+          pin_id INTEGER,
+          endpoint_index INTEGER NOT NULL DEFAULT 0,
+          "端接尺寸" TEXT, "信号名称" TEXT, "信号定义" TEXT,
+          confirmed INTEGER NOT NULL DEFAULT 1,
+          input INTEGER NOT NULL DEFAULT 0,
+          output INTEGER NOT NULL DEFAULT 0,
+          "备注" TEXT,
+          FOREIGN KEY (signal_id) REFERENCES signals(id) ON DELETE CASCADE,
+          FOREIGN KEY (device_id) REFERENCES devices(id),
+          FOREIGN KEY (pin_id) REFERENCES pins(id) ON DELETE RESTRICT
+        )`);
+        // 迁移数据
+        const oldCols = seColsDev.map((c: any) => c.name);
+        const commonCols = ['id','signal_id','pin_id','endpoint_index','端接尺寸','信号名称','信号定义']
+          .filter(c => oldCols.includes(c));
+        if (oldCols.includes('confirmed')) commonCols.push('confirmed');
+        if (oldCols.includes('input')) commonCols.push('input');
+        if (oldCols.includes('output')) commonCols.push('output');
+        if (oldCols.includes('备注')) commonCols.push('备注');
+        if (oldCols.includes('device_id')) commonCols.push('device_id');
+        const colList = commonCols.map(c => `"${c}"`).join(', ');
+        await this.run(`INSERT INTO signal_endpoints_new (${colList}) SELECT ${colList} FROM signal_endpoints`);
+        await this.run('DROP TABLE signal_endpoints');
+        await this.run('ALTER TABLE signal_endpoints_new RENAME TO signal_endpoints');
+        // 回填 device_id（从 pin → connector → device）
+        await this.run(`
+          UPDATE signal_endpoints SET device_id = (
+            SELECT d.id FROM pins p
+            JOIN connectors c ON p.connector_id = c.id
+            JOIN devices d ON c.device_id = d.id
+            WHERE p.id = signal_endpoints.pin_id
+          ) WHERE pin_id IS NOT NULL AND device_id IS NULL
+        `);
+        console.log('Database migration: rebuilt signal_endpoints with nullable pin_id and device_id');
+      }
+    } catch (e: any) {
+      console.log('Migration: signal_endpoints rebuild:', e.message);
     }
 
     // 为 signals 添加 status 列（Draft / Pending / Active）
@@ -852,7 +939,56 @@ export class Database {
       console.log('Migration: connectors column rename:', e.message);
     }
 
-    // 新增 approval_requests 表（设备/连接器创建编辑审批流程）
+    // 迁移：connectors 表重建——删除 连接器号，以 设备端元器件编号 为唯一标识
+    try {
+      const connColsRebuild = await this.query('PRAGMA table_info(connectors)');
+      const hasOldConnCol = connColsRebuild.some((c: any) => c.name === '连接器号');
+      if (hasOldConnCol) {
+        await this.run('PRAGMA foreign_keys = OFF');
+        await this.run(`
+          CREATE TABLE connectors_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            device_id INTEGER NOT NULL,
+            "设备端元器件编号" TEXT NOT NULL,
+            "设备端元器件名称及类型" TEXT,
+            "设备端元器件件号类型及件号" TEXT, "设备端元器件供应商名称" TEXT,
+            "匹配的线束端元器件件号" TEXT, "匹配的线束线型" TEXT,
+            "设备端元器件匹配的元器件是否随设备交付" TEXT, 备注 TEXT,
+            status TEXT DEFAULT 'normal',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            import_conflicts TEXT, validation_errors TEXT, "导入来源" TEXT,
+            UNIQUE(device_id, "设备端元器件编号"),
+            FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
+          )
+        `);
+        // 仅迁移 设备端元器件编号 不为空的记录（空值属无效数据，直接丢弃）
+        const migrateResult = await this.run(`
+          INSERT OR IGNORE INTO connectors_new
+            (id, device_id, "设备端元器件编号", "设备端元器件名称及类型",
+             "设备端元器件件号类型及件号", "设备端元器件供应商名称",
+             "匹配的线束端元器件件号", "匹配的线束线型",
+             "设备端元器件匹配的元器件是否随设备交付", 备注,
+             status, created_at, updated_at, import_conflicts, validation_errors, "导入来源")
+          SELECT id, device_id, "设备端元器件编号", "设备端元器件名称及类型",
+                 "设备端元器件件号类型及件号", "设备端元器件供应商名称",
+                 "匹配的线束端元器件件号", "匹配的线束线型",
+                 "设备端元器件匹配的元器件是否随设备交付", 备注,
+                 status, created_at, updated_at, import_conflicts, validation_errors, "导入来源"
+          FROM connectors
+          WHERE "设备端元器件编号" IS NOT NULL AND TRIM("设备端元器件编号") != ''
+        `);
+        await this.run('DROP TABLE connectors');
+        await this.run('ALTER TABLE connectors_new RENAME TO connectors');
+        await this.run('PRAGMA foreign_keys = ON');
+        console.log(`Database migration: connectors table rebuilt (removed 连接器号, migrated ${migrateResult.changes} rows)`);
+      }
+    } catch (e: any) {
+      console.log('Migration: connectors rebuild:', e.message);
+      try { await this.run('PRAGMA foreign_keys = ON'); } catch {}
+    }
+
+    // 新增 approval_requests 表（多人审批流程）
     await this.run(`
       CREATE TABLE IF NOT EXISTS approval_requests (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -863,9 +999,13 @@ export class Database {
         entity_type TEXT NOT NULL,
         entity_id INTEGER,
         device_id INTEGER,
+        old_payload TEXT,
         payload TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'pending',
+        current_phase TEXT NOT NULL DEFAULT 'approval',
         rejection_reason TEXT,
+        rejected_by_username TEXT,
+        rejected_at DATETIME,
         reviewed_by_username TEXT,
         reviewed_at DATETIME,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -875,6 +1015,24 @@ export class Database {
     `);
     await this.run(`CREATE INDEX IF NOT EXISTS idx_approval_project ON approval_requests(project_id)`);
     await this.run(`CREATE INDEX IF NOT EXISTS idx_approval_status  ON approval_requests(status)`);
+
+    // 新增 approval_items 表（每个审批请求中各接收人的独立状态）
+    await this.run(`
+      CREATE TABLE IF NOT EXISTS approval_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        approval_request_id INTEGER NOT NULL,
+        recipient_username TEXT NOT NULL,
+        item_type TEXT NOT NULL DEFAULT 'approval',
+        status TEXT NOT NULL DEFAULT 'pending',
+        edited_payload TEXT,
+        rejection_reason TEXT,
+        responded_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (approval_request_id) REFERENCES approval_requests(id) ON DELETE CASCADE
+      )
+    `);
+    await this.run(`CREATE INDEX IF NOT EXISTS idx_approval_items_req ON approval_items(approval_request_id)`);
+    await this.run(`CREATE INDEX IF NOT EXISTS idx_approval_items_recipient ON approval_items(recipient_username)`);
 
     // 新增 employees 表（人员管理：EID ↔ 姓名 映射）
     await this.run(`
@@ -922,6 +1080,55 @@ export class Database {
       }
     } catch (e: any) {
       console.log('Migration: section_connectors simplify:', e.message);
+    }
+
+    // 为 signals 添加 import_conflicts 列（记录导入合并信息）
+    try {
+      const sigColsIc = await this.query('PRAGMA table_info(signals)');
+      if (!sigColsIc.some((c: any) => c.name === 'import_conflicts')) {
+        await this.run(`ALTER TABLE signals ADD COLUMN import_conflicts TEXT`);
+        console.log('Database migration: added import_conflicts column to signals');
+      }
+    } catch (e: any) {
+      console.log('Migration: signals import_conflicts:', e.message);
+    }
+
+    // ── 迁移：升级 approval_requests 表（添加新列）────────────────────────────
+    try {
+      const arCols = await this.query('PRAGMA table_info(approval_requests)');
+      const arColNames = arCols.map((c: any) => c.name);
+      if (!arColNames.includes('current_phase')) {
+        await this.run(`ALTER TABLE approval_requests ADD COLUMN old_payload TEXT`);
+        await this.run(`ALTER TABLE approval_requests ADD COLUMN current_phase TEXT NOT NULL DEFAULT 'approval'`);
+        await this.run(`ALTER TABLE approval_requests ADD COLUMN rejected_by_username TEXT`);
+        await this.run(`ALTER TABLE approval_requests ADD COLUMN rejected_at DATETIME`);
+        console.log('Database migration: upgraded approval_requests table');
+      }
+    } catch (e: any) {
+      console.log('Migration: approval_requests upgrade:', e.message);
+    }
+
+    // ── 一次性迁移已完成，以下代码已移除 ──
+    // 旧的"取消pending审批请求"和"重置Pending实体为Draft"的迁移代码
+    // 已在2026-03-03完成，不再需要每次重启都执行
+
+    // ── 迁移：将所有用户permissions中的"项目管理员"改为"总体人员" ────────────────
+    try {
+      const allUsers = await this.query(`SELECT id, permissions FROM users WHERE permissions IS NOT NULL AND permissions != '[]'`);
+      for (const u of allUsers) {
+        try {
+          const perms = JSON.parse(u.permissions || '[]');
+          const updated = perms.map((p: any) =>
+            p.project_role === '项目管理员' ? { ...p, project_role: '总体人员' } : p
+          );
+          if (JSON.stringify(updated) !== JSON.stringify(perms)) {
+            await this.run('UPDATE users SET permissions = ? WHERE id = ?', [JSON.stringify(updated), u.id]);
+          }
+        } catch {}
+      }
+      console.log('Database migration: renamed 项目管理员 to 总体人员 in permissions');
+    } catch (e: any) {
+      console.log('Migration: rename role:', e.message);
     }
 
     // 初始化默认用户（不再创建示例数据）

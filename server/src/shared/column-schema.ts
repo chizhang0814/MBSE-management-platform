@@ -73,7 +73,6 @@ export const deviceComponentColumns: ColumnDef[] = [
   { originalName: '针孔号',                                   sysmlAttr: 'pinNumber',            required: false, unique: false },
   { originalName: '端接尺寸',                                 sysmlAttr: 'terminalSize',         required: false, unique: false },
   { originalName: '屏蔽类型',                                 sysmlAttr: 'shieldType',           required: false, unique: false },
-  { originalName: '信号方向',                                 sysmlAttr: 'signalDirection',      required: false, unique: false },
   { originalName: '设备端元器件匹配的元器件是否随设备交付',   sysmlAttr: 'deliveredWithDevice',  required: false, unique: false },
   { originalName: '备注',                                     sysmlAttr: 'remarks',              required: false, unique: false },
 ];
@@ -179,7 +178,6 @@ export const DEVICES_EXCEL_TO_DB: Record<string, string> = {
 /** connectors表：Excel列名 → DB列名 映射 */
 export const CONNECTORS_EXCEL_TO_DB: Record<string, string> = {
   '设备编号': '设备编号', // 用于查找 device_id，不插入connectors
-  '连接器号': '连接器号', '端元器件号（连接器号）': '连接器号', '端元器件号': '连接器号',
   '设备端元器件编号': '设备端元器件编号',
   '元器件名称及类型': '设备端元器件名称及类型', '设备端元器件名称及类型': '设备端元器件名称及类型',
   '元器件件号及类型': '设备端元器件件号类型及件号', '设备端元器件件号类型及件号': '设备端元器件件号类型及件号',
@@ -201,7 +199,6 @@ export const PINS_EXCEL_TO_DB: Record<string, string> = {
 export const SIGNALS_EXCEL_TO_DB: Record<string, string> = {
   'Unique ID': 'unique_id', 'unique_id': 'unique_id', '信号编号': 'unique_id',
   '连接类型': '连接类型',
-  '信号方向': '信号方向', '信号方向（从）': '信号方向',
 
   '信号ATA': '信号ATA',
   '信号架次有效性': '信号架次有效性',
@@ -232,7 +229,7 @@ export const SIGNALS_EXCEL_TO_DB: Record<string, string> = {
 
 /** signals表的所有DB列名 */
 export const SIGNALS_DB_COLUMNS = [
-  'unique_id', '连接类型', '信号方向', '信号ATA',
+  'unique_id', '连接类型', '信号ATA',
   '信号架次有效性', '推荐导线线规', '推荐导线线型',
   '独立电源代码', '敷设代码', '电磁兼容代码', '余度代码',
   '功能代码', '接地代码', '极性', '额定电压', '额定电流',

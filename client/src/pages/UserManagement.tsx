@@ -533,7 +533,8 @@ export default function UserManagement() {
                                 className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
                               >
                                 <option value="">选择角色</option>
-                                <option value="项目管理员">项目管理员</option>
+                                <option value="总体人员">总体人员</option>
+                                <option value="EWIS管理员">EWIS管理员</option>
                                 <option value="设备管理员">设备管理员</option>
                                 <option value="一级包长">一级包长</option>
                                 <option value="二级包长">二级包长</option>
