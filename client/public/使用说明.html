@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EICD综合管理平台 · 用户使用说明</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+      font-size: 15px;
+      color: #1a1a2e;
+      background: #f5f7fa;
+      line-height: 1.8;
+    }
+    .page {
+      max-width: 900px;
+      margin: 40px auto;
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+      overflow: hidden;
+    }
+    .cover {
+      background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%);
+      color: white;
+      padding: 56px 48px 48px;
+    }
+    .cover h1 {
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: 2px;
+      margin-bottom: 10px;
+    }
+    .cover .subtitle {
+      font-size: 15px;
+      opacity: 0.85;
+      margin-bottom: 24px;
+    }
+    .cover .meta {
+      font-size: 13px;
+      opacity: 0.7;
+    }
+    .content {
+      padding: 40px 48px 56px;
+    }
+    h2 {
+      font-size: 19px;
+      font-weight: 700;
+      color: #1e3a8a;
+      margin: 40px 0 16px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid #e0e7ff;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    h2 .num {
+      background: #1e3a8a;
+      color: white;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      flex-shrink: 0;
+    }
+    h3 {
+      font-size: 15px;
+      font-weight: 700;
+      color: #374151;
+      margin: 20px 0 8px;
+    }
+    p { margin-bottom: 10px; color: #374151; }
+    ol, ul {
+      padding-left: 20px;
+      margin-bottom: 12px;
+      color: #374151;
+    }
+    ol li, ul li { margin-bottom: 5px; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 14px 0;
+      font-size: 14px;
+    }
+    th {
+      background: #eff6ff;
+      color: #1e3a8a;
+      font-weight: 600;
+      padding: 10px 14px;
+      text-align: left;
+      border: 1px solid #dbeafe;
+    }
+    td {
+      padding: 9px 14px;
+      border: 1px solid #e5e7eb;
+      color: #374151;
+    }
+    tr:nth-child(even) td { background: #f9fafb; }
+    .tip {
+      background: #eff6ff;
+      border-left: 4px solid #3b82f6;
+      padding: 12px 16px;
+      border-radius: 0 8px 8px 0;
+      margin: 12px 0;
+      font-size: 14px;
+      color: #1e40af;
+    }
+    .warn {
+      background: #fff7ed;
+      border-left: 4px solid #f97316;
+      padding: 12px 16px;
+      border-radius: 0 8px 8px 0;
+      margin: 12px 0;
+      font-size: 14px;
+      color: #9a3412;
+    }
+    .flow {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 20px 24px;
+      margin: 14px 0;
+      font-size: 14px;
+    }
+    .flow-step {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+    .flow-step:last-child { margin-bottom: 0; }
+    .flow-step .arrow {
+      width: 28px;
+      height: 28px;
+      background: #3b82f6;
+      color: white;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 700;
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+    .flow-step .arrow.orange { background: #f97316; }
+    .flow-step .arrow.green { background: #10b981; }
+    .flow-step .text strong { display: block; font-size: 14px; color: #111827; }
+    .flow-step .text span { font-size: 13px; color: #6b7280; }
+    .tag {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .tag-blue { background: #dbeafe; color: #1e40af; }
+    .tag-green { background: #d1fae5; color: #065f46; }
+    .tag-orange { background: #fed7aa; color: #9a3412; }
+    .tag-purple { background: #ede9fe; color: #5b21b6; }
+    .tag-yellow { background: #fef9c3; color: #a16207; }
+    .tag-gray { background: #f3f4f6; color: #374151; }
+    .faq-item {
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 14px 18px;
+      margin-bottom: 10px;
+    }
+    .faq-q { font-weight: 700; color: #1e3a8a; margin-bottom: 5px; }
+    .faq-a { color: #4b5563; font-size: 14px; }
+    .toc {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 20px 24px;
+      margin-bottom: 32px;
+    }
+    .toc h3 { margin-top: 0; margin-bottom: 12px; color: #1e3a8a; }
+    .toc ol { margin: 0; }
+    .toc li { font-size: 14px; color: #374151; margin-bottom: 4px; }
+    @media print {
+      body { background: white; }
+      .page { box-shadow: none; margin: 0; border-radius: 0; }
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+
+  <!-- 封面 -->
+  <div class="cover">
+    <h1>EICD 综合管理平台</h1>
+    <div class="subtitle">用户使用说明</div>
+    <div class="meta">版本：v1.0 &nbsp;·&nbsp; 日期：2026-03-04</div>
+  </div>
+
+  <div class="content">
+
+    <!-- 目录 -->
+    <div class="toc">
+      <h3>目录</h3>
+      <ol>
+        <li>注册与登录</li>
+        <li>个人设置</li>
+        <li>通知中心</li>
+        <li>项目数据</li>
+        <li>设备管理</li>
+        <li>信号管理</li>
+        <li>审批流程</li>
+        <li>常见问题</li>
+      </ol>
+    </div>
+
+    <!-- 一、注册与登录 -->
+    <h2><span class="num">1</span>注册与登录</h2>
+
+    <h3>注册</h3>
+    <ol>
+      <li>打开平台，点击登录页下方 <strong>「没有账号？注册新账号」</strong></li>
+      <li>填写<strong>用户名</strong>（3-20位字符，注册后不可更改）和<strong>密码</strong>（至少6位）</li>
+      <li>注册成功后自动跳转登录，此时账号无任何项目权限</li>
+    </ol>
+
+    <h3>登录</h3>
+    <p>输入用户名和密码，登录后右上角显示用户名及当前所有项目角色。</p>
+
+    <!-- 二、个人设置 -->
+    <h2><span class="num">2</span>个人设置</h2>
+    <p>点击右上角 <strong>齿轮图标</strong> 打开个人设置。</p>
+
+    <h3>修改姓名 / 部门</h3>
+    <p>在"基本信息"区域直接编辑，点击 <strong>保存</strong> 生效。</p>
+
+    <h3>修改密码</h3>
+    <p>填写当前密码和新密码（至少6位），点击 <strong>保存</strong>。</p>
+
+    <h3>申请项目权限</h3>
+    <ol>
+      <li>在"申请项目权限"选择<strong>项目</strong>和<strong>角色</strong>，点击 <strong>申请</strong></li>
+      <li>系统提示提交成功后，该项目的<strong>总体人员</strong>会收到通知进行审批</li>
+      <li>审批通过后，刷新页面权限即时生效</li>
+    </ol>
+    <div class="tip">同一时间只能有一个待审批申请，上一个处理完后才能再次申请。</div>
+
+    <table>
+      <thead>
+        <tr><th>角色</th><th>主要权限</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><span class="tag tag-purple">总体人员</span></td><td>审批变更、审批权限申请</td></tr>
+        <tr><td><span class="tag tag-blue">EWIS管理员</span></td><td>创建 / 编辑 / 删除信号</td></tr>
+        <tr><td><span class="tag tag-blue">设备管理员</span></td><td>创建 / 编辑 / 删除设备、连接器、针孔、信号</td></tr>
+        <tr><td><span class="tag tag-gray">一级包长</span></td><td>只读查看</td></tr>
+        <tr><td><span class="tag tag-gray">二级包长</span></td><td>只读查看</td></tr>
+        <tr><td><span class="tag tag-gray">只读</span></td><td>只读查看</td></tr>
+      </tbody>
+    </table>
+
+    <!-- 三、通知中心 -->
+    <h2><span class="num">3</span>通知中心</h2>
+    <p>点击右上角 <strong>铃铛图标</strong>，红点表示有未读消息。打开后所有通知自动标为已读。</p>
+
+    <table>
+      <thead>
+        <tr><th>通知类型</th><th>收到人</th><th>需要操作</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>权限申请</td>
+          <td>总体人员</td>
+          <td>点击 <span class="tag tag-green">通过</span> 或 <span class="tag tag-orange">拒绝</span></td>
+        </tr>
+        <tr><td>待完善</td><td>相关设备负责人</td><td>进入数据页补全字段</td></tr>
+        <tr><td>待审批</td><td>总体人员</td><td>进入数据页审批变更</td></tr>
+        <tr><td>申请结果</td><td>申请人</td><td>无需操作，查看结果即可</td></tr>
+      </tbody>
+    </table>
+
+    <!-- 四、项目数据 -->
+    <h2><span class="num">4</span>项目数据</h2>
+    <p>点击导航栏 <strong>「项目数据」</strong>，顶部下拉切换项目（只显示有权限的项目）。</p>
+
+    <h3>数据筛选模式</h3>
+    <table>
+      <thead>
+        <tr><th>模式</th><th>显示内容</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>查看全部</td><td>项目内所有数据</td></tr>
+        <tr><td>仅我的</td><td>自己是设备负责人的数据</td></tr>
+        <tr><td>待处理</td><td>状态为 Pending 的数据</td></tr>
+        <tr><td>待我审批</td><td>需要我点击审批的数据</td></tr>
+        <tr><td>待我完善</td><td>需要我补全字段的数据</td></tr>
+      </tbody>
+    </table>
+
+    <h3>数据状态说明</h3>
+    <table>
+      <thead>
+        <tr><th>状态</th><th>含义</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><span class="tag tag-yellow">Draft</span></td><td>草稿，未提交审批，仅创建者可见</td></tr>
+        <tr><td><span class="tag tag-blue">Pending</span></td><td>审批流程进行中</td></tr>
+        <tr><td><span class="tag tag-green">已生效</span></td><td>审批通过的正式数据</td></tr>
+      </tbody>
+    </table>
+
+    <!-- 五、设备管理 -->
+    <h2><span class="num">5</span>设备管理</h2>
+    <div class="tip">需要 <strong>设备管理员</strong> 角色，且只能操作自己负责的设备。</div>
+
+    <h3>新建设备</h3>
+    <ol>
+      <li>点击 <strong>「新增设备」</strong>，填写设备编号（必填）、名称、型号等信息</li>
+      <li>选择<strong>设备负责人</strong>（支持按姓名或工号搜索）</li>
+      <li>选择提交方式：
+        <ul>
+          <li><strong>保存草稿</strong>：仅保存，不触发审批</li>
+          <li><strong>提交审批</strong>：立即进入审批流程，相关人员收到通知</li>
+        </ul>
+      </li>
+    </ol>
+
+    <h3>编辑设备</h3>
+    <ol>
+      <li>点击设备行展开详情</li>
+      <li>修改字段后点击 <strong>提交变更</strong>，自动进入审批流程</li>
+      <li>审批通过前设备状态显示为 Pending</li>
+    </ol>
+
+    <h3>管理连接器与针孔</h3>
+    <p>在设备详情展开区域可新增、编辑、删除该设备下的连接器和针孔，操作同样触发审批流程。</p>
+
+    <!-- 六、信号管理 -->
+    <h2><span class="num">6</span>信号管理</h2>
+    <div class="tip">创建 / 编辑 / 删除需要 <strong>EWIS管理员</strong> 或 <strong>设备管理员</strong> 角色。</div>
+
+    <h3>新建信号</h3>
+    <ol>
+      <li>点击 <strong>「新增信号」</strong>，选择连接类型（1to1 / 网络 / ERN）</li>
+      <li>填写信号属性（ATA编码、推荐导线规格、电磁兼容代码等）</li>
+      <li>配置<strong>端点</strong>：指定 设备 → 连接器 → 针孔 的映射关系</li>
+      <li>提交后进入审批流程</li>
+    </ol>
+
+    <h3>端点确认状态</h3>
+    <table>
+      <thead>
+        <tr><th>状态</th><th>含义</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><span class="tag tag-green">已确认</span></td><td>所有端点均已确认</td></tr>
+        <tr><td><span class="tag tag-orange">待确认</span></td><td>仍有端点未确认</td></tr>
+      </tbody>
+    </table>
+
+    <!-- 七、审批流程 -->
+    <h2><span class="num">7</span>审批流程</h2>
+    <p>平台所有数据变更（新建 / 编辑 / 删除）均需经过两阶段审批：</p>
+
+    <div class="flow">
+      <div class="flow-step">
+        <div class="arrow">1</div>
+        <div class="text">
+          <strong>提交变更</strong>
+          <span>设备管理员 / EWIS管理员 提交新增、修改或删除操作</span>
+        </div>
+      </div>
+      <div class="flow-step">
+        <div class="arrow orange">2</div>
+        <div class="text">
+          <strong>完善阶段</strong>
+          <span>涉及设备的负责人收到通知，补全缺失的必填字段后提交完善</span>
+        </div>
+      </div>
+      <div class="flow-step">
+        <div class="arrow orange">3</div>
+        <div class="text">
+          <strong>审批阶段</strong>
+          <span>项目所有总体人员收到通知，逐一审批（批准 / 拒绝）</span>
+        </div>
+      </div>
+      <div class="flow-step">
+        <div class="arrow green">✓</div>
+        <div class="text">
+          <strong>结果</strong>
+          <span>全部通过 → 数据生效 &nbsp;|&nbsp; 任一拒绝 → 退回草稿</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="warn">任意一名总体人员拒绝，整个变更请求即被拒绝。</div>
+
+    <h3>我需要完善时</h3>
+    <ol>
+      <li>收到"待完善"通知</li>
+      <li>进入"项目数据"，切换到 <strong>待我完善</strong> 筛选</li>
+      <li>展开对应数据行 → 填写标红的缺失字段 → 点击 <strong>提交完善</strong></li>
+    </ol>
+
+    <h3>我需要审批时（总体人员）</h3>
+    <ol>
+      <li>收到"待审批"通知</li>
+      <li>进入"项目数据"，切换到 <strong>待我审批</strong> 筛选</li>
+      <li>展开数据行 → 查看变更内容 → 点击 <strong>批准</strong> 或 <strong>拒绝</strong></li>
+    </ol>
+
+    <h3>查看历史记录</h3>
+    <p>展开任意数据行，点击 <strong>「历史」</strong> 标签，可查看该条数据的全部审批历史。</p>
+
+    <!-- 八、常见问题 -->
+    <h2><span class="num">8</span>常见问题</h2>
+
+    <div class="faq-item">
+      <div class="faq-q">Q：看不到某个项目怎么办？</div>
+      <div class="faq-a">在"个人设置"中申请该项目权限，等待总体人员审批通过即可。</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-q">Q：为什么保存后设备变成了 Pending？</div>
+      <div class="faq-a">关键字段修改会触发审批流程，等待总体人员审批通过后数据才正式生效。</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-q">Q：申请权限后等了很久没有审批？</div>
+      <div class="faq-a">联系该项目的总体人员，请其登录系统查看通知铃铛。</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-q">Q：被拒绝后如何重新申请？</div>
+      <div class="faq-a">申请被处理后可在"个人设置"中重新提交新的申请。</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-q">Q：可以同时拥有多个项目的权限吗？</div>
+      <div class="faq-a">可以，但每个项目只能拥有一个角色。</div>
+    </div>
+
+  </div>
+</div>
+</body>
+</html>
