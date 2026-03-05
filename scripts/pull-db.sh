@@ -7,9 +7,9 @@ set -e
 SERVER="root@8.140.11.97"
 PEM="/d/Downloads/mbse.pem"
 REMOTE_DB="/opt/mbse/data/sqlite/eicd.db"
-LOCAL_DB="$(dirname "$0")/../server/eicd.db"
-LOCAL_WAL="$(dirname "$0")/../server/eicd.db-wal"
-LOCAL_SHM="$(dirname "$0")/../server/eicd.db-shm"
+LOCAL_DB="$(dirname "$0")/../data/sqlite/eicd.db"
+LOCAL_WAL="$(dirname "$0")/../data/sqlite/eicd.db-wal"
+LOCAL_SHM="$(dirname "$0")/../data/sqlite/eicd.db-shm"
 
 SSH="ssh -F /dev/null -i $PEM -o StrictHostKeyChecking=no"
 SCP="scp -F /dev/null -i $PEM"

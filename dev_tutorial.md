@@ -39,7 +39,7 @@ cd ..
 bash scripts/pull-db.sh
 ```
 
-执行成功后会在 `server/eicd.db` 生成数据库文件。
+执行成功后会在 `data/sqlite/eicd.db` 生成数据库文件。
 
 > 如果 `mbse.pem` 放在其他位置，修改 `scripts/pull-db.sh` 第 8 行的 `PEM` 路径即可。
 
@@ -76,7 +76,9 @@ cd client && npm run dev
 │   │   ├── routes/         # API 路由
 │   │   ├── shared/         # 共享工具（审批逻辑等）
 │   │   └── database.ts     # 数据库初始化与迁移
-│   └── eicd.db             # 本地数据库（不提交到 git）
+├── data/
+│   └── sqlite/
+│       └── eicd.db         # 本地数据库（不提交到 git，从服务器拉取）
 ├── scripts/
 │   ├── pull-db.sh          # 从服务器拉取数据库到本地
 │   └── push-db.sh          # 将本地数据库推送到服务器（危险）

@@ -39,7 +39,7 @@ cd server && npm run dev
 cd client && npm run dev
 ```
 
-本地数据库：`server/eicd.db`（被 .gitignore 排除，需从服务器拉取）
+本地数据库：`data/sqlite/eicd.db`（被 .gitignore 排除，需从服务器拉取）
 
 ```bash
 bash scripts/pull-db.sh   # 服务器 → 本地
