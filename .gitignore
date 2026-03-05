@@ -3,8 +3,13 @@ server/node_modules/
 client/node_modules/
 .env
 *.log
-server/*.db
+*.db
+*.db-wal
+*.db-shm
+*.db.bak*
 server/uploads/
+data/
+server/backups/
 *.xlsx
 *.xls
 .DS_Store
