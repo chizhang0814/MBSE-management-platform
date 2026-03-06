@@ -1235,7 +1235,7 @@ export default function ProjectDataView() {
             >清空设备视图数据</button>
           )}
           {canManageDevices && (
-            <button onClick={openAddDevice} className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700">
+            <button id="tour-add-device" onClick={openAddDevice} className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700">
               + 添加设备
             </button>
           )}
@@ -1372,7 +1372,7 @@ export default function ProjectDataView() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {filteredDevices.map(device => {
+              {filteredDevices.map((device, index) => {
                 const isExpanded = expandedDeviceId === device.id;
                 const lock = lockMap[device.id];
                 return (
@@ -1390,6 +1390,7 @@ export default function ProjectDataView() {
                     >
                       <td className="px-4 py-2 text-center">
                         <button
+                          id={index === 0 ? 'tour-device-expand' : undefined}
                           onClick={async () => {
                             if (isExpanded) { setExpandedDeviceId(null); }
                             else {
@@ -1440,7 +1441,7 @@ export default function ProjectDataView() {
                             <span className="text-xs text-amber-600">🔒{lock.lockedBy}</span>
                           ) : (
                             <>
-                              <button onClick={() => openEditDevice(device)} className="text-blue-600 hover:text-blue-800 text-xs">编辑</button>
+                              <button id={index === 0 ? 'tour-device-edit' : undefined} onClick={() => openEditDevice(device)} className="text-blue-600 hover:text-blue-800 text-xs">编辑</button>
                               <button onClick={() => deleteDevice(device)} className="text-red-600 hover:text-red-800 text-xs">删除</button>
                             </>
                           ))}
@@ -2467,7 +2468,7 @@ export default function ProjectDataView() {
         </div>
 
         {/* 筛选按钮 */}
-        <div className="flex flex-wrap items-center gap-3 mb-4">
+        <div id="tour-filter-tabs" className="flex flex-wrap items-center gap-3 mb-4">
           <div className="flex bg-gray-100 rounded-md p-0.5">
             <button
               onClick={() => setFilterMode('all')}

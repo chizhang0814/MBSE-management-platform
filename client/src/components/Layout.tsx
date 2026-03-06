@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import ProfileModal from './ProfileModal';
+import TourGuide from './TourGuide';
 
 interface Notification {
   id: number;
@@ -202,6 +203,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                   {/* 铃铛通知 */}
                   <div className="relative" ref={notifRef}>
                     <button
+                      id="tour-nav-notifications"
                       onClick={openNotifications}
                       title="通知"
                       className="relative text-gray-400 hover:text-gray-600 p-1 rounded"
@@ -253,6 +255,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                     )}
                   </div>
                   <button
+                    id="tour-nav-profile"
                     onClick={() => setShowProfile(true)}
                     title="个人设置"
                     className="text-gray-400 hover:text-gray-600 p-1 rounded"
@@ -280,6 +283,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       </main>
 
       {showProfile && <ProfileModal onClose={() => setShowProfile(false)} />}
+      {user?.role !== 'admin' && <TourGuide user={user} />}
     </div>
   );
 }
