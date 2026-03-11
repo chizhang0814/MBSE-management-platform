@@ -21,6 +21,7 @@ export function deviceRoutes(db: Database) {
       if (isNaN(projectId)) return res.status(400).json({ error: '缺少 projectId' });
 
       const myDevices = req.query.myDevices === 'true';
+      const relatedDevices = req.query.relatedDevices === 'true';
       const username = req.user!.username;
       const userRole = req.user!.role;
 
@@ -41,8 +42,29 @@ export function deviceRoutes(db: Database) {
       `;
       const params: any[] = [projectId];
 
-      if (myDevices || (userRole === 'user' && !hasProjectPermission)) {
-        sql += ' AND d.设备负责人 = ?';
+      if (relatedDevices) {
+        // 与我有关的设备：通过信号端点与我的设备相连，但不是我负责的
+        sql += `
+          AND d.id IN (
+            SELECT DISTINCT d2.id
+            FROM devices d2
+            JOIN connectors c2 ON c2.device_id = d2.id
+            JOIN pins p2 ON p2.connector_id = c2.id
+            JOIN signal_endpoints se2 ON se2.pin_id = p2.id
+            WHERE se2.signal_id IN (
+              SELECT DISTINCT se3.signal_id
+              FROM signal_endpoints se3
+              JOIN pins p3 ON p3.id = se3.pin_id
+              JOIN connectors c3 ON c3.id = p3.connector_id
+              JOIN devices d3 ON d3.id = c3.device_id
+              WHERE d3."设备负责人" = ? AND d3.project_id = ?
+            )
+            AND d2."设备负责人" != ? AND d2.project_id = ?
+          )
+        `;
+        params.push(username, projectId, username, projectId);
+      } else if (myDevices || (userRole === 'user' && !hasProjectPermission)) {
+        sql += ' AND d."设备负责人" = ?';
         params.push(username);
       }
       sql += ' ORDER BY d.设备编号';
@@ -172,6 +194,22 @@ export function deviceRoutes(db: Database) {
         (d as any).pending_sub_item_type = subItemMap[d.id] || null;
       }
 
+      // 附加 management_claim_requester 虚拟字段
+      if (deviceIds.length > 0) {
+        const ph4 = deviceIds.map(() => '?').join(',');
+        const claims = await db.query(
+          `SELECT entity_id, requester_username FROM approval_requests
+           WHERE action_type = 'request_device_management' AND status = 'pending'
+           AND entity_id IN (${ph4})`,
+          deviceIds
+        );
+        const claimMap: Record<number, string> = {};
+        for (const c of claims) claimMap[c.entity_id] = c.requester_username;
+        for (const d of devices) {
+          (d as any).management_claim_requester = claimMap[d.id] || null;
+        }
+      }
+
       res.json({ devices, statusSummary });
     } catch (error: any) {
       console.error('获取设备列表失败:', error);
@@ -184,7 +222,7 @@ export function deviceRoutes(db: Database) {
     try {
       const projectId = parseInt(req.query.projectId as string);
       const q = (req.query.q as string || '').trim();
-      if (isNaN(projectId) || !q) return res.json({ devices: [] });
+      if (isNaN(projectId)) return res.json({ devices: [] });
 
       const myDevices = req.query.myDevices === 'true';
       const username = req.user!.username;
@@ -198,20 +236,27 @@ export function deviceRoutes(db: Database) {
         hasProjectPermission = perms.some((p: any) => p.project_name === projectRow?.name);
       }
 
-      const pattern = `%${q}%`;
-      let sql = `
-        SELECT d.*
-        FROM devices d
-        WHERE d.project_id = ?
-          AND (d.设备编号 LIKE ? OR d.设备中文名称 LIKE ? OR d.设备英文名称 LIKE ? OR d.设备英文缩写 LIKE ?)
-      `;
-      const params: any[] = [projectId, pattern, pattern, pattern, pattern];
+      let sql: string;
+      let params: any[];
+      if (q) {
+        const pattern = `%${q}%`;
+        sql = `
+          SELECT d.*
+          FROM devices d
+          WHERE d.project_id = ?
+            AND (d.设备编号 LIKE ? OR d.设备中文名称 LIKE ? OR d.设备英文名称 LIKE ? OR d.设备英文缩写 LIKE ?)
+        `;
+        params = [projectId, pattern, pattern, pattern, pattern];
+      } else {
+        sql = `SELECT d.* FROM devices d WHERE d.project_id = ?`;
+        params = [projectId];
+      }
 
       if (myDevices || (userRole === 'user' && !hasProjectPermission)) {
         sql += ' AND d.设备负责人 = ?';
         params.push(username);
       }
-      sql += ' ORDER BY d.设备编号 LIMIT 20';
+      sql += ` ORDER BY d.设备编号 LIMIT ${q ? 20 : 200}`;
 
       const devices = await db.query(sql, params);
       res.json({ devices });
@@ -363,6 +408,63 @@ export function deviceRoutes(db: Database) {
     }
   });
 
+  // POST /api/devices/:id/claim-management — 设备管理员申请无负责人设备的管理权
+  router.post('/:id/claim-management', authenticate, async (req: AuthRequest, res) => {
+    try {
+      const deviceId = parseInt(req.params.id);
+      const device = await db.get('SELECT * FROM devices WHERE id = ?', [deviceId]);
+      if (!device) return res.status(404).json({ error: '设备不存在' });
+
+      const username = req.user!.username;
+      const role = req.user!.role;
+
+      if (role === 'admin') return res.status(403).json({ error: '管理员可直接分配设备负责人，无需申请' });
+
+      const devMgr = await isDeviceManager(db, username, device.project_id);
+      if (!devMgr) return res.status(403).json({ error: '仅设备管理员可申请管理权限' });
+
+      if (device.设备负责人) return res.status(400).json({ error: '该设备已有负责人' });
+
+      // 检查是否已有 pending 的管理权申请
+      const existing = await db.get(
+        `SELECT id FROM approval_requests
+         WHERE entity_type = 'device' AND entity_id = ? AND action_type = 'request_device_management' AND status = 'pending'`,
+        [deviceId]
+      );
+      if (existing) return res.status(400).json({ error: '该设备已有待审批的管理权申请' });
+
+      const zontiList = await getProjectRoleMembers(db, device.project_id, '总体人员');
+      if (zontiList.length === 0) return res.status(400).json({ error: '项目中暂无总体人员，无法提交审批' });
+
+      const items: ApprovalItemSpec[] = zontiList.map(u => ({ recipient_username: u, item_type: 'approval' as const }));
+
+      await submitChangeRequest(db, {
+        projectId: device.project_id,
+        requesterId: req.user!.id,
+        requesterUsername: username,
+        actionType: 'request_device_management',
+        entityType: 'device',
+        entityId: deviceId,
+        oldPayload: device,
+        newPayload: { 设备负责人: username },
+        items,
+      });
+
+      // 将设备状态改为 Pending（审批中）
+      await db.run(`UPDATE devices SET status = 'Pending' WHERE id = ?`, [deviceId]);
+
+      await db.run(
+        `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, reason, status)
+         VALUES ('devices', ?, ?, 'devices', ?, ?, 'pending')`,
+        [deviceId, deviceId, req.user!.id, `${username} 申请管理此设备，等待总体人员审批`]
+      );
+
+      return res.json({ success: true, message: '申请已提交，等待总体人员审批' });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || '申请失败' });
+    }
+  });
+
   // PUT /api/devices/:id
   router.put('/:id', authenticate, async (req: AuthRequest, res) => {
     try {
@@ -392,6 +494,7 @@ export function deviceRoutes(db: Database) {
       delete fields.pending_item_type;
       delete fields.pending_sub_item_type;
       delete fields.has_pending_sub;
+      delete fields.management_claim_requester;
 
       // 去除 设备部件所属系统（4位ATA） 首尾各类引号（含中文弯引号）
       const ATA_KEY = '设备部件所属系统（4位ATA）';

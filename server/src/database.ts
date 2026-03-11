@@ -116,7 +116,7 @@ export class Database {
             设备安装位置 TEXT, 设备DAL TEXT,
             设备壳体是否金属 TEXT, 金属壳体表面是否经过特殊处理而不易导电 TEXT, 设备内共地情况 TEXT,
             设备壳体接地方式 TEXT, 壳体接地是否故障电流路径 TEXT, 其他接地特殊要求 TEXT,
-            设备端连接器或接线柱数量 TEXT, 是否为选装设备 TEXT, 设备装机架次 TEXT,
+            设备端连接器或接线柱数量 TEXT, 是否为选装设备 TEXT, 是否有特殊布线需求 TEXT, 设备装机架次 TEXT,
             设备负责人 TEXT, 设备正常工作电压范围（V） TEXT, 设备物理特性 TEXT, 备注 TEXT,
             导入来源 TEXT, created_by TEXT,
             status TEXT DEFAULT 'normal',
@@ -137,6 +137,7 @@ export class Database {
             "设备端元器件名称及类型" TEXT,
             "设备端元器件件号类型及件号" TEXT, "设备端元器件供应商名称" TEXT,
             "匹配的线束端元器件件号" TEXT, "匹配的线束线型" TEXT,
+            "尾附件件号" TEXT, "触件型号" TEXT,
             "设备端元器件匹配的元器件是否随设备交付" TEXT, 备注 TEXT,
             status TEXT DEFAULT 'normal',
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -777,6 +778,18 @@ export class Database {
       }
     }
 
+    // 新增 project_configurations 表（项目构型管理）
+    await this.run(`
+      CREATE TABLE IF NOT EXISTS project_configurations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+      )
+    `);
+
     // 为 devices 表添加 DOORS 关联列
     try {
       const devCols = await this.query('PRAGMA table_info(devices)');
@@ -872,7 +885,7 @@ export class Database {
             "设备安装位置" TEXT, "设备DAL" TEXT,
             "设备壳体是否金属" TEXT, "金属壳体表面是否经过特殊处理而不易导电" TEXT, "设备内共地情况" TEXT,
             "设备壳体接地方式" TEXT, "壳体接地是否故障电流路径" TEXT, "其他接地特殊要求" TEXT,
-            "设备端连接器或接线柱数量" TEXT, "是否为选装设备" TEXT, "设备装机架次" TEXT,
+            "设备端连接器或接线柱数量" TEXT, "是否为选装设备" TEXT, "是否有特殊布线需求" TEXT, "设备装机架次" TEXT,
             "设备负责人" TEXT, "设备正常工作电压范围（V）" TEXT, "设备物理特性" TEXT, "备注" TEXT,
             "导入来源" TEXT, "created_by" TEXT,
             "status" TEXT DEFAULT 'normal',
@@ -953,6 +966,7 @@ export class Database {
             "设备端元器件名称及类型" TEXT,
             "设备端元器件件号类型及件号" TEXT, "设备端元器件供应商名称" TEXT,
             "匹配的线束端元器件件号" TEXT, "匹配的线束线型" TEXT,
+            "尾附件件号" TEXT, "触件型号" TEXT,
             "设备端元器件匹配的元器件是否随设备交付" TEXT, 备注 TEXT,
             status TEXT DEFAULT 'normal',
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -1129,6 +1143,44 @@ export class Database {
       console.log('Database migration: renamed 项目管理员 to 总体人员 in permissions');
     } catch (e: any) {
       console.log('Migration: rename role:', e.message);
+    }
+
+    // 为 connectors 表添加 尾附件件号、触件型号 列
+    try {
+      const connColsMig2 = await this.query('PRAGMA table_info(connectors)');
+      const connColNames2 = connColsMig2.map((c: any) => c.name);
+      if (!connColNames2.includes('尾附件件号')) {
+        await this.run(`ALTER TABLE connectors ADD COLUMN "尾附件件号" TEXT`);
+        console.log('Database migration: added 尾附件件号 column to connectors');
+      }
+      if (!connColNames2.includes('触件型号')) {
+        await this.run(`ALTER TABLE connectors ADD COLUMN "触件型号" TEXT`);
+        console.log('Database migration: added 触件型号 column to connectors');
+      }
+    } catch (e: any) {
+      console.log('Migration: connectors 尾附件件号/触件型号 columns:', e.message);
+    }
+
+    // 为 devices 表添加 是否有特殊布线需求 列
+    try {
+      const devColsMig = await this.query('PRAGMA table_info(devices)');
+      if (!devColsMig.some((c: any) => c.name === '是否有特殊布线需求')) {
+        await this.run(`ALTER TABLE devices ADD COLUMN "是否有特殊布线需求" TEXT`);
+        console.log('Database migration: added 是否有特殊布线需求 column to devices');
+      }
+    } catch (e: any) {
+      console.log('Migration: devices 是否有特殊布线需求 column:', e.message);
+    }
+
+    // 为 devices 表添加 设备装机构型 列
+    try {
+      const devColsMig2 = await this.query('PRAGMA table_info(devices)');
+      if (!devColsMig2.some((c: any) => c.name === '设备装机构型')) {
+        await this.run(`ALTER TABLE devices ADD COLUMN "设备装机构型" TEXT`);
+        console.log('Database migration: added 设备装机构型 column to devices');
+      }
+    } catch (e: any) {
+      console.log('Migration: devices 设备装机构型 column:', e.message);
     }
 
     // 初始化默认用户（不再创建示例数据）

@@ -15,7 +15,7 @@ interface DeviceRow {
   设备安装位置?: string; 设备DAL?: string;
   设备壳体是否金属?: string; 金属壳体表面是否经过特殊处理而不易导电?: string; 设备内共地情况?: string;
   设备壳体接地方式?: string; 壳体接地是否故障电流路径?: string; 其他接地特殊要求?: string;
-  设备端连接器或接线柱数量?: string; 是否为选装设备?: string; 设备装机架次?: string;
+  设备端连接器或接线柱数量?: string; 是否为选装设备?: string; 是否有特殊布线需求?: string; 设备装机架次?: string; 设备装机构型?: string;
   设备负责人?: string; '设备正常工作电压范围（V）'?: string; 设备物理特性?: string; 备注?: string;
   '设备编号（DOORS）'?: string; '设备LIN号（DOORS）'?: string;
   导入来源?: string; created_by?: string;
@@ -25,6 +25,7 @@ interface DeviceRow {
   pending_item_type?: 'approval' | 'completion' | null;
   has_pending_sub?: boolean;
   pending_sub_item_type?: 'approval' | 'completion' | null;
+  management_claim_requester?: string | null;
 }
 
 interface ConnectorRow {
@@ -32,6 +33,7 @@ interface ConnectorRow {
   设备端元器件编号: string; 设备端元器件名称及类型?: string;
   设备端元器件件号类型及件号?: string; 设备端元器件供应商名称?: string;
   匹配的线束端元器件件号?: string; 匹配的线束线型?: string;
+  尾附件件号?: string; 触件型号?: string;
   设备端元器件匹配的元器件是否随设备交付?: string; 备注?: string;
   status?: string; pin_count?: number;
   导入来源?: string; import_conflicts?: string; validation_errors?: string;
@@ -128,7 +130,9 @@ const DEVICE_FIELDS: { key: keyof DeviceRow; label: string }[] = [
   { key: '其他接地特殊要求', label: '其他接地特殊要求' },
   { key: '设备端连接器或接线柱数量', label: '设备端连接器或接线柱数量' },
   { key: '是否为选装设备', label: '是否为选装设备' },
+  { key: '是否有特殊布线需求', label: '是否有特殊布线需求' },
   { key: '设备装机架次', label: '设备装机架次' },
+  { key: '设备装机构型', label: '设备装机构型' },
   { key: '设备负责人', label: '设备负责人' },
   { key: '设备正常工作电压范围（V）', label: '设备正常工作电压范围（V）' },
   { key: '设备物理特性', label: '设备物理特性' },
@@ -181,17 +185,21 @@ export default function ProjectDataView() {
 
   // ── 视图切换 ──
   const [activeView, setActiveView] = useState<'devices' | 'signals' | 'section-connectors'>('devices');
-  const [filterMode, setFilterMode] = useState<'all' | 'my' | 'pending' | 'my_approval' | 'my_completion'>('all');
+  const [filterMode, setFilterMode] = useState<'all' | 'my' | 'related' | 'pending' | 'my_approval' | 'my_completion' | 'my_tasks'>(user?.role === 'admin' ? 'all' : 'my');
 
   type ApprovalItem = { id: number; recipient_username: string; item_type: string; status: string; rejection_reason?: string; responded_at?: string; };
-  type ApprovalInfo = { request: { id: number; current_phase: string; status: string; action_type: string; requester_username: string; created_at: string; } | null; items: ApprovalItem[]; my_pending_item: ApprovalItem | null; };
+  type ApprovalInfo = { request: { id: number; current_phase: string; status: string; action_type: string; requester_username: string; created_at: string; old_payload?: string; payload?: string; } | null; items: ApprovalItem[]; my_pending_item: ApprovalItem | null; };
   const [approvalInfoMap, setApprovalInfoMap] = useState<Record<string, ApprovalInfo>>({});
+
+  const [projectConfigurations, setProjectConfigurations] = useState<{ id: number; name: string }[]>([]);
 
   // ── 设备视图状态 ──
   const [devices, setDevices] = useState<DeviceRow[]>([]);
   const [statusSummary, setStatusSummary] = useState<{ devices: { normal: number; Draft: number }; connectors: { normal: number; Draft: number }; pins: { normal: number; Draft: number } } | null>(null);
   const [historyTarget, setHistoryTarget] = useState<{ entityTable: string; entityId: number; entityLabel: string } | null>(null);
   const [deviceFilters, setDeviceFilters] = useState<Record<string, string>>({});
+  const [configFilterSelected, setConfigFilterSelected] = useState<string[]>([]);
+  const [configFilterOpen, setConfigFilterOpen] = useState(false);
   const [expandedDeviceId, setExpandedDeviceId] = useState<number | null>(null);
   const [connectors, setConnectors] = useState<Record<number, ConnectorRow[]>>({});
   const [expandedConnectorId, setExpandedConnectorId] = useState<number | null>(null);
@@ -261,6 +269,14 @@ export default function ProjectDataView() {
   const [epDeviceResults, setEpDeviceResults] = useState<DeviceRow[][]>([[], []]);
   const [epConnectorOptions, setEpConnectorOptions] = useState<ConnectorRow[][]>([[], []]);
   const [epPinOptions, setEpPinOptions] = useState<PinRow[][]>([[], []]);
+  const [myDevicesList, setMyDevicesList] = useState<DeviceRow[]>([]);
+
+  // ── 智能助手 ──────────────────────────────────────────────
+  type ChatMsg = { role: 'user' | 'assistant'; content: string };
+  const [showChat, setShowChat] = useState(false);
+  const [chatMessages, setChatMessages] = useState<ChatMsg[]>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [chatLoading, setChatLoading] = useState(false);
 
   // ── 权限状态 ──
   const [myPermissions, setMyPermissions] = useState<Array<{ project_name: string; project_role: string }>>([]);
@@ -311,6 +327,11 @@ export default function ProjectDataView() {
         setEmployeeNameMap(map);
       })
       .catch(() => {});
+    // 加载项目构型列表
+    fetch(`/api/projects/${selectedProjectId}/configurations`, { headers: API_HEADERS() })
+      .then(r => r.json())
+      .then(d => setProjectConfigurations(d.configurations || []))
+      .catch(() => setProjectConfigurations([]));
   }, [selectedProjectId]);
 
   // ── 锁轮询 ────────────────────────────────────────────────
@@ -328,7 +349,7 @@ export default function ProjectDataView() {
           if (devRes.ok) { const d = await devRes.json(); setLockMap(d.locks || {}); }
           if (connRes.ok) { const d = await connRes.json(); setConnectorLockMap(d.locks || {}); }
         } else {
-          const myQ = filterMode === 'my' ? '&myDevices=true' : '';
+          const myQ = filterMode === 'my' ? '&myDevices=true' : filterMode === 'related' ? '&relatedDevices=true' : '';
           const [lockRes, sigRes] = await Promise.all([
             fetch(`/api/data/locks?table_name=signals`, { headers: API_HEADERS() }),
             fetch(`/api/signals?projectId=${selectedProjectId}${myQ}`, { headers: API_HEADERS() }),
@@ -361,7 +382,7 @@ export default function ProjectDataView() {
     if (!selectedProjectId) return;
     setLoading(true);
     try {
-      const myQ = filterMode === 'my' ? '&myDevices=true' : '';
+      const myQ = filterMode === 'my' ? '&myDevices=true' : filterMode === 'related' ? '&relatedDevices=true' : '';
       const res = await fetch(`/api/devices?projectId=${selectedProjectId}${myQ}`, { headers: API_HEADERS() });
       const data = await res.json();
       const devs = data.devices || [];
@@ -412,7 +433,7 @@ export default function ProjectDataView() {
     if (!selectedProjectId) return;
     setLoading(true);
     try {
-      const myQ = filterMode === 'my' ? '&myDevices=true' : '';
+      const myQ = filterMode === 'my' ? '&myDevices=true' : filterMode === 'related' ? '&relatedDevices=true' : '';
       const res = await fetch(`/api/signals?projectId=${selectedProjectId}${myQ}`, { headers: API_HEADERS() });
       const data = await res.json();
       setSignals(data.signals || []);
@@ -516,8 +537,8 @@ export default function ProjectDataView() {
 
   const validateATA = (value: string) => {
     const val = value.trim();
-    if (val && !/^\d{2}-\d{2}$/.test(val) && val !== 'N/A') {
-      setFieldWarnings(prev => ({ ...prev, '设备部件所属系统（4位ATA）': { message: '格式应为 XX-XX 或 N/A', type: 'error' } }));
+    if (val && !/^\d{2}(-\d{2}|-XX)?$/.test(val) && val !== 'N/A') {
+      setFieldWarnings(prev => ({ ...prev, '设备部件所属系统（4位ATA）': { message: '格式应为 XX-XX、XX 或 N/A', type: 'error' } }));
     } else {
       setFieldWarnings(prev => { const n = { ...prev }; delete n['设备部件所属系统（4位ATA）']; return n; });
     }
@@ -529,7 +550,9 @@ export default function ProjectDataView() {
     setEditingDevice(null);
     // 设备管理员：默认负责人为自己；总体人员/admin：不预设
     const defaultOwner = myProjectRole === '设备管理员' ? (user?.username || '') : '';
-    setDeviceForm({ '设备负责人': defaultOwner });
+    // 默认选中所有构型
+    const defaultConfigs = projectConfigurations.map(c => c.name).join(',');
+    setDeviceForm({ '设备负责人': defaultOwner, '设备装机构型': defaultConfigs });
     setFieldWarnings({});
     setShowDeviceModal(true);
   };
@@ -583,7 +606,7 @@ export default function ProjectDataView() {
     if (!selectedProjectId || !deviceForm['设备编号']) { alert('设备编号不能为空'); return; }
     const ata = (deviceForm as any)['设备部件所属系统（4位ATA）'] || '';
     if (!ata) { alert('设备部件所属系统（4位ATA） 不能为空'); return; }
-    if (ata !== 'N/A' && !/^\d{2}-\d{2}$/.test(ata)) { alert('设备部件所属系统（4位ATA） 格式不正确，应为 XX-XX 或 N/A'); return; }
+    if (ata !== 'N/A' && !/^\d{2}-(\d{2}|XX)$/.test(ata)) { alert('设备部件所属系统（4位ATA） 格式不正确，应为 XX-XX 或 N/A'); return; }
     // 非 Draft 保存时，检查是否有硬性校验错误
     if (!forceDraft) {
       const hasHardError = Object.values(fieldWarnings).some(w => w.type === 'error');
@@ -623,6 +646,19 @@ export default function ProjectDataView() {
       if (!res.ok) throw new Error((await res.json()).error || '删除失败');
       await loadDevices();
     } catch (e: any) { alert(e.message || '删除失败'); }
+  };
+
+  const handleClaimManagement = async (device: DeviceRow) => {
+    if (!confirm(`确认申请管理设备「${device.设备编号}」的权限？申请将发送给所有总体人员审批。`)) return;
+    try {
+      const res = await fetch(`/api/devices/${device.id}/claim-management`, {
+        method: 'POST',
+        headers: API_HEADERS(),
+      });
+      if (!res.ok) throw new Error((await res.json()).error || '申请失败');
+      alert('申请已提交，等待总体人员审批。');
+      await loadDevices();
+    } catch (e: any) { alert(e.message || '申请失败'); }
   };
 
   // ── 连接器CRUD ────────────────────────────────────────────
@@ -942,7 +978,16 @@ export default function ProjectDataView() {
 
   // ── 信号CRUD ──────────────────────────────────────────────
 
-  const openAddSignal = () => {
+  const loadMyDevices = async () => {
+    if (!selectedProjectId) return;
+    try {
+      const res = await fetch(`/api/devices?projectId=${selectedProjectId}&myDevices=true`, { headers: API_HEADERS() });
+      const data = await res.json();
+      setMyDevicesList(data.devices || []);
+    } catch { setMyDevicesList([]); }
+  };
+
+  const openAddSignal = async () => {
     setEditingSignal(null);
     setSignalForm({});
     setSignalEndpoints([
@@ -953,6 +998,7 @@ export default function ProjectDataView() {
     setEpDeviceResults([[], []]);
     setEpConnectorOptions([[], []]);
     setEpPinOptions([[], []]);
+    await loadMyDevices();
     setShowSignalModal(true);
   };
 
@@ -1029,6 +1075,7 @@ export default function ProjectDataView() {
     }));
     setEpConnectorOptions(connOpts);
     setEpPinOptions(pinOpts);
+    await loadMyDevices();
     setShowSignalModal(true);
 
     if (heartbeatRef.current) clearInterval(heartbeatRef.current);
@@ -1143,11 +1190,15 @@ export default function ProjectDataView() {
     const newSearch = [...epDeviceSearch];
     newSearch[idx] = query;
     setEpDeviceSearch(newSearch);
-    if (!query || !selectedProjectId) { const r = [...epDeviceResults]; r[idx] = []; setEpDeviceResults(r); return; }
+    if (!selectedProjectId) return;
     try {
       const res = await fetch(`/api/devices/search?projectId=${selectedProjectId}&q=${encodeURIComponent(query)}`, { headers: API_HEADERS() });
       const data = await res.json();
-      const r = [...epDeviceResults]; r[idx] = data.devices || []; setEpDeviceResults(r);
+      const all: DeviceRow[] = data.devices || [];
+      // 我的设备排前面
+      const myIds = new Set(myDevicesList.map(d => d.id));
+      const sorted = [...all.filter(d => myIds.has(d.id)), ...all.filter(d => !myIds.has(d.id))];
+      const r = [...epDeviceResults]; r[idx] = sorted; setEpDeviceResults(r);
     } catch { }
   };
 
@@ -1256,9 +1307,14 @@ export default function ProjectDataView() {
           if (filterMode === 'my_completion' && !(
             (d.status === 'Pending' && d.pending_item_type === 'completion') || d.pending_sub_item_type === 'completion'
           )) return false;
+          if (filterMode === 'my_tasks' && !(
+            (d.status === 'Pending' && (d.pending_item_type === 'approval' || d.pending_item_type === 'completion')) ||
+            d.pending_sub_item_type === 'approval' || d.pending_sub_item_type === 'completion'
+          )) return false;
           // 列过滤
           for (const [key, val] of Object.entries(deviceFilters)) {
             if (!val) continue;
+            if (key === '_config') continue; // handled separately below
             if (key === '_status') {
               if (val === 'sub_pending') {
                 if (!d.has_pending_sub) return false;
@@ -1278,9 +1334,14 @@ export default function ProjectDataView() {
               if (!cell.includes(kw)) return false;
             }
           }
+          // 多选构型过滤：设备须包含所选构型中的至少一个
+          if (configFilterSelected.length > 0) {
+            const deviceConfigs = (d.设备装机构型 || '').split(',').map((s: string) => s.trim()).filter(Boolean);
+            if (!configFilterSelected.some(sel => deviceConfigs.includes(sel))) return false;
+          }
           return true;
         });
-        const hasAnyFilter = Object.values(deviceFilters).some(v => v);
+        const hasAnyFilter = Object.values(deviceFilters).some(v => v) || configFilterSelected.length > 0;
         return (
         <div className="bg-white rounded-lg shadow overflow-hidden">
           <table className="min-w-full text-sm">
@@ -1288,6 +1349,7 @@ export default function ProjectDataView() {
               <tr>
                 <th className="px-4 py-2 text-left text-xs text-gray-500 w-8"></th>
                 <th className="px-4 py-2 text-left text-xs text-gray-500">设备编号</th>
+                <th className="px-4 py-2 text-left text-xs text-gray-500">构型</th>
                 <th className="px-4 py-2 text-left text-xs text-gray-500 min-w-[120px]">状态</th>
                 <th className="px-4 py-2 text-left text-xs text-gray-500">设备LIN号（DOORS）</th>
                 <th className="px-4 py-2 text-left text-xs text-gray-500">设备中文名称</th>
@@ -1316,6 +1378,50 @@ export default function ProjectDataView() {
                     </div>
                   </th>
                 ))}
+                <th className="px-4 py-1">
+                  <div className="relative">
+                    <button
+                      onClick={() => setConfigFilterOpen(o => !o)}
+                      className={`w-full px-1.5 py-0.5 text-xs border rounded text-left flex items-center justify-between gap-1 ${configFilterSelected.length > 0 ? 'border-violet-400 bg-violet-50 text-violet-700' : 'border-gray-300 bg-white text-gray-600'}`}
+                    >
+                      <span className="truncate">{configFilterSelected.length === 0 ? '所有' : configFilterSelected.length === projectConfigurations.length ? '所有' : `已选 ${configFilterSelected.length} 个`}</span>
+                      {configFilterSelected.length > 0 && (
+                        <span onMouseDown={e => { e.stopPropagation(); setConfigFilterSelected([]); }} className="text-violet-400 hover:text-violet-600 leading-none flex-shrink-0">×</span>
+                      )}
+                    </button>
+                    {configFilterOpen && (
+                      <div className="absolute top-full left-0 mt-0.5 z-30 bg-white border border-gray-200 rounded shadow-lg min-w-[220px] whitespace-nowrap">
+                        <label className="flex items-center gap-1.5 px-2 py-1 hover:bg-gray-50 cursor-pointer border-b border-gray-100">
+                          <input
+                            type="checkbox"
+                            checked={configFilterSelected.length === projectConfigurations.length && projectConfigurations.length > 0}
+                            onChange={e => setConfigFilterSelected(e.target.checked ? projectConfigurations.map(c => c.name) : [])}
+                            className="accent-violet-600"
+                          />
+                          <span className="text-xs font-medium text-gray-600">全选</span>
+                        </label>
+                        {projectConfigurations.map((c, idx) => {
+                          const n = idx + 1;
+                          const circled = n <= 20 ? String.fromCodePoint(0x245F + n) : n <= 35 ? String.fromCodePoint(0x323C + n) : `(${n})`;
+                          return (
+                          <label key={c.id} className="flex items-center gap-1.5 px-2 py-1 hover:bg-gray-50 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={configFilterSelected.includes(c.name)}
+                              onChange={e => setConfigFilterSelected(prev => e.target.checked ? [...prev, c.name] : prev.filter(n => n !== c.name))}
+                              className="accent-violet-600"
+                            />
+                            <span className="text-xs"><span className="text-violet-600 font-medium mr-0.5">{circled}</span>{c.name}</span>
+                          </label>
+                          );
+                        })}
+                        <div className="border-t border-gray-100 px-2 py-1">
+                          <button onClick={() => setConfigFilterOpen(false)} className="text-xs text-gray-400 hover:text-gray-600 w-full text-right">关闭</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </th>
                 <th className="px-4 py-1">
                   <select
                     value={deviceFilters['_status'] || ''}
@@ -1405,6 +1511,20 @@ export default function ProjectDataView() {
                         </button>
                       </td>
                       <td className="px-4 py-2 font-medium">{device.设备编号}</td>
+                      <td className="px-4 py-2 text-sm">
+                        {projectConfigurations.length === 0
+                          ? <span className="text-gray-300">—</span>
+                          : (() => {
+                              const deviceConfigs = (device.设备装机构型 || '').split(',').map(s => s.trim()).filter(Boolean);
+                              return projectConfigurations.map((c, idx) => {
+                                const n = idx + 1;
+                                const circled = n <= 20 ? String.fromCodePoint(0x245F + n) : n <= 35 ? String.fromCodePoint(0x323C + n) : `(${n})`;
+                                const has = deviceConfigs.includes(c.name);
+                                return <span key={c.id} className={`inline-block w-4 text-center ${has ? 'text-violet-600 font-medium' : 'text-transparent'}`} title={has ? c.name : ''}>{circled}</span>;
+                              });
+                            })()
+                        }
+                      </td>
                       <td className="px-4 py-2">
                         {device.status === 'Draft' && (
                           <span className="px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700 text-xs font-semibold">Draft</span>
@@ -1422,6 +1542,11 @@ export default function ProjectDataView() {
                         {device.has_pending_sub && (
                           <span className="ml-1 px-1.5 py-0.5 rounded bg-orange-50 text-orange-600 text-xs" title="包含待审批的连接器或针孔">
                             子项{device.pending_sub_item_type === 'completion' ? '待完善' : '待审批'}
+                          </span>
+                        )}
+                        {device.management_claim_requester && (
+                          <span className="ml-1 px-1.5 py-0.5 rounded bg-yellow-50 text-yellow-700 text-xs border border-yellow-200">
+                            {device.management_claim_requester} 正在申请管理此设备
                           </span>
                         )}
                       </td>
@@ -1445,6 +1570,9 @@ export default function ProjectDataView() {
                               <button onClick={() => deleteDevice(device)} className="text-red-600 hover:text-red-800 text-xs">删除</button>
                             </>
                           ))}
+                          {myProjectRole === '设备管理员' && !device.设备负责人 && !device.management_claim_requester && (
+                            <button onClick={() => handleClaimManagement(device)} className="text-purple-600 hover:text-purple-800 text-xs">申请管理权限</button>
+                          )}
                           <button onClick={() => setHistoryTarget({ entityTable: 'devices', entityId: device.id, entityLabel: `设备 ${device.设备编号}` })} className="text-gray-500 hover:text-gray-700 text-xs">历史</button>
                         </td>
                     </tr>
@@ -1517,7 +1645,52 @@ export default function ProjectDataView() {
                         <tr key={`${device.id}-approval`}>
                           <td colSpan={10} className="px-0 py-0 bg-yellow-50 border-b border-yellow-200">
                             <div className="pl-8 pr-4 py-3">
-                              <div className="text-xs font-semibold text-gray-600 mb-2">审批进度（{request.action_type}）</div>
+                              {(() => {
+                                const actionLabelsMap: Record<string, string> = {
+                                  create_device: '新建设备', edit_device: '修改设备', delete_device: '删除设备',
+                                  create_connector: '新建连接器', edit_connector: '修改连接器', delete_connector: '删除连接器',
+                                  create_pin: '新建针孔', edit_pin: '修改针孔', delete_pin: '删除针孔',
+                                  create_signal: '新建信号', edit_signal: '修改信号', delete_signal: '删除信号',
+                                  request_device_management: '申请设备管理权限',
+                                };
+                                const actionLabel = actionLabelsMap[request.action_type] || request.action_type;
+                                let diffRows: { key: string; oldVal: string; newVal: string }[] = [];
+                                try {
+                                  const oldObj = request.old_payload ? JSON.parse(request.old_payload) : {};
+                                  const newObj = request.payload ? JSON.parse(request.payload) : {};
+                                  for (const key of Object.keys(newObj)) {
+                                    const ov = oldObj[key] ?? '';
+                                    const nv = newObj[key] ?? '';
+                                    if (String(ov) !== String(nv)) {
+                                      diffRows.push({ key, oldVal: String(ov || '（空）'), newVal: String(nv || '（空）') });
+                                    }
+                                  }
+                                } catch {}
+                                return (
+                                  <>
+                                    <div className="text-xs font-semibold text-gray-600 mb-2">审批进度（{actionLabel}）</div>
+                                    {diffRows.length > 0 && (
+                                      <div className="mb-2 text-xs border border-gray-200 rounded overflow-hidden">
+                                        <div className="bg-gray-100 px-2 py-1 font-medium text-gray-500">变更内容</div>
+                                        <table className="w-full">
+                                          <tbody>
+                                            {diffRows.map(({ key, oldVal, newVal }) => (
+                                              <tr key={key} className="border-t border-gray-100">
+                                                <td className="px-2 py-1 text-gray-500 font-medium w-40 shrink-0">{key}</td>
+                                                <td className="px-2 py-1">
+                                                  <span className="line-through text-red-500 mr-1">{oldVal}</span>
+                                                  <span className="text-gray-400 mr-1">→</span>
+                                                  <span className="text-green-700 font-medium">{newVal}</span>
+                                                </td>
+                                              </tr>
+                                            ))}
+                                          </tbody>
+                                        </table>
+                                      </div>
+                                    )}
+                                  </>
+                                );
+                              })()}
                               {completionItems.length > 0 && (
                                 <div className="mb-2">
                                   <div className="text-xs text-gray-400 mb-1">完善阶段</div>
@@ -1704,6 +1877,8 @@ export default function ProjectDataView() {
                                                       ['设备端元器件供应商名称', conn.设备端元器件供应商名称],
                                                       ['匹配的线束端元器件件号', conn.匹配的线束端元器件件号],
                                                       ['匹配的线束线型', conn.匹配的线束线型],
+                                                      ['尾附件件号', conn.尾附件件号],
+                                                      ['触件型号', conn.触件型号],
                                                       ['随设备交付', conn.设备端元器件匹配的元器件是否随设备交付],
                                                       ['备注', conn.备注],
                                                       ['导入来源', conn.导入来源],
@@ -2124,11 +2299,12 @@ export default function ProjectDataView() {
           if (filterMode === 'pending' && s.status !== 'Pending') return false;
           if (filterMode === 'my_approval' && !(s.status === 'Pending' && s.pending_item_type === 'approval')) return false;
           if (filterMode === 'my_completion' && !(s.status === 'Pending' && s.pending_item_type === 'completion')) return false;
+          if (filterMode === 'my_tasks' && !(s.status === 'Pending' && (s.pending_item_type === 'approval' || s.pending_item_type === 'completion'))) return false;
           return true;
         });
         return (
         <div className="bg-white rounded-lg shadow overflow-hidden">
-          {(filterMode === 'pending' || filterMode === 'my_approval' || filterMode === 'my_completion') && (
+          {(filterMode === 'pending' || filterMode === 'my_approval' || filterMode === 'my_completion' || filterMode === 'my_tasks') && (
             <div className="px-4 py-1.5 text-xs text-gray-500 bg-gray-50 border-b">
               显示 {filteredSignals.length} / {signals.length} 条信号
             </div>
@@ -2468,40 +2644,128 @@ export default function ProjectDataView() {
         </div>
 
         {/* 筛选按钮 */}
-        <div id="tour-filter-tabs" className="flex flex-wrap items-center gap-3 mb-4">
+        <div id="tour-filter-tabs" className="flex flex-wrap items-center gap-3 mb-4 justify-between">
           <div className="flex bg-gray-100 rounded-md p-0.5">
             <button
               onClick={() => setFilterMode('all')}
               className={`px-3 py-1 rounded text-sm ${filterMode === 'all' ? 'bg-white shadow text-blue-600 font-medium' : 'text-gray-600'}`}
             >
-              全部
+              {activeView === 'signals' ? '全部信号' : '全部设备'}
             </button>
             <button
               onClick={() => setFilterMode('my')}
               className={`px-3 py-1 rounded text-sm ${filterMode === 'my' ? 'bg-white shadow text-blue-600 font-medium' : 'text-gray-600'}`}
             >
-              我的
+              {activeView === 'signals' ? '与我有关的信号' : '己方设备'}
             </button>
+            {activeView === 'devices' && (
+              <button
+                onClick={() => setFilterMode('related')}
+                className={`px-3 py-1 rounded text-sm ${filterMode === 'related' ? 'bg-white shadow text-teal-600 font-medium' : 'text-gray-600'}`}
+              >
+                对端设备
+              </button>
+            )}
             <button
-              onClick={() => setFilterMode('pending')}
-              className={`px-3 py-1 rounded text-sm ${filterMode === 'pending' ? 'bg-white shadow text-orange-600 font-medium' : 'text-gray-600'}`}
+              onClick={() => setFilterMode('my_tasks')}
+              className={`px-3 py-1 rounded text-sm ${filterMode === 'my_tasks' ? 'bg-white shadow text-orange-600 font-medium' : 'text-gray-600'}`}
             >
-              待审批
-            </button>
-            <button
-              onClick={() => setFilterMode('my_approval')}
-              className={`px-3 py-1 rounded text-sm ${filterMode === 'my_approval' ? 'bg-white shadow text-orange-600 font-medium' : 'text-gray-600'}`}
-            >
-              待我审批
-            </button>
-            <button
-              onClick={() => setFilterMode('my_completion')}
-              className={`px-3 py-1 rounded text-sm ${filterMode === 'my_completion' ? 'bg-white shadow text-purple-600 font-medium' : 'text-gray-600'}`}
-            >
-              待我完善
+              我的任务
             </button>
           </div>
+
+          {/* 智能助手按钮 */}
+          <button
+            onClick={() => setShowChat(c => !c)}
+            className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-700 text-sm hover:bg-indigo-100 transition-colors"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+            </svg>
+            智能助手
+          </button>
         </div>
+
+        {/* 智能助手浮窗 */}
+        {showChat && (
+          <div className="fixed bottom-6 right-6 z-50 w-96 bg-white rounded-2xl shadow-2xl border border-gray-200 flex flex-col" style={{ height: '520px' }}>
+            <div className="flex items-center justify-between px-4 py-3 bg-indigo-600 rounded-t-2xl">
+              <div className="flex items-center gap-2 text-white font-medium text-sm">
+                <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+                </svg>
+                EICD 智能助手
+              </div>
+              <div className="flex items-center gap-2">
+                <button onClick={() => setChatMessages([])} className="text-indigo-200 hover:text-white text-xs">清空</button>
+                <button onClick={() => setShowChat(false)} className="text-indigo-200 hover:text-white">✕</button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+              {chatMessages.length === 0 && (
+                <div className="text-center text-gray-400 text-sm mt-8">
+                  <p className="text-2xl mb-2">💬</p>
+                  <p>你好！我是 EICD 智能助手</p>
+                  <p className="mt-1 text-xs">可以问我关于平台操作、字段含义、航空电气规范等问题</p>
+                </div>
+              )}
+              {chatMessages.map((msg, i) => (
+                <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div className={`max-w-[80%] px-3 py-2 rounded-2xl text-sm whitespace-pre-wrap ${
+                    msg.role === 'user'
+                      ? 'bg-indigo-600 text-white rounded-br-sm'
+                      : 'bg-gray-100 text-gray-800 rounded-bl-sm'
+                  }`}>
+                    {msg.content}
+                  </div>
+                </div>
+              ))}
+              {chatLoading && (
+                <div className="flex justify-start">
+                  <div className="bg-gray-100 text-gray-500 px-3 py-2 rounded-2xl rounded-bl-sm text-sm">
+                    <span className="animate-pulse">正在思考...</span>
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="px-4 py-3 border-t border-gray-100">
+              <form onSubmit={async e => {
+                e.preventDefault();
+                const text = chatInput.trim();
+                if (!text || chatLoading) return;
+                const newMessages: ChatMsg[] = [...chatMessages, { role: 'user', content: text }];
+                setChatMessages(newMessages);
+                setChatInput('');
+                setChatLoading(true);
+                try {
+                  const res = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', ...API_HEADERS() },
+                    body: JSON.stringify({ messages: newMessages }),
+                  });
+                  const data = await res.json();
+                  setChatMessages([...newMessages, { role: 'assistant', content: data.reply || data.error || '助手暂无回复' }]);
+                } catch {
+                  setChatMessages([...newMessages, { role: 'assistant', content: '网络错误，请稍后再试' }]);
+                } finally {
+                  setChatLoading(false);
+                }
+              }} className="flex gap-2">
+                <input
+                  value={chatInput}
+                  onChange={e => setChatInput(e.target.value)}
+                  placeholder="输入问题..."
+                  className="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-indigo-400"
+                  disabled={chatLoading}
+                />
+                <button type="submit" disabled={chatLoading || !chatInput.trim()}
+                  className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700 disabled:opacity-50">
+                  发送
+                </button>
+              </form>
+            </div>
+          </div>
+        )}
 
         {/* 内容区 */}
         {!selectedProjectId ? (
@@ -2608,6 +2872,81 @@ export default function ProjectDataView() {
                           }
                         </select>
                       )
+                    ) : f.key === '设备装机构型' ? (
+                      <div className="border border-gray-300 rounded px-2 py-1.5 text-sm max-h-32 overflow-y-auto">
+                        {projectConfigurations.length === 0 ? (
+                          <span className="text-gray-400 text-xs">暂无构型，请先在项目管理中添加</span>
+                        ) : (
+                          projectConfigurations.map(c => {
+                            const selected = ((deviceForm as any)['设备装机构型'] || '').split(',').map((s: string) => s.trim()).filter(Boolean);
+                            const checked = selected.includes(c.name);
+                            return (
+                              <label key={c.id} className="flex items-center gap-1.5 py-0.5 cursor-pointer hover:bg-gray-50">
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={e => {
+                                    const cur = ((deviceForm as any)['设备装机构型'] || '').split(',').map((s: string) => s.trim()).filter(Boolean);
+                                    const next = e.target.checked ? [...cur, c.name] : cur.filter((v: string) => v !== c.name);
+                                    setDeviceForm({ ...deviceForm, '设备装机构型': next.join(',') });
+                                  }}
+                                  className="accent-violet-600"
+                                />
+                                <span>{c.name}</span>
+                              </label>
+                            );
+                          })
+                        )}
+                      </div>
+                    ) : f.key === '设备部件所属系统（4位ATA）' ? (
+                      <div className="flex gap-1">
+                        <select
+                          value={(() => {
+                            const v = ((deviceForm as any)['设备部件所属系统（4位ATA）'] || '').trim();
+                            if (v === 'N/A') return 'N/A';
+                            const prefix = v.split('-')[0];
+                            return ['21','23','24','25','27','30','31','32','33','34','42','45','46','52','86','90','92'].includes(prefix) ? prefix : '';
+                          })()}
+                          onChange={e => {
+                            const sel = e.target.value;
+                            if (sel === 'N/A') {
+                              setDeviceForm({ ...deviceForm, '设备部件所属系统（4位ATA）': 'N/A' });
+                              validateATA('N/A');
+                            } else if (sel) {
+                              setDeviceForm({ ...deviceForm, '设备部件所属系统（4位ATA）': sel });
+                              validateATA(sel);
+                            } else {
+                              setDeviceForm({ ...deviceForm, '设备部件所属系统（4位ATA）': '' });
+                              validateATA('');
+                            }
+                          }}
+                          className="w-20 border border-gray-300 rounded px-1 py-1 text-sm flex-shrink-0"
+                        >
+                          <option value="">--</option>
+                          {['21','23','24','25','27','30','31','32','33','34','42','45','46','52','86','90','92'].map(v => (
+                            <option key={v} value={v}>{v}</option>
+                          ))}
+                          <option value="N/A">N/A</option>
+                        </select>
+                        <input
+                          type="text"
+                          value={(deviceForm as any)['设备部件所属系统（4位ATA）'] || ''}
+                          onChange={e => {
+                            setDeviceForm({ ...deviceForm, '设备部件所属系统（4位ATA）': e.target.value });
+                            validateATA(e.target.value);
+                          }}
+                          onBlur={() => {
+                            const v = ((deviceForm as any)['设备部件所属系统（4位ATA）'] || '').trim();
+                            if (/^\d{2}$/.test(v)) {
+                              const filled = `${v}-XX`;
+                              setDeviceForm(prev => ({ ...prev, '设备部件所属系统（4位ATA）': filled }));
+                              validateATA(filled);
+                            }
+                          }}
+                          placeholder="如 42-XX"
+                          className={`flex-1 border rounded px-2 py-1 text-sm ${fw ? (fw.type === 'error' ? 'border-red-400' : 'border-orange-400') : 'border-gray-300'}`}
+                        />
+                      </div>
                     ) : f.key === '设备DAL' ? (
                       <select
                         value={(deviceForm as any)[f.key] || ''}
@@ -2619,7 +2958,7 @@ export default function ProjectDataView() {
                           <option key={v} value={v}>{v}</option>
                         ))}
                       </select>
-                    ) : (f.key === '设备壳体是否金属' || f.key === '是否为选装设备' || f.key === '壳体接地是否故障电流路径') ? (
+                    ) : (f.key === '设备壳体是否金属' || f.key === '是否为选装设备' || f.key === '壳体接地是否故障电流路径' || f.key === '是否有特殊布线需求') ? (
                       <select
                         value={(deviceForm as any)[f.key] || ''}
                         onChange={e => setDeviceForm({ ...deviceForm, [f.key]: e.target.value })}
@@ -2636,7 +2975,6 @@ export default function ProjectDataView() {
                         onChange={e => {
                           const newForm = { ...deviceForm, [f.key]: e.target.value };
                           setDeviceForm(newForm);
-                          if (f.key === '设备部件所属系统（4位ATA）') validateATA(e.target.value);
                         }}
                         onBlur={() => {
                           if (['设备编号', '设备中文名称', '设备LIN号（DOORS）', '设备编号（DOORS）'].includes(f.key as string)) {
@@ -2685,6 +3023,8 @@ export default function ProjectDataView() {
                 { key: '设备端元器件供应商名称', label: '设备端元器件供应商名称' },
                 { key: '匹配的线束端元器件件号', label: '匹配的线束端元器件件号' },
                 { key: '匹配的线束线型', label: '匹配的线束线型' },
+                { key: '尾附件件号', label: '尾附件件号' },
+                { key: '触件型号', label: '触件型号' },
                 { key: '设备端元器件匹配的元器件是否随设备交付', label: '设备端元器件匹配的元器件是否随设备交付' },
                 { key: '备注', label: '备注' },
               ].map(f => {
@@ -2909,10 +3249,13 @@ export default function ProjectDataView() {
                 {/* 其余字段 */}
                 {(() => {
                   const 成品线子字段: (keyof SignalRow)[] = ['成品线件号','成品线线规','成品线类型','成品线长度','成品线载流量','成品线线路压降','成品线标识','成品线与机上线束对接方式','成品线安装责任'];
+                  const 电源子字段: (keyof SignalRow)[] = ['额定电压', '额定电流', '设备正常工作电压范围'];
                   const isY = (signalForm as any)['是否成品线'] === 'Y';
+                  const isPower = ((signalForm as any)['连接类型'] || '').includes('电源');
                   return SIGNAL_FIELDS.filter(f => {
                     if (f.key === 'unique_id') return false;
                     if (成品线子字段.includes(f.key) && !isY) return false;
+                    if (电源子字段.includes(f.key) && !isPower) return false;
                     return true;
                   }).map(f => (
                     <div key={f.key}>
@@ -2922,12 +3265,36 @@ export default function ProjectDataView() {
                       {f.key === '连接类型' ? (
                         <select value={(signalForm as any)[f.key] || ''} onChange={e => setSignalForm({ ...signalForm, [f.key]: e.target.value })} className="w-full border border-gray-300 rounded px-2 py-1 text-sm">
                           <option value="">请选择</option>
-                          {['A429', 'RS485', 'CAN', 'Discrete'].map(v => <option key={v} value={v}>{v}</option>)}
+                          {['ARINC 429', 'Discrete', 'CAN Bus', 'RS-422', 'RS-485', 'RS-232', '模拟量', '电源（低压）', '电源（高压）', '千兆网', '普通以太网', '光纤', '射频', '其他（在备注中说明）'].map(v => <option key={v} value={v}>{v}</option>)}
                         </select>
                       ) : f.key === '是否成品线' ? (
                         <select value={(signalForm as any)[f.key] || ''} onChange={e => setSignalForm({ ...signalForm, [f.key]: e.target.value })} className="w-full border border-gray-300 rounded px-2 py-1 text-sm">
                           <option value="">请选择</option>
                           {['Y', 'N'].map(v => <option key={v} value={v}>{v}</option>)}
+                        </select>
+                      ) : f.key === '极性' ? (
+                        <select value={(signalForm as any)[f.key] || ''} onChange={e => setSignalForm({ ...signalForm, [f.key]: e.target.value })} className="w-full border border-gray-300 rounded px-2 py-1 text-sm">
+                          <option value="">请选择</option>
+                          <option value="正">正</option>
+                          <option value="负">负</option>
+                        </select>
+                      ) : f.key === '接地代码' ? (
+                        <select value={(signalForm as any)[f.key] || ''} onChange={e => setSignalForm({ ...signalForm, [f.key]: e.target.value })} className="w-full border border-gray-300 rounded px-2 py-1 text-sm">
+                          <option value="">请选择</option>
+                          <option value="A">A：机架地，用于设备机架/壳体接地（Chassis ground）</option>
+                          <option value="B">B：交流信号地，用于最大电流≤1A的交流信号接地（AC signal ground，≤1A）</option>
+                          <option value="C">C：直流信号地，用于最大电流≤1A的直流信号接地（DC signal ground，≤1A）</option>
+                          <option value="D">D：交流电源地，用于最大电流&gt;1A的交流电回路接地（AC power ground，&gt;1A）</option>
+                          <option value="E">E：直流电源地，用于最大电流&gt;1A的直流电回路接地（DC power ground，&gt;1A）</option>
+                          <option value="H">H：高频无线电设备电源地，用于高频系统电源回线接地（HFRE power ground）</option>
+                          <option value="I">I：高频无线电设备信号地，用于高频系统信号线接地（HFRE signal ground）</option>
+                          <option value="J">J：屏蔽地，导线屏蔽接地、EMI编织保护屏蔽接地（Shield Ground）</option>
+                          <option value="其他">其他（在备注中说明）</option>
+                        </select>
+                      ) : f.key === '信号ATA' ? (
+                        <select value={(signalForm as any)[f.key] || ''} onChange={e => setSignalForm({ ...signalForm, [f.key]: e.target.value })} className="w-full border border-gray-300 rounded px-2 py-1 text-sm">
+                          <option value="">请选择</option>
+                          {['21','23','24','25','27','30','31','32','33','34','42','45','46','52','86','90','92','N/A'].map(v => <option key={v} value={v}>{v}</option>)}
                         </select>
                       ) : (
                         <input type="text" value={(signalForm as any)[f.key] || ''} onChange={e => setSignalForm({ ...signalForm, [f.key]: e.target.value })} className="w-full border border-gray-300 rounded px-2 py-1 text-sm" />
@@ -2959,6 +3326,11 @@ export default function ProjectDataView() {
                     <div className="flex justify-between items-center mb-2">
                       <span className="text-xs font-medium text-gray-600">
                         端点 {idx + 1}
+                        {ep.设备负责人 === user?.username
+                          ? <span className="ml-1 text-blue-600">（我负责的设备）</span>
+                          : ep.设备负责人
+                            ? <span className="ml-1 text-gray-500">（{ep.设备负责人}）</span>
+                            : null}
                         {ep.confirmed === 0 && <span className="ml-1.5 px-1.5 py-0.5 rounded bg-orange-100 text-orange-600 text-xs">待确认</span>}
                         {ep.confirmed === 1 && <span className="ml-1.5 px-1.5 py-0.5 rounded bg-green-100 text-green-700 text-xs">已确认</span>}
                       </span>
@@ -2973,26 +3345,30 @@ export default function ProjectDataView() {
                       )}
                     </div>
                     <div className="grid grid-cols-4 gap-2">
-                      {/* 设备搜索 */}
+                      {/* 设备选择 */}
                       <div className="relative">
                         <label className="block text-xs text-gray-500 mb-0.5">设备编号</label>
-                        <input
-                          type="text"
-                          value={epDeviceSearch[idx] || ep.设备编号}
-                          onChange={e => searchEpDevice(idx, e.target.value)}
-                          placeholder="搜索设备..."
-                          className="w-full border border-gray-300 rounded px-2 py-1 text-xs"
-                        />
-                        {epDeviceResults[idx]?.length > 0 && (
-                          <div className="absolute top-full left-0 right-0 bg-white border border-gray-200 rounded shadow-lg z-10 max-h-32 overflow-y-auto">
-                            {epDeviceResults[idx].map(d => (
-                              <button key={d.id} onClick={() => selectEpDevice(idx, d)}
-                                className="w-full text-left px-2 py-1 text-xs hover:bg-blue-50">
-                                {d.设备编号} {d.设备中文名称 ? `(${d.设备中文名称})` : ''}
-                              </button>
-                            ))}
-                          </div>
-                        )}
+                        <>
+                          <input
+                            type="text"
+                            value={epDeviceSearch[idx] || ep.设备编号}
+                            onChange={e => searchEpDevice(idx, e.target.value)}
+                            onFocus={() => { if (!epDeviceSearch[idx] && !ep.设备编号) searchEpDevice(idx, ''); }}
+                            placeholder="搜索设备..."
+                            className="w-full border border-gray-300 rounded px-2 py-1 text-xs"
+                          />
+                          {epDeviceResults[idx]?.length > 0 && (
+                            <div className="absolute top-full left-0 right-0 bg-white border border-gray-200 rounded shadow-lg z-10 max-h-32 overflow-y-auto">
+                              {epDeviceResults[idx].map(d => (
+                                <button key={d.id} onClick={() => selectEpDevice(idx, d)}
+                                  className={`w-full text-left px-2 py-1 text-xs hover:bg-blue-50 ${d.设备负责人 === user?.username ? 'font-medium text-blue-700' : ''}`}>
+                                  {d.设备编号} {d.设备中文名称 ? `(${d.设备中文名称})` : ''}
+                                  {d.设备负责人 === user?.username && <span className="ml-1 text-blue-400">★</span>}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </>
                       </div>
                       {/* 设备负责人（只读） */}
                       <div>

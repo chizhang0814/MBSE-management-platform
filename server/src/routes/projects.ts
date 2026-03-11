@@ -1321,5 +1321,76 @@ export function projectRoutes(db: Database) {
     }
   });
 
+  // ── 构型管理 ──
+  router.get('/:id/configurations', authenticate, async (req: AuthRequest, res) => {
+    try {
+      const projectId = Number(req.params.id);
+      const rows = await db.query(
+        `SELECT id, name, description, created_at FROM project_configurations WHERE project_id = ? ORDER BY created_at ASC`,
+        [projectId]
+      );
+      res.json({ configurations: rows });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.post('/:id/configurations', authenticate, requireRole('admin'), async (req: AuthRequest, res) => {
+    try {
+      const projectId = Number(req.params.id);
+      const { name, description } = req.body;
+      if (!name || !String(name).trim()) return res.status(400).json({ error: '构型名称不能为空' });
+      const trimmed = String(name).trim();
+      const existing = await db.get(
+        `SELECT id FROM project_configurations WHERE project_id = ? AND name = ?`,
+        [projectId, trimmed]
+      );
+      if (existing) return res.status(400).json({ error: `构型"${trimmed}"已存在` });
+      const result = await db.run(
+        `INSERT INTO project_configurations (project_id, name, description) VALUES (?, ?, ?)`,
+        [projectId, trimmed, description || null]
+      );
+      res.json({ id: result.lastID, name: trimmed, description: description || null });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.put('/:id/configurations/:configId', authenticate, requireRole('admin'), async (req: AuthRequest, res) => {
+    try {
+      const projectId = Number(req.params.id);
+      const configId = Number(req.params.configId);
+      const { name, description } = req.body;
+      if (!name || !String(name).trim()) return res.status(400).json({ error: '构型名称不能为空' });
+      const trimmed = String(name).trim();
+      const existing = await db.get(
+        `SELECT id FROM project_configurations WHERE project_id = ? AND name = ? AND id != ?`,
+        [projectId, trimmed, configId]
+      );
+      if (existing) return res.status(400).json({ error: `构型"${trimmed}"已存在` });
+      await db.run(
+        `UPDATE project_configurations SET name = ?, description = ? WHERE id = ? AND project_id = ?`,
+        [trimmed, description || null, configId, projectId]
+      );
+      res.json({ id: configId, name: trimmed, description: description || null });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.delete('/:id/configurations/:configId', authenticate, requireRole('admin'), async (req: AuthRequest, res) => {
+    try {
+      const projectId = Number(req.params.id);
+      const configId = Number(req.params.configId);
+      await db.run(
+        `DELETE FROM project_configurations WHERE id = ? AND project_id = ?`,
+        [configId, projectId]
+      );
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   return router;
 }

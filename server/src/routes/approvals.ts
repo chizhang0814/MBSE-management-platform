@@ -185,6 +185,7 @@ export function approvalRoutes(db: Database) {
         create_connector: '新建连接器', edit_connector: '修改连接器', delete_connector: '删除连接器',
         create_pin: '新建针孔', edit_pin: '修改针孔', delete_pin: '删除针孔',
         create_signal: '新建信号', edit_signal: '修改信号', delete_signal: '删除信号',
+        request_device_management: '申请设备管理',
       };
       const label = actionLabels[approvalReq.action_type] || approvalReq.action_type;
       const hasEdits = edited_payload && typeof edited_payload === 'object' && Object.keys(edited_payload).length > 0;
@@ -257,7 +258,11 @@ export function approvalRoutes(db: Database) {
         : approvalReq.entity_type === 'signal' ? 'signals' : null;
 
       if (entityTable && approvalReq.entity_id) {
-        if (approvalReq.action_type.startsWith('delete_')) {
+        if (approvalReq.action_type === 'request_device_management') {
+          // 管理权申请被拒绝：恢复申请前的原始状态
+          const originalStatus = (() => { try { return JSON.parse(approvalReq.old_payload)?.status || 'normal'; } catch { return 'normal'; } })();
+          await db.run(`UPDATE devices SET status = ? WHERE id = ?`, [originalStatus, approvalReq.entity_id]);
+        } else if (approvalReq.action_type.startsWith('delete_')) {
           // 删除操作被拒绝：恢复为正常状态
           const restoreStatus = approvalReq.entity_type === 'signal' ? 'Active' : 'normal';
           await db.run(`UPDATE ${entityTable} SET status = ? WHERE id = ?`, [restoreStatus, approvalReq.entity_id]);

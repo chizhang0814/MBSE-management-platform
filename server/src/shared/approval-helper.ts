@@ -46,6 +46,60 @@ export async function getProjectRoleMembers(db: Database, projectId: number, rol
   return result;
 }
 
+// ── 设备校验（审批通过后重跑，同步更新 validation_errors）────────────────────
+
+async function revalidateDevice(db: Database, deviceId: number, projectId: number): Promise<void> {
+  const device = await db.get('SELECT * FROM devices WHERE id = ?', [deviceId]);
+  if (!device) return;
+
+  const veErrors: string[] = [];
+
+  const adlMatch = await db.get(
+    `SELECT 设备布置区域 FROM aircraft_device_list WHERE project_id = ? AND 电设备编号 = ? AND 设备编号_DOORS = ? AND LIN号_DOORS = ? AND object_text = ?`,
+    [projectId,
+     (device['设备编号'] || '').trim(),
+     (device['设备编号（DOORS）'] || '').trim(),
+     (device['设备LIN号（DOORS）'] || '').trim(),
+     (device['设备中文名称'] || '').trim()]
+  );
+  if (!adlMatch) {
+    veErrors.push('设备编号（DOORS）', '设备LIN号（DOORS）', '设备编号', '设备中文名称', '设备安装位置');
+  } else {
+    if ((adlMatch['设备布置区域'] || '').trim() !== (device['设备安装位置'] || '').trim()) {
+      veErrors.push('设备安装位置');
+    }
+  }
+
+  if (!['A', 'B', 'C', 'D', 'E', '其他'].includes((device['设备DAL'] || '').trim())) {
+    veErrors.push('设备DAL');
+  }
+
+  const ataVal = (device['设备部件所属系统（4位ATA）'] || '').trim();
+  if (!/^\d{2}-\d{2}$/.test(ataVal) && ataVal !== '其他') {
+    veErrors.push('设备部件所属系统（4位ATA）');
+  }
+
+  const isMetalShell = (device['设备壳体是否金属'] || '').trim();
+  if (!['是', '否'].includes(isMetalShell)) veErrors.push('设备壳体是否金属');
+
+  const shellTreated = (device['金属壳体表面是否经过特殊处理而不易导电'] || '').trim();
+  if (isMetalShell === '是' && !['是', '否'].includes(shellTreated)) {
+    veErrors.push('金属壳体表面是否经过特殊处理而不易导电');
+  } else if (isMetalShell === '否' && shellTreated !== 'N/A') {
+    veErrors.push('金属壳体表面是否经过特殊处理而不易导电');
+  }
+
+  if (!['线搭接', '面搭接', '无'].includes((device['设备壳体接地方式'] || '').trim())) {
+    veErrors.push('设备壳体接地方式');
+  }
+
+  if (!['是', '否'].includes((device['壳体接地是否故障电流路径'] || '').trim())) {
+    veErrors.push('壳体接地是否故障电流路径');
+  }
+
+  await db.run(`UPDATE devices SET validation_errors = ? WHERE id = ?`, [JSON.stringify(veErrors), deviceId]);
+}
+
 // ── 审批请求 ──────────────────────────────────────────────────────────────────
 
 export interface ApprovalItemSpec {
@@ -185,20 +239,30 @@ export async function checkAndAdvancePhase(db: Database, approvalRequestId: numb
   // 所有approval通过 → 将实体改为Active
   await db.run(`UPDATE approval_requests SET status = 'approved' WHERE id = ?`, [approvalRequestId]);
 
-  const entityTable = req.entity_type === 'device' ? 'devices'
-    : req.entity_type === 'connector' ? 'connectors'
-    : req.entity_type === 'pin' ? 'pins'
-    : req.entity_type === 'signal' ? 'signals'
-    : null;
+  if (req.action_type === 'request_device_management') {
+    // 管理权申请：更新负责人，状态恢复到申请前的原始状态
+    const originalStatus = (() => { try { return JSON.parse(req.old_payload)?.status || 'normal'; } catch { return 'normal'; } })();
+    await db.run(`UPDATE devices SET "设备负责人" = ?, status = ? WHERE id = ?`, [req.requester_username, originalStatus, req.entity_id]);
+  } else {
+    const entityTable = req.entity_type === 'device' ? 'devices'
+      : req.entity_type === 'connector' ? 'connectors'
+      : req.entity_type === 'pin' ? 'pins'
+      : req.entity_type === 'signal' ? 'signals'
+      : null;
 
-  if (entityTable && req.entity_id) {
-    if (req.action_type.startsWith('delete_')) {
-      // 删除操作：执行实际删除
-      await db.run(`DELETE FROM ${entityTable} WHERE id = ?`, [req.entity_id]);
-    } else {
-      // 创建/编辑操作：将实体状态改为Active
-      const activeStatus = req.entity_type === 'signal' ? 'Active' : 'normal';
-      await db.run(`UPDATE ${entityTable} SET status = ? WHERE id = ?`, [activeStatus, req.entity_id]);
+    if (entityTable && req.entity_id) {
+      if (req.action_type.startsWith('delete_')) {
+        // 删除操作：执行实际删除
+        await db.run(`DELETE FROM ${entityTable} WHERE id = ?`, [req.entity_id]);
+      } else {
+        // 创建/编辑操作：将实体状态改为Active
+        const activeStatus = req.entity_type === 'signal' ? 'Active' : 'normal';
+        await db.run(`UPDATE ${entityTable} SET status = ? WHERE id = ?`, [activeStatus, req.entity_id]);
+        // 设备审批通过后重新校验，清除已修正字段的 validation_errors
+        if (req.entity_type === 'device') {
+          await revalidateDevice(db, req.entity_id, req.project_id);
+        }
+      }
     }
   }
 

@@ -42,6 +42,17 @@ export default function ProjectManagement() {
 
   const [formData, setFormData] = useState({ name: '', description: '' });
 
+  // 构型管理
+  const [showConfigModal, setShowConfigModal] = useState(false);
+  const [configProjectId, setConfigProjectId] = useState<number | null>(null);
+  const [configurations, setConfigurations] = useState<{ id: number; name: string; description?: string }[]>([]);
+  const [configName, setConfigName] = useState('');
+  const [configDesc, setConfigDesc] = useState('');
+  const [configLoading, setConfigLoading] = useState(false);
+  const [editingConfigId, setEditingConfigId] = useState<number | null>(null);
+  const [editingConfigName, setEditingConfigName] = useState('');
+  const [editingConfigDesc, setEditingConfigDesc] = useState('');
+
   useEffect(() => {
     if (user?.role === 'admin') {
       loadProjects();
@@ -201,6 +212,65 @@ export default function ProjectManagement() {
     }
   };
 
+  const openConfigModal = async (projectId: number) => {
+    setConfigProjectId(projectId);
+    setConfigName('');
+    setConfigDesc('');
+    setConfigLoading(true);
+    setShowConfigModal(true);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/configurations`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+      });
+      const data = await res.json();
+      setConfigurations(data.configurations || []);
+    } catch { setConfigurations([]); }
+    finally { setConfigLoading(false); }
+  };
+
+  const handleAddConfig = async () => {
+    if (!configName.trim() || !configProjectId) return;
+    try {
+      const res = await fetch(`/api/projects/${configProjectId}/configurations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` },
+        body: JSON.stringify({ name: configName.trim(), description: configDesc.trim() || undefined })
+      });
+      if (!res.ok) throw new Error((await res.json()).error || '添加失败');
+      const newConfig = await res.json();
+      setConfigurations(prev => [...prev, newConfig]);
+      setConfigName('');
+      setConfigDesc('');
+    } catch (err: any) { alert(err.message || '添加失败'); }
+  };
+
+  const handleSaveEditConfig = async () => {
+    if (!editingConfigName.trim() || !configProjectId || editingConfigId === null) return;
+    try {
+      const res = await fetch(`/api/projects/${configProjectId}/configurations/${editingConfigId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` },
+        body: JSON.stringify({ name: editingConfigName.trim(), description: editingConfigDesc.trim() || undefined })
+      });
+      if (!res.ok) throw new Error((await res.json()).error || '保存失败');
+      const updated = await res.json();
+      setConfigurations(prev => prev.map(c => c.id === editingConfigId ? updated : c));
+      setEditingConfigId(null);
+    } catch (err: any) { alert(err.message || '保存失败'); }
+  };
+
+  const handleDeleteConfig = async (configId: number) => {
+    if (!confirm('确定删除此构型？') || !configProjectId) return;
+    try {
+      const res = await fetch(`/api/projects/${configProjectId}/configurations/${configId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+      });
+      if (!res.ok) throw new Error((await res.json()).error || '删除失败');
+      setConfigurations(prev => prev.filter(c => c.id !== configId));
+    } catch (err: any) { alert(err.message || '删除失败'); }
+  };
+
   const handleExportSysml = async (projectId: number, projectName: string) => {
     try {
       const response = await fetch(`/api/projects/${projectId}/export-sysml`, {
@@ -349,6 +419,7 @@ export default function ProjectManagement() {
                         onClick={() => { setListSearch(''); openViewList(project.id); }}
                         className="text-cyan-600 hover:text-cyan-800"
                       >查看全机设备清单</button>
+                      <button onClick={() => openConfigModal(project.id)} className="text-violet-600 hover:text-violet-800">添加构型</button>
                       <button onClick={() => handleEdit(project)} className="text-green-600 hover:text-green-800">编辑</button>
                       <button onClick={() => handleDelete(project.id)} className="text-red-600 hover:text-red-800">删除</button>
                     </td>
@@ -670,6 +741,116 @@ export default function ProjectManagement() {
             <div className="flex justify-end gap-2 mt-4">
               <button onClick={() => setShowListEditModal(false)} className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 text-sm">取消</button>
               <button onClick={saveListRow} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm">保存</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* 构型管理弹窗 */}
+      {showConfigModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-lg max-h-[80vh] flex flex-col shadow-xl">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-lg font-bold">构型管理</h2>
+              <button onClick={() => setShowConfigModal(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
+            </div>
+
+            {/* 已有构型列表 */}
+            <div className="flex-1 overflow-y-auto mb-4 min-h-0">
+              {configLoading ? (
+                <p className="text-sm text-gray-400 text-center py-4">加载中...</p>
+              ) : configurations.length === 0 ? (
+                <p className="text-sm text-gray-400 text-center py-4">暂无构型，请在下方添加</p>
+              ) : (
+                <ul className="divide-y divide-gray-100">
+                  {configurations.map((c, idx) => {
+                    const n = idx + 1;
+                    const circled = n <= 20
+                      ? String.fromCodePoint(0x245F + n)
+                      : n <= 35
+                        ? String.fromCodePoint(0x323C + n)
+                        : `(${n})`;
+                    const isEditing = editingConfigId === c.id;
+                    return (
+                      <li key={c.id} className="py-2 px-1">
+                        {isEditing ? (
+                          <div className="flex flex-col gap-1.5">
+                            <div className="flex gap-2 items-center">
+                              <span className="text-violet-600 font-medium w-5 shrink-0">{circled}</span>
+                              <input
+                                autoFocus
+                                type="text"
+                                value={editingConfigName}
+                                onChange={e => setEditingConfigName(e.target.value)}
+                                onKeyDown={e => { if (e.key === 'Enter') handleSaveEditConfig(); if (e.key === 'Escape') setEditingConfigId(null); }}
+                                className="flex-1 border border-violet-300 rounded px-2 py-1 text-sm"
+                                placeholder="构型名称"
+                              />
+                            </div>
+                            <div className="flex gap-2 items-center pl-7">
+                              <input
+                                type="text"
+                                value={editingConfigDesc}
+                                onChange={e => setEditingConfigDesc(e.target.value)}
+                                className="flex-1 border border-gray-300 rounded px-2 py-1 text-sm"
+                                placeholder="备注说明（可选）"
+                              />
+                              <button onClick={handleSaveEditConfig} disabled={!editingConfigName.trim()} className="px-3 py-1 bg-violet-600 text-white rounded text-xs hover:bg-violet-700 disabled:opacity-50">保存</button>
+                              <button onClick={() => setEditingConfigId(null)} className="px-3 py-1 border border-gray-300 rounded text-xs hover:bg-gray-50">取消</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <span className="mr-1.5 text-violet-600 font-medium">{circled}</span>
+                              <span className="font-medium text-sm">{c.name}</span>
+                              {c.description && <span className="ml-2 text-xs text-gray-500">{c.description}</span>}
+                            </div>
+                            <div className="flex gap-3 ml-4">
+                              <button
+                                onClick={() => { setEditingConfigId(c.id); setEditingConfigName(c.name); setEditingConfigDesc(c.description || ''); }}
+                                className="text-violet-500 hover:text-violet-700 text-xs"
+                              >编辑</button>
+                              <button
+                                onClick={() => handleDeleteConfig(c.id)}
+                                className="text-red-400 hover:text-red-600 text-xs"
+                              >删除</button>
+                            </div>
+                          </div>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+
+            {/* 新增构型表单 */}
+            <div className="border-t pt-4">
+              <p className="text-xs font-medium text-gray-600 mb-2">新增构型</p>
+              <div className="flex gap-2 mb-2">
+                <input
+                  type="text"
+                  value={configName}
+                  onChange={e => setConfigName(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleAddConfig()}
+                  placeholder="构型名称（必填）"
+                  className="flex-1 border border-gray-300 rounded px-2 py-1.5 text-sm"
+                />
+              </div>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={configDesc}
+                  onChange={e => setConfigDesc(e.target.value)}
+                  placeholder="备注说明（可选）"
+                  className="flex-1 border border-gray-300 rounded px-2 py-1.5 text-sm"
+                />
+                <button
+                  onClick={handleAddConfig}
+                  disabled={!configName.trim()}
+                  className="px-4 py-1.5 bg-violet-600 text-white rounded text-sm hover:bg-violet-700 disabled:opacity-50"
+                >添加</button>
+              </div>
             </div>
           </div>
         </div>
