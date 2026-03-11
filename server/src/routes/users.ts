@@ -74,7 +74,7 @@ export function usersRoutes(db: Database) {
   // 获取所有用户
   router.get('/', authenticate, requireRole('admin'), async (req, res) => {
     try {
-      const users = await db.query('SELECT id, username, role, permissions, created_at FROM users ORDER BY id DESC');
+      const users = await db.query('SELECT id, username, name, department, remarks, role, permissions, created_at FROM users ORDER BY id DESC');
       // 解析 permissions JSON
       const parsedUsers = users.map((user: any) => ({
         ...user,
@@ -220,7 +220,13 @@ export function usersRoutes(db: Database) {
   // 创建用户
   router.post('/', authenticate, requireRole('admin'), async (req, res) => {
     try {
-      const { username, password, role, permissions } = req.body;
+      const username = (req.body.username || '').trim();
+      const password = (req.body.password || '').trim();
+      const role = (req.body.role || '').trim();
+      const { permissions } = req.body;
+      const name = req.body.name ? req.body.name.trim() : null;
+      const department = req.body.department ? req.body.department.trim() : null;
+      const remarks = req.body.remarks ? req.body.remarks.trim() : null;
 
       if (!username || !password || !role) {
         return res.status(400).json({ error: '缺少必要参数' });
@@ -242,11 +248,14 @@ export function usersRoutes(db: Database) {
       // 处理权限：如果是普通用户且有permissions，将其序列化为JSON
       const permissionsJson = permissions ? JSON.stringify(permissions) : '[]';
 
-      await db.run('INSERT INTO users (username, password, role, permissions) VALUES (?, ?, ?, ?)', [
+      await db.run('INSERT INTO users (username, password, role, permissions, name, department, remarks) VALUES (?, ?, ?, ?, ?, ?, ?)', [
         username,
         hashedPassword,
         role,
         permissionsJson,
+        name,
+        department,
+        remarks,
       ]);
 
       res.json({ message: '用户创建成功' });
@@ -259,7 +268,13 @@ export function usersRoutes(db: Database) {
   // 更新用户
   router.put('/:id', authenticate, requireRole('admin'), async (req, res) => {
     try {
-      const { username, password, role, permissions } = req.body;
+      const username = req.body.username ? req.body.username.trim() : undefined;
+      const password = req.body.password ? req.body.password.trim() : undefined;
+      const role = req.body.role ? req.body.role.trim() : undefined;
+      const { permissions } = req.body;
+      const name = req.body.name !== undefined ? (req.body.name || '').trim() || null : undefined;
+      const department = req.body.department !== undefined ? (req.body.department || '').trim() || null : undefined;
+      const remarks = req.body.remarks !== undefined ? (req.body.remarks || '').trim() || null : undefined;
       const userId = req.params.id;
 
       // 检查用户是否存在，并获取当前角色
@@ -282,7 +297,7 @@ export function usersRoutes(db: Database) {
       }
 
       // 更新用户信息
-      if (username || role || permissions !== undefined) {
+      {
         const updates: string[] = [];
         const params: any[] = [];
 
@@ -298,14 +313,20 @@ export function usersRoutes(db: Database) {
           updates.push('role = ?');
           params.push(role);
         }
-        
+
         if (permissions !== undefined) {
           updates.push('permissions = ?');
           params.push(JSON.stringify(permissions));
         }
 
-        params.push(userId);
-        await db.run(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`, params);
+        if (name !== undefined) { updates.push('name = ?'); params.push(name || null); }
+        if (department !== undefined) { updates.push('department = ?'); params.push(department || null); }
+        if (remarks !== undefined) { updates.push('remarks = ?'); params.push(remarks || null); }
+
+        if (updates.length > 0) {
+          params.push(userId);
+          await db.run(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`, params);
+        }
       }
 
       // 更新密码（如果提供）

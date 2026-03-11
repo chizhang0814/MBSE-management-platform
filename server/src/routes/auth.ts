@@ -31,16 +31,13 @@ export function authRoutes(db: Database) {
         { expiresIn: '7d' }
       );
 
-      // 查找 employees 表中 EID 与用户名匹配的员工姓名
-      const emp = await db.get('SELECT name FROM employees WHERE eid = ?', [user.username]);
-
       res.json({
         token,
         user: {
           id: user.id,
           username: user.username,
           display_name: user.display_name || null,
-          employee_name: emp?.name || null,
+          employee_name: user.name || null,
           role: user.role,
         },
       });
@@ -53,7 +50,8 @@ export function authRoutes(db: Database) {
   // 注册
   router.post('/register', async (req, res) => {
     try {
-      const { username, password } = req.body;
+      const username = (req.body.username || '').trim();
+      const password = (req.body.password || '').trim();
 
       if (!username || !password) {
         return res.status(400).json({ error: '用户名和密码不能为空' });
@@ -86,9 +84,8 @@ export function authRoutes(db: Database) {
   // 获取当前用户信息
   router.get('/me', authenticate, async (req: any, res) => {
     try {
-      const user = await db.get('SELECT id, username, display_name, role FROM users WHERE id = ?', [req.user.id]);
-      const emp = await db.get('SELECT name FROM employees WHERE eid = ?', [user.username]);
-      res.json({ user: { ...user, employee_name: emp?.name || null } });
+      const user = await db.get('SELECT id, username, display_name, name, role FROM users WHERE id = ?', [req.user.id]);
+      res.json({ user: { ...user, employee_name: user?.name || null } });
     } catch (error) {
       res.status(500).json({ error: '获取用户信息失败' });
     }
@@ -98,7 +95,7 @@ export function authRoutes(db: Database) {
   router.get('/profile', authenticate, async (req: any, res) => {
     try {
       const user = await db.get(
-        'SELECT id, username, display_name, department, role, permissions FROM users WHERE id = ?',
+        'SELECT id, username, name, department, role, permissions FROM users WHERE id = ?',
         [req.user.id]
       );
       if (!user) return res.status(404).json({ error: '用户不存在' });
@@ -120,13 +117,16 @@ export function authRoutes(db: Database) {
     }
   });
 
-  // 更新当前用户资料（display_name, department）
+  // 更新当前用户资料（name, department）
   router.put('/profile', authenticate, async (req: any, res) => {
     try {
-      const { display_name, department } = req.body;
+      const name = req.body.name !== undefined ? (req.body.name || '').trim() || null : undefined;
+      const department = req.body.department !== undefined ? (req.body.department || '').trim() || null : undefined;
+      // 兼容旧字段 display_name
+      const nameVal = name ?? ((req.body.display_name || '').trim() || null);
       await db.run(
-        'UPDATE users SET display_name = ?, department = ? WHERE id = ?',
-        [display_name || null, department || null, req.user.id]
+        'UPDATE users SET name = ?, department = ? WHERE id = ?',
+        [nameVal, department ?? null, req.user.id]
       );
       res.json({ message: '资料更新成功' });
     } catch (error) {

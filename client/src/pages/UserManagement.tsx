@@ -11,6 +11,9 @@ interface Permission {
 interface User {
   id: number;
   username: string;
+  name?: string;
+  department?: string;
+  remarks?: string;
   display_name?: string;
   role: string;
   permissions?: Permission[];
@@ -39,6 +42,9 @@ export default function UserManagement() {
     username: '',
     password: '',
     role: 'user',
+    name: '',
+    department: '',
+    remarks: '',
     permissions: [] as Permission[],
   });
   const [permRequests, setPermRequests] = useState<PermissionRequest[]>([]);
@@ -121,6 +127,9 @@ export default function UserManagement() {
         username: user.username,
         password: '',
         role: user.role,
+        name: user.name || '',
+        department: user.department || '',
+        remarks: user.remarks || '',
         permissions: user.permissions || [],
       });
     } else {
@@ -129,6 +138,9 @@ export default function UserManagement() {
         username: '',
         password: '',
         role: 'user',
+        name: '',
+        department: '',
+        remarks: '',
         permissions: [],
       });
     }
@@ -142,6 +154,9 @@ export default function UserManagement() {
       username: '',
       password: '',
       role: 'user',
+      name: '',
+      department: '',
+      remarks: '',
       permissions: [],
     });
   };
@@ -164,12 +179,15 @@ export default function UserManagement() {
       const body: any = {
         username: formData.username,
         role: formData.role,
+        name: formData.name || null,
+        department: formData.department || null,
+        remarks: formData.remarks || null,
       };
 
       if (formData.password) {
         body.password = formData.password;
       }
-      
+
       if (formData.role === 'user' && formData.permissions) {
         body.permissions = formData.permissions;
       }
@@ -283,41 +301,33 @@ export default function UserManagement() {
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  ID
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  用户名
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  角色
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  权限
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  创建时间
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  操作
-                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">用户名(EID)</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">姓名</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">部门</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">备注</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">角色</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">权限</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">创建时间</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {users.map((user) => (
                 <tr key={user.id}>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{user.id}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{user.username}</td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span
-                      className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                        user.role === 'admin' ? 'bg-purple-100 text-purple-800' : 'bg-blue-100 text-blue-800'
-                      }`}
-                    >
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">{user.id}</td>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm font-mono text-gray-900">{user.username}</td>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">{user.name || <span className="text-gray-300">-</span>}</td>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">{user.department || <span className="text-gray-300">-</span>}</td>
+                  <td className="px-4 py-3 text-sm text-gray-500 max-w-xs truncate">{user.remarks || <span className="text-gray-300">-</span>}</td>
+                  <td className="px-4 py-3 whitespace-nowrap">
+                    <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                      user.role === 'admin' ? 'bg-purple-100 text-purple-800' : 'bg-blue-100 text-blue-800'
+                    }`}>
                       {user.role === 'admin' ? '管理员' : '普通用户'}
                     </span>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  <td className="px-4 py-3 text-sm text-gray-500">
                     {user.role === 'admin' ? (
                       <span className="text-gray-400">不适用</span>
                     ) : (
@@ -336,10 +346,10 @@ export default function UserManagement() {
                       </div>
                     )}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
                     {new Date(user.created_at).toLocaleString()}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
+                  <td className="px-4 py-3 whitespace-nowrap text-sm font-medium space-x-2">
                     <button
                       onClick={() => handleOpenModal(user)}
                       className="text-blue-600 hover:text-blue-900"
@@ -435,17 +445,47 @@ export default function UserManagement() {
               <form onSubmit={handleSubmit}>
                 <div className="space-y-4">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      用户名
-                    </label>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">用户名（EID）</label>
                     <input
                       type="text"
                       value={formData.username}
-                      onChange={(e) =>
-                        setFormData({ ...formData, username: e.target.value })
-                      }
+                      onChange={(e) => setFormData({ ...formData, username: e.target.value })}
                       className="w-full border border-gray-300 rounded-lg px-3 py-2"
                       required
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">姓名</label>
+                      <input
+                        type="text"
+                        value={formData.name}
+                        onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                        placeholder="员工姓名"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">部门</label>
+                      <input
+                        type="text"
+                        value={formData.department}
+                        onChange={(e) => setFormData({ ...formData, department: e.target.value })}
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                        placeholder="所属部门"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">备注</label>
+                    <input
+                      type="text"
+                      value={formData.remarks}
+                      onChange={(e) => setFormData({ ...formData, remarks: e.target.value })}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                      placeholder="可选"
                     />
                   </div>
 
@@ -457,9 +497,7 @@ export default function UserManagement() {
                     <input
                       type="password"
                       value={formData.password}
-                      onChange={(e) =>
-                        setFormData({ ...formData, password: e.target.value })
-                      }
+                      onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                       className="w-full border border-gray-300 rounded-lg px-3 py-2"
                       required={!editingUser}
                       placeholder={editingUser ? '留空则不修改密码' : '请输入密码'}

@@ -100,7 +100,7 @@ export function deviceRoutes(db: Database) {
       const empNameMap: Record<string, string> = {};
       if (ownerIds.length > 0) {
         const ph = ownerIds.map(() => '?').join(',');
-        const emps = await db.query(`SELECT eid, name FROM employees WHERE eid IN (${ph})`, ownerIds);
+        const emps = await db.query(`SELECT username as eid, name FROM users WHERE username IN (${ph})`, ownerIds);
         for (const e of emps) empNameMap[e.eid] = e.name;
       }
       for (const d of devices) {

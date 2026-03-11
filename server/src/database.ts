@@ -1048,23 +1048,13 @@ export class Database {
     await this.run(`CREATE INDEX IF NOT EXISTS idx_approval_items_req ON approval_items(approval_request_id)`);
     await this.run(`CREATE INDEX IF NOT EXISTS idx_approval_items_recipient ON approval_items(recipient_username)`);
 
-    // 新增 employees 表（人员管理：EID ↔ 姓名 映射）
-    await this.run(`
-      CREATE TABLE IF NOT EXISTS employees (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        eid TEXT NOT NULL UNIQUE,
-        name TEXT NOT NULL,
-        remarks TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-
     // 清理废弃表
     try {
       await this.run('DROP TABLE IF EXISTS project_tables');
       await this.run('DROP TABLE IF EXISTS table_metadata');
       await this.run('DROP TABLE IF EXISTS custom_tables');
       await this.run('DROP TABLE IF EXISTS templates');
+      await this.run('DROP TABLE IF EXISTS employees');
     } catch (e: any) {
       console.log('Migration: drop legacy tables:', e.message);
     }
@@ -1181,6 +1171,33 @@ export class Database {
       }
     } catch (e: any) {
       console.log('Migration: devices 设备装机构型 column:', e.message);
+    }
+
+    // ── 迁移：将 employees 表合并到 users（方案B）──────────────────────────────
+    try {
+      const userCols = await this.query('PRAGMA table_info(users)');
+      const userColNames = userCols.map((c: any) => c.name);
+      if (!userColNames.includes('name')) {
+        await this.run(`ALTER TABLE users ADD COLUMN name TEXT`);
+        console.log('Database migration: added name column to users');
+      }
+      if (!userColNames.includes('remarks')) {
+        await this.run(`ALTER TABLE users ADD COLUMN remarks TEXT`);
+        console.log('Database migration: added remarks column to users');
+      }
+      // 从 employees 表复制姓名数据到 users
+      const empRows = await this.query('SELECT eid, name, remarks FROM employees');
+      for (const emp of empRows) {
+        await this.run(
+          `UPDATE users SET name = ?, remarks = ? WHERE username = ? AND name IS NULL`,
+          [emp.name, emp.remarks, emp.eid]
+        );
+      }
+      if (empRows.length > 0) {
+        console.log(`Database migration: merged ${empRows.length} employees into users.name`);
+      }
+    } catch (e: any) {
+      console.log('Migration: merge employees into users:', e.message);
     }
 
     // 初始化默认用户（不再创建示例数据）

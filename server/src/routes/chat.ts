@@ -181,7 +181,7 @@ async function executeTool(
 
     if (toolName === 'lookup_employee') {
       const { eid } = toolInput;
-      const emp = await db.get(`SELECT eid, name FROM employees WHERE eid = ?`, [eid]);
+      const emp = await db.get(`SELECT username as eid, name FROM users WHERE username = ?`, [eid]);
       return emp ? JSON.stringify(emp) : `未找到工号 ${eid} 的员工`;
     }
 

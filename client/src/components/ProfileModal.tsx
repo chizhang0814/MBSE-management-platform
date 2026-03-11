@@ -16,7 +16,7 @@ interface PermissionRequest {
 
 interface ProfileData {
   username: string;
-  display_name: string;
+  name: string;
   department: string;
   permissions: Permission[];
 }
@@ -32,7 +32,7 @@ export default function ProfileModal({ onClose }: Props) {
   const isAdmin = currentUser?.role === 'admin';
   const [profile, setProfile] = useState<ProfileData>({
     username: '',
-    display_name: '',
+    name: '',
     department: '',
     permissions: [],
   });
@@ -62,7 +62,7 @@ export default function ProfileModal({ onClose }: Props) {
           const { user, requests: reqs } = await profRes.json();
           setProfile({
             username: user.username,
-            display_name: user.display_name || user.username,
+            name: user.name || '',
             department: user.department || '',
             permissions: user.permissions || [],
           });
@@ -88,10 +88,10 @@ export default function ProfileModal({ onClose }: Props) {
       const res = await fetch('/api/auth/profile', {
         method: 'PUT',
         headers,
-        body: JSON.stringify({ display_name: profile.display_name, department: profile.department }),
+        body: JSON.stringify({ name: profile.name, department: profile.department }),
       });
       if (res.ok) {
-        updateUser({ display_name: profile.display_name });
+        updateUser({ name: profile.name });
         setSaveMsg('保存成功');
       } else {
         const data = await res.json();
@@ -112,6 +112,13 @@ export default function ProfileModal({ onClose }: Props) {
     setSubmitting(true);
     setReqMsg('');
     try {
+      // 先保存姓名和部门，避免用户忘记点"保存"
+      await fetch('/api/auth/profile', {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({ name: profile.name, department: profile.department }),
+      });
+
       const res = await fetch('/api/auth/permission-request', {
         method: 'POST',
         headers,
@@ -199,8 +206,8 @@ export default function ProfileModal({ onClose }: Props) {
                   <label className="block text-sm text-gray-600 mb-1">姓名</label>
                   <input
                     type="text"
-                    value={profile.display_name}
-                    onChange={e => setProfile(p => ({ ...p, display_name: e.target.value }))}
+                    value={profile.name}
+                    onChange={e => setProfile(p => ({ ...p, name: e.target.value }))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-blue-500 text-sm"
                     placeholder="请输入姓名"
                   />
