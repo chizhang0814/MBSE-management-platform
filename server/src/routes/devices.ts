@@ -715,6 +715,12 @@ export function deviceRoutes(db: Database) {
   router.delete('/project/:projectId/all', authenticate, requireRole('admin'), async (req: AuthRequest, res) => {
     try {
       const projectId = parseInt(req.params.projectId);
+      // 先删除 signal_endpoints 中引用该项目设备的记录（无 CASCADE）
+      await db.run(`
+        DELETE FROM signal_endpoints WHERE device_id IN (
+          SELECT id FROM devices WHERE project_id = ?
+        )
+      `, [projectId]);
       const { changes } = await db.run('DELETE FROM devices WHERE project_id = ?', [projectId]);
       res.json({ deleted: changes });
     } catch (err: any) {
@@ -832,13 +838,13 @@ export function deviceRoutes(db: Database) {
         return res.status(403).json({ error: '无权限，需要设备管理员或总体人员角色' });
       }
 
-      // 项目级 设备端元器件编号 唯一性校验
+      // 设备级 设备端元器件编号 唯一性校验
       const compId = fields['设备端元器件编号'];
       const dup = await db.get(
-        `SELECT c.id FROM connectors c JOIN devices d ON c.device_id = d.id WHERE d.project_id = ? AND c."设备端元器件编号" = ?`,
-        [devRow.project_id, compId]
+        `SELECT id FROM connectors WHERE device_id = ? AND "设备端元器件编号" = ?`,
+        [deviceId, compId]
       );
-      if (dup) return res.status(409).json({ error: `设备端元器件编号"${compId}"在本项目中已存在` });
+      if (dup) return res.status(409).json({ error: `设备端元器件编号"${compId}"在该设备中已存在` });
 
       // admin → 直接写入
       if (isAdmin) {

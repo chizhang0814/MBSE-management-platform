@@ -666,7 +666,9 @@ export default function ProjectDataView() {
   const openAddConnector = (deviceId: number) => {
     setConnectorTargetDeviceId(deviceId);
     setEditingConnector(null);
-    setConnectorForm({});
+    const device = devices.find(d => d.id === deviceId);
+    const lin = (device as any)?.['设备LIN号（DOORS）'];
+    setConnectorForm(lin ? { '设备端元器件编号': `${lin}-` } : {});
     setShowConnectorModal(true);
   };
 

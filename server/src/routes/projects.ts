@@ -3,7 +3,7 @@ import multer from 'multer';
 import xlsx from 'xlsx';
 import fs from 'fs';
 import { Database } from '../database.js';
-import { authenticate, requireRole, AuthRequest } from '../middleware/auth.js';
+import { authenticate, requireRole, requireAdminOrZonti, AuthRequest } from '../middleware/auth.js';
 import { generateSysml, TableData } from '../services/sysml-generator.js';
 import { SysmlApiClient } from '../services/sysml-api-client.js';
 import { syncToSysmlApi } from '../services/sysml-sync.js';
@@ -207,7 +207,7 @@ export function projectRoutes(db: Database) {
 
   // ── 更新项目（仅管理员）──────────────────────────────────
 
-  router.put('/:id', authenticate, requireRole('admin'), async (req: AuthRequest, res) => {
+  router.put('/:id', authenticate, requireAdminOrZonti(db), async (req: AuthRequest, res) => {
     try {
       const { name, description } = req.body;
       const projectId = parseInt(req.params.id);
@@ -277,7 +277,7 @@ export function projectRoutes(db: Database) {
   router.post(
     '/:id/import-data',
     authenticate,
-    requireRole('admin'),
+    requireAdminOrZonti(db),
     upload.single('file'),
     async (req: AuthRequest, res) => {
       try {
@@ -1176,8 +1176,8 @@ export function projectRoutes(db: Database) {
 
   // ── 全机设备清单 ───────────────────────────────────────────
 
-  // 查看清单（仅管理员）
-  router.get('/:id/aircraft-devices', authenticate, requireRole('admin'), async (req: AuthRequest, res) => {
+  // 查看清单（管理员或总体人员）
+  router.get('/:id/aircraft-devices', authenticate, requireAdminOrZonti(db), async (req: AuthRequest, res) => {
     try {
       const projectId = Number(req.params.id);
       const search = ((req.query.search as string) || '').trim();
@@ -1196,7 +1196,7 @@ export function projectRoutes(db: Database) {
   });
 
   // 新增单行
-  router.post('/:id/aircraft-devices', authenticate, requireRole('admin'), async (req: AuthRequest, res) => {
+  router.post('/:id/aircraft-devices', authenticate, requireAdminOrZonti(db), async (req: AuthRequest, res) => {
     try {
       const projectId = Number(req.params.id);
       const { id: _id, project_id: _pid, created_at: _ca, ...fields } = req.body;
@@ -1213,7 +1213,7 @@ export function projectRoutes(db: Database) {
   });
 
   // 编辑单行
-  router.put('/:id/aircraft-devices/:rowId', authenticate, requireRole('admin'), async (req: AuthRequest, res) => {
+  router.put('/:id/aircraft-devices/:rowId', authenticate, requireAdminOrZonti(db), async (req: AuthRequest, res) => {
     try {
       const rowId = Number(req.params.rowId);
       const { id: _id, project_id: _pid, created_at: _ca, ...fields } = req.body;
@@ -1228,8 +1228,8 @@ export function projectRoutes(db: Database) {
     }
   });
 
-  // 导入清单（仅管理员，Excel 单 Sheet）
-  router.post('/:id/aircraft-devices/import', authenticate, requireRole('admin'), upload.single('file'), async (req: AuthRequest, res) => {
+  // 导入清单（管理员或总体人员）
+  router.post('/:id/aircraft-devices/import', authenticate, requireAdminOrZonti(db), upload.single('file'), async (req: AuthRequest, res) => {
     if (!req.file) return res.status(400).json({ error: '未上传文件' });
     try {
       const projectId = Number(req.params.id);
@@ -1335,7 +1335,7 @@ export function projectRoutes(db: Database) {
     }
   });
 
-  router.post('/:id/configurations', authenticate, requireRole('admin'), async (req: AuthRequest, res) => {
+  router.post('/:id/configurations', authenticate, requireAdminOrZonti(db), async (req: AuthRequest, res) => {
     try {
       const projectId = Number(req.params.id);
       const { name, description } = req.body;
@@ -1356,7 +1356,7 @@ export function projectRoutes(db: Database) {
     }
   });
 
-  router.put('/:id/configurations/:configId', authenticate, requireRole('admin'), async (req: AuthRequest, res) => {
+  router.put('/:id/configurations/:configId', authenticate, requireAdminOrZonti(db), async (req: AuthRequest, res) => {
     try {
       const projectId = Number(req.params.id);
       const configId = Number(req.params.configId);

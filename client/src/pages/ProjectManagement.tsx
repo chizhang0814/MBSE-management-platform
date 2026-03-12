@@ -54,10 +54,18 @@ export default function ProjectManagement() {
   const [editingConfigDesc, setEditingConfigDesc] = useState('');
 
   const isAdmin = user?.role === 'admin';
+  const [myPermissions, setMyPermissions] = useState<{ project_name: string; project_role: string }[]>([]);
+  const isZonti = myPermissions.some(p => p.project_role === '总体人员');
 
   useEffect(() => {
     loadProjects();
     if (isAdmin) checkSysmlApi();
+    if (!isAdmin) {
+      fetch('/api/users/me/permissions', { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
+        .then(r => r.ok ? r.json() : null)
+        .then(data => { if (data?.permissions) setMyPermissions(data.permissions); })
+        .catch(() => {});
+    }
   }, [user]);
 
   const checkSysmlApi = async () => {
@@ -385,9 +393,9 @@ export default function ProjectManagement() {
                     <td className="px-6 py-4 whitespace-nowrap text-sm">{new Date(project.created_at).toLocaleDateString()}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm space-x-2">
                       <button onClick={() => handleDownload(project.id, project.name)} className="text-indigo-600 hover:text-indigo-800">下载</button>
-                      <button onClick={() => handleExportSysml(project.id, project.name)} className="text-teal-600 hover:text-teal-800">导出SysML</button>
                       {isAdmin && (
                         <>
+                          <button onClick={() => handleExportSysml(project.id, project.name)} className="text-teal-600 hover:text-teal-800">导出SysML</button>
                           <button
                             onClick={() => handleSyncSysml(project.id)}
                             disabled={!sysmlApiAvailable || syncingProjects.has(project.id)}
@@ -396,6 +404,10 @@ export default function ProjectManagement() {
                           >
                             {syncingProjects.has(project.id) ? '同步中...' : '同步SysML'}
                           </button>
+                        </>
+                      )}
+                      {(isAdmin || isZonti) && (
+                        <>
                           <button
                             onClick={() => { setImportPhase('devices'); setShowImportModal(project.id); setImportFiles([]); setImportResults([]); }}
                             className="text-blue-600 hover:text-blue-800"
@@ -419,11 +431,11 @@ export default function ProjectManagement() {
                         className="text-cyan-600 hover:text-cyan-800"
                       >查看全机设备清单</button>
                       <button onClick={() => openConfigModal(project.id)} className="text-violet-600 hover:text-violet-800">添加构型</button>
+                      {(isAdmin || isZonti) && (
+                        <button onClick={() => handleEdit(project)} className="text-green-600 hover:text-green-800">编辑</button>
+                      )}
                       {isAdmin && (
-                        <>
-                          <button onClick={() => handleEdit(project)} className="text-green-600 hover:text-green-800">编辑</button>
-                          <button onClick={() => handleDelete(project.id)} className="text-red-600 hover:text-red-800">删除</button>
-                        </>
+                        <button onClick={() => handleDelete(project.id)} className="text-red-600 hover:text-red-800">删除</button>
                       )}
                     </td>
                   </tr>
