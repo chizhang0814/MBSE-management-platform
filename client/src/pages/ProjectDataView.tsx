@@ -711,14 +711,15 @@ export default function ProjectDataView() {
     setConnectorForm({});
   };
 
-  const saveConnector = async () => {
+  const saveConnector = async (forceDraft = false) => {
     if (!connectorTargetDeviceId || !(connectorForm as any)['设备端元器件编号']) { alert('设备端元器件编号不能为空'); return; }
     try {
       const url = editingConnector
         ? `/api/devices/${connectorTargetDeviceId}/connectors/${editingConnector.id}`
         : `/api/devices/${connectorTargetDeviceId}/connectors`;
       const method = editingConnector ? 'PUT' : 'POST';
-      const res = await fetch(url, { method, headers: API_JSON_HEADERS(), body: JSON.stringify(connectorForm) });
+      const body = forceDraft ? { ...connectorForm, forceDraft: true } : connectorForm;
+      const res = await fetch(url, { method, headers: API_JSON_HEADERS(), body: JSON.stringify(body) });
       if (res.status === 202) {
         alert('已提交审批，等待审批通过后生效');
         await closeConnectorModal();
@@ -950,14 +951,21 @@ export default function ProjectDataView() {
     setPinForm({});
   };
 
-  const savePin = async () => {
+  const savePin = async (forceDraft = false) => {
     if (!pinTargetConnectorId || !connectorTargetDeviceId || !pinForm['针孔号']) { alert('针孔号不能为空'); return; }
     try {
       const url = editingPin
         ? `/api/devices/${connectorTargetDeviceId}/connectors/${pinTargetConnectorId}/pins/${editingPin.id}`
         : `/api/devices/${connectorTargetDeviceId}/connectors/${pinTargetConnectorId}/pins`;
       const method = editingPin ? 'PUT' : 'POST';
-      const res = await fetch(url, { method, headers: API_JSON_HEADERS(), body: JSON.stringify(pinForm) });
+      const body = forceDraft ? { ...pinForm, forceDraft: true } : pinForm;
+      const res = await fetch(url, { method, headers: API_JSON_HEADERS(), body: JSON.stringify(body) });
+      if (res.status === 202) {
+        alert('已提交审批，等待审批通过后生效');
+        await loadPins(connectorTargetDeviceId, pinTargetConnectorId, true);
+        await closePinModal();
+        return;
+      }
       if (!res.ok) throw new Error((await res.json()).error || '保存失败');
       await loadPins(connectorTargetDeviceId, pinTargetConnectorId, true);
       await closePinModal();
@@ -3004,7 +3012,7 @@ export default function ProjectDataView() {
                   className={`px-4 py-2 rounded text-white ${hasHardError ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}
                   title={hasHardError ? '存在校验错误（红色标记），请先修正' : undefined}
                 >
-                  保存
+                  提交审批
                 </button>
               </div>
                 );
@@ -3063,7 +3071,8 @@ export default function ProjectDataView() {
               ); })}
               <div className="flex justify-end gap-2 mt-4">
                 <button onClick={closeConnectorModal} className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50">取消</button>
-                <button onClick={saveConnector} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">保存</button>
+                <button onClick={() => saveConnector(true)} className="px-4 py-2 bg-yellow-500 text-white rounded hover:bg-yellow-600">保存为Draft</button>
+                <button onClick={() => saveConnector(false)} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">提交审批</button>
               </div>
             </div>
           </div>
@@ -3218,7 +3227,8 @@ export default function ProjectDataView() {
               ))}
               <div className="flex justify-end gap-2 mt-4">
                 <button onClick={closePinModal} className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50">取消</button>
-                <button onClick={savePin} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">保存</button>
+                <button onClick={() => savePin(true)} className="px-4 py-2 bg-yellow-500 text-white rounded hover:bg-yellow-600">保存为Draft</button>
+                <button onClick={() => savePin(false)} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">提交审批</button>
               </div>
             </div>
           </div>

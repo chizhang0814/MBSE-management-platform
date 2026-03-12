@@ -822,7 +822,7 @@ export function deviceRoutes(db: Database) {
   router.post('/:devId/connectors', authenticate, async (req: AuthRequest, res) => {
     try {
       const deviceId = parseInt(req.params.devId);
-      const fields: Record<string, any> = { ...req.body };
+      const { forceDraft, ...fields } = req.body as { forceDraft?: boolean; [key: string]: any };
       if (!fields['设备端元器件编号']) return res.status(400).json({ error: '缺少设备端元器件编号' });
 
       const username = req.user!.username;
@@ -857,6 +857,22 @@ export function deviceRoutes(db: Database) {
         await db.run(
           `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, new_values, reason, status)
            VALUES ('connectors', ?, ?, 'connectors', ?, ?, '新增连接器', 'approved')`,
+          [result.lastID, result.lastID, req.user!.id, JSON.stringify(fields)]
+        );
+        return res.json({ success: true, id: result.lastID });
+      }
+
+      // forceDraft → 直接写入 Draft，无需审批
+      if (forceDraft) {
+        const cols = Object.keys(fields).map(k => `"${k}"`).join(', ');
+        const placeholders = Object.keys(fields).map(() => '?').join(', ');
+        const result = await db.run(
+          `INSERT INTO connectors (device_id, status, ${cols}) VALUES (?, 'Draft', ${placeholders})`,
+          [deviceId, ...Object.values(fields)]
+        );
+        await db.run(
+          `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, new_values, reason, status)
+           VALUES ('connectors', ?, ?, 'connectors', ?, ?, '新增连接器(Draft)', 'draft')`,
           [result.lastID, result.lastID, req.user!.id, JSON.stringify(fields)]
         );
         return res.json({ success: true, id: result.lastID });
@@ -925,7 +941,7 @@ export function deviceRoutes(db: Database) {
         return res.status(403).json({ error: '无权限修改连接器' });
       }
 
-      const { version, ...fields } = req.body;
+      const { version, forceDraft, ...fields } = req.body;
       delete fields.id; delete fields.device_id; delete fields.created_at; delete fields.pin_count;
 
       // 项目级 设备端元器件编号 唯一性校验（排除自身）
@@ -953,6 +969,24 @@ export function deviceRoutes(db: Database) {
         await db.run(
           `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, old_values, new_values, reason, status)
            VALUES ('connectors', ?, ?, 'connectors', ?, ?, ?, '修改连接器', 'approved')`,
+          [connectorId, connectorId, req.user!.id, JSON.stringify(oldConnector), JSON.stringify(fields)]
+        );
+        return res.json({ success: true });
+      }
+
+      // forceDraft → 直接更新为 Draft，无需审批
+      if (forceDraft) {
+        const setClauses = Object.keys(fields).map(k => `"${k}" = ?`).join(', ');
+        const result = await db.run(
+          `UPDATE connectors SET ${setClauses}, status = 'Draft', version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND version = ?`,
+          [...Object.values(fields), connectorId, version ?? 1]
+        );
+        if (result.changes === 0) {
+          return res.status(409).json({ error: '记录已被他人修改，请刷新后重试' });
+        }
+        await db.run(
+          `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, old_values, new_values, reason, status)
+           VALUES ('connectors', ?, ?, 'connectors', ?, ?, ?, '修改连接器(Draft)', 'draft')`,
           [connectorId, connectorId, req.user!.id, JSON.stringify(oldConnector), JSON.stringify(fields)]
         );
         return res.json({ success: true });
@@ -1094,7 +1128,7 @@ export function deviceRoutes(db: Database) {
   router.post('/:devId/connectors/:connId/pins', authenticate, async (req: AuthRequest, res) => {
     try {
       const connectorId = parseInt(req.params.connId);
-      const { 针孔号, ...rest } = req.body;
+      const { 针孔号, forceDraft, ...rest } = req.body;
       if (!针孔号) return res.status(400).json({ error: '缺少针孔号' });
 
       const username = req.user!.username;
@@ -1126,6 +1160,20 @@ export function deviceRoutes(db: Database) {
         await db.run(
           `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, new_values, reason, status)
            VALUES ('pins', ?, ?, 'pins', ?, ?, '新增针孔', 'approved')`,
+          [result.lastID, result.lastID, req.user!.id, JSON.stringify(fields)]
+        );
+        return res.json({ success: true, id: result.lastID });
+      }
+
+      // forceDraft → 直接写入 Draft，无需审批
+      if (forceDraft) {
+        const result = await db.run(
+          `INSERT INTO pins (connector_id, status, ${cols}) VALUES (?, 'Draft', ${placeholders})`,
+          [connectorId, ...Object.values(fields)]
+        );
+        await db.run(
+          `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, new_values, reason, status)
+           VALUES ('pins', ?, ?, 'pins', ?, ?, '新增针孔(Draft)', 'draft')`,
           [result.lastID, result.lastID, req.user!.id, JSON.stringify(fields)]
         );
         return res.json({ success: true, id: result.lastID });
@@ -1194,7 +1242,7 @@ export function deviceRoutes(db: Database) {
         return res.status(403).json({ error: '无权限修改针孔' });
       }
 
-      const { version, ...fields } = req.body;
+      const { version, forceDraft, ...fields } = req.body;
       delete fields.id; delete fields.connector_id; delete fields.created_at;
 
       const oldPin = await db.get('SELECT * FROM pins WHERE id = ?', [pinId]);
@@ -1212,6 +1260,24 @@ export function deviceRoutes(db: Database) {
         await db.run(
           `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, old_values, new_values, reason, status)
            VALUES ('pins', ?, ?, 'pins', ?, ?, ?, '修改针孔', 'approved')`,
+          [pinId, pinId, req.user!.id, JSON.stringify(oldPin), JSON.stringify(fields)]
+        );
+        return res.json({ success: true });
+      }
+
+      // forceDraft → 直接更新为 Draft，无需审批
+      if (forceDraft) {
+        const setClauses = Object.keys(fields).map(k => `"${k}" = ?`).join(', ');
+        const result = await db.run(
+          `UPDATE pins SET ${setClauses}, status = 'Draft', version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND version = ?`,
+          [...Object.values(fields), pinId, version ?? 1]
+        );
+        if (result.changes === 0) {
+          return res.status(409).json({ error: '记录已被他人修改，请刷新后重试' });
+        }
+        await db.run(
+          `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, old_values, new_values, reason, status)
+           VALUES ('pins', ?, ?, 'pins', ?, ?, ?, '修改针孔(Draft)', 'draft')`,
           [pinId, pinId, req.user!.id, JSON.stringify(oldPin), JSON.stringify(fields)]
         );
         return res.json({ success: true });

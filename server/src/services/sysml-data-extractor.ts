@@ -311,14 +311,14 @@ export async function loadTableDataFromRelational(db: Database, projectId: numbe
   // ② 设备端元器件表 → device_component 行（pins JOIN connectors JOIN devices）
   const compRows = await db.query(
     `SELECT d.设备编号, d.设备中文名称 as 设备名称,
-            c.连接器号, c.设备端元器件编号, c."设备端元器件名称及类型",
+            c.设备端元器件编号 as 连接器号, c.设备端元器件编号, c."设备端元器件名称及类型",
             c."设备端元器件件号类型及件号", c."设备端元器件供应商名称",
             c."匹配的线束端元器件件号", c."匹配的线束线型", c."设备端元器件匹配的元器件是否随设备交付",
             NULL as 针孔号, NULL as 端接尺寸, c.备注
      FROM connectors c
      JOIN devices d ON c.device_id = d.id
      WHERE d.project_id = ?
-     ORDER BY d.设备编号, c.连接器号`,
+     ORDER BY d.设备编号, c.设备端元器件编号`,
     [projectId]
   );
   const compCols = [
@@ -337,7 +337,7 @@ export async function loadTableDataFromRelational(db: Database, projectId: numbe
   for (const sig of signalRows) {
     const endpoints = await db.query(
       `SELECT se.endpoint_index, se.端接尺寸 as 端接尺寸_ep,
-              p.针孔号, c.连接器号, d.设备编号
+              p.针孔号, c.设备端元器件编号 as 连接器号, d.设备编号
        FROM signal_endpoints se
        JOIN pins p ON se.pin_id = p.id
        JOIN connectors c ON p.connector_id = c.id
