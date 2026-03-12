@@ -53,11 +53,11 @@ export default function ProjectManagement() {
   const [editingConfigName, setEditingConfigName] = useState('');
   const [editingConfigDesc, setEditingConfigDesc] = useState('');
 
+  const isAdmin = user?.role === 'admin';
+
   useEffect(() => {
-    if (user?.role === 'admin') {
-      loadProjects();
-      checkSysmlApi();
-    }
+    loadProjects();
+    if (isAdmin) checkSysmlApi();
   }, [user]);
 
   const checkSysmlApi = async () => {
@@ -336,25 +336,20 @@ export default function ProjectManagement() {
     setImporting(false);
   };
 
-  if (user?.role !== 'admin') {
-    return (
-      <Layout>
-        <div className="text-center text-gray-500 mt-8">您没有权限访问此页面</div>
-      </Layout>
-    );
-  }
 
   return (
     <Layout>
       <div className="px-4 py-6">
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-2xl font-bold text-gray-900">项目管理</h1>
-          <button
-            onClick={() => { setFormData({ name: '', description: '' }); setEditingProject(null); setShowCreateModal(true); }}
-            className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700"
-          >
-            创建项目
-          </button>
+          {isAdmin && (
+            <button
+              onClick={() => { setFormData({ name: '', description: '' }); setEditingProject(null); setShowCreateModal(true); }}
+              className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700"
+            >
+              创建项目
+            </button>
+          )}
         </div>
 
         {loading ? (
@@ -391,37 +386,45 @@ export default function ProjectManagement() {
                     <td className="px-6 py-4 whitespace-nowrap text-sm space-x-2">
                       <button onClick={() => handleDownload(project.id, project.name)} className="text-indigo-600 hover:text-indigo-800">下载</button>
                       <button onClick={() => handleExportSysml(project.id, project.name)} className="text-teal-600 hover:text-teal-800">导出SysML</button>
-                      <button
-                        onClick={() => handleSyncSysml(project.id)}
-                        disabled={!sysmlApiAvailable || syncingProjects.has(project.id)}
-                        className={`${sysmlApiAvailable && !syncingProjects.has(project.id) ? 'text-orange-600 hover:text-orange-800' : 'text-gray-400 cursor-not-allowed'}`}
-                        title={!sysmlApiAvailable ? 'SysML v2 API 不可用' : '同步到SysML v2仓库'}
-                      >
-                        {syncingProjects.has(project.id) ? '同步中...' : '同步SysML'}
-                      </button>
-                      <button
-                        onClick={() => { setImportPhase('devices'); setShowImportModal(project.id); setImportFiles([]); setImportResults([]); }}
-                        className="text-blue-600 hover:text-blue-800"
-                      >导入电设备清单</button>
-                      <button
-                        onClick={() => { setImportPhase('connectors'); setShowImportModal(project.id); setImportFiles([]); setImportResults([]); }}
-                        className="text-blue-600 hover:text-blue-800"
-                      >导入设备端元器件清单</button>
-                      <button
-                        onClick={() => { setImportPhase('signals'); setShowImportModal(project.id); setImportFiles([]); setImportResults([]); }}
-                        className="text-blue-600 hover:text-blue-800"
-                      >导入电气接口清单</button>
-                      <button
-                        onClick={() => { setImportListProjectId(project.id); setImportListResult(null); setImportListFile(null); setShowImportListModal(true); }}
-                        className="text-purple-600 hover:text-purple-800"
-                      >导入全机设备清单</button>
+                      {isAdmin && (
+                        <>
+                          <button
+                            onClick={() => handleSyncSysml(project.id)}
+                            disabled={!sysmlApiAvailable || syncingProjects.has(project.id)}
+                            className={`${sysmlApiAvailable && !syncingProjects.has(project.id) ? 'text-orange-600 hover:text-orange-800' : 'text-gray-400 cursor-not-allowed'}`}
+                            title={!sysmlApiAvailable ? 'SysML v2 API 不可用' : '同步到SysML v2仓库'}
+                          >
+                            {syncingProjects.has(project.id) ? '同步中...' : '同步SysML'}
+                          </button>
+                          <button
+                            onClick={() => { setImportPhase('devices'); setShowImportModal(project.id); setImportFiles([]); setImportResults([]); }}
+                            className="text-blue-600 hover:text-blue-800"
+                          >导入电设备清单</button>
+                          <button
+                            onClick={() => { setImportPhase('connectors'); setShowImportModal(project.id); setImportFiles([]); setImportResults([]); }}
+                            className="text-blue-600 hover:text-blue-800"
+                          >导入设备端元器件清单</button>
+                          <button
+                            onClick={() => { setImportPhase('signals'); setShowImportModal(project.id); setImportFiles([]); setImportResults([]); }}
+                            className="text-blue-600 hover:text-blue-800"
+                          >导入电气接口清单</button>
+                          <button
+                            onClick={() => { setImportListProjectId(project.id); setImportListResult(null); setImportListFile(null); setShowImportListModal(true); }}
+                            className="text-purple-600 hover:text-purple-800"
+                          >导入全机设备清单</button>
+                        </>
+                      )}
                       <button
                         onClick={() => { setListSearch(''); openViewList(project.id); }}
                         className="text-cyan-600 hover:text-cyan-800"
                       >查看全机设备清单</button>
                       <button onClick={() => openConfigModal(project.id)} className="text-violet-600 hover:text-violet-800">添加构型</button>
-                      <button onClick={() => handleEdit(project)} className="text-green-600 hover:text-green-800">编辑</button>
-                      <button onClick={() => handleDelete(project.id)} className="text-red-600 hover:text-red-800">删除</button>
+                      {isAdmin && (
+                        <>
+                          <button onClick={() => handleEdit(project)} className="text-green-600 hover:text-green-800">编辑</button>
+                          <button onClick={() => handleDelete(project.id)} className="text-red-600 hover:text-red-800">删除</button>
+                        </>
+                      )}
                     </td>
                   </tr>
                 ))}

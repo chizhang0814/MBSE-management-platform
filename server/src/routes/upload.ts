@@ -2,7 +2,7 @@ import express from 'express';
 import multer from 'multer';
 import xlsx from 'xlsx';
 import { Database } from '../database.js';
-import { authenticate, requireRole, AuthRequest } from '../middleware/auth.js';
+import { authenticate, requireRole, requireAdminOrZonti, AuthRequest } from '../middleware/auth.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -344,7 +344,7 @@ export function uploadRoutes(db: Database) {
   );
 
   // 获取上传文件列表
-  router.get('/files', authenticate, requireRole('admin'), async (req, res) => {
+  router.get('/files', authenticate, requireAdminOrZonti(db), async (req, res) => {
     try {
       const files = await db.query(
         `SELECT uf.*, u.username as uploaded_by_name
@@ -388,7 +388,7 @@ export function uploadRoutes(db: Database) {
   });
 
   // 获取单个文件详情
-  router.get('/files/:id', authenticate, requireRole('admin'), async (req, res) => {
+  router.get('/files/:id', authenticate, requireAdminOrZonti(db), async (req, res) => {
     try {
       const file = await db.get(
         `SELECT uf.*, u.username as uploaded_by_name
@@ -441,7 +441,7 @@ export function uploadRoutes(db: Database) {
   });
 
   // 下载已上传文件
-  router.get('/files/:id/download', authenticate, requireRole('admin'), async (req, res) => {
+  router.get('/files/:id/download', authenticate, requireAdminOrZonti(db), async (req, res) => {
     try {
       const file = await db.get('SELECT * FROM uploaded_files WHERE id = ?', [req.params.id]);
       if (!file) return res.status(404).json({ error: '文件记录不存在' });

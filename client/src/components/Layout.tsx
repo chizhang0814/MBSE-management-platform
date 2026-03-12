@@ -104,6 +104,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   };
 
   const isActive = (path: string) => location.pathname === path;
+  const isAdmin = user?.role === 'admin';
+  const isZonti = myPermissions.some(p => p.project_role === '总体人员');
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -133,7 +135,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 >
                   项目数据
                 </Link>
-                {user?.role === 'admin' && (
+                {isAdmin && (
                   <>
                     <Link
                       to="/tasks"
@@ -151,6 +153,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                     >
                       SysML 模型
                     </Link>
+                  </>
+                )}
+                {(isAdmin || isZonti) && (
+                  <>
                     <Link
                       to="/projects"
                       className={`${

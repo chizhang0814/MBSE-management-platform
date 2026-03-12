@@ -289,12 +289,14 @@ export default function UserManagement() {
       <div className="px-4 sm:px-0">
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-3xl font-bold text-gray-900">用户管理</h1>
-          <button
-            onClick={() => handleOpenModal()}
-            className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600"
-          >
-            + 添加用户
-          </button>
+          {currentUser?.role === 'admin' && (
+            <button
+              onClick={() => handleOpenModal()}
+              className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600"
+            >
+              + 添加用户
+            </button>
+          )}
         </div>
 
         <div className="bg-white shadow rounded-lg overflow-hidden">
@@ -350,25 +352,29 @@ export default function UserManagement() {
                     {new Date(user.created_at).toLocaleString()}
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap text-sm font-medium space-x-2">
-                    <button
-                      onClick={() => handleOpenModal(user)}
-                      className="text-blue-600 hover:text-blue-900"
-                    >
-                      编辑
-                    </button>
-                    <button
-                      onClick={() => handleResetPassword(user.id)}
-                      className="text-green-600 hover:text-green-900"
-                    >
-                      重置密码
-                    </button>
-                    {user.id !== currentUser?.id && (
-                      <button
-                        onClick={() => handleDelete(user.id)}
-                        className="text-red-600 hover:text-red-900"
-                      >
-                        删除
-                      </button>
+                    {currentUser?.role === 'admin' && (
+                      <>
+                        <button
+                          onClick={() => handleOpenModal(user)}
+                          className="text-blue-600 hover:text-blue-900"
+                        >
+                          编辑
+                        </button>
+                        <button
+                          onClick={() => handleResetPassword(user.id)}
+                          className="text-green-600 hover:text-green-900"
+                        >
+                          重置密码
+                        </button>
+                        {user.id !== currentUser?.id && (
+                          <button
+                            onClick={() => handleDelete(user.id)}
+                            className="text-red-600 hover:text-red-900"
+                          >
+                            删除
+                          </button>
+                        )}
+                      </>
                     )}
                   </td>
                 </tr>

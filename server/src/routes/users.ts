@@ -1,7 +1,7 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import { Database } from '../database.js';
-import { authenticate, requireRole } from '../middleware/auth.js';
+import { authenticate, requireRole, requireAdminOrZonti } from '../middleware/auth.js';
 
 export function usersRoutes(db: Database) {
   const router = express.Router();
@@ -72,7 +72,7 @@ export function usersRoutes(db: Database) {
   });
 
   // 获取所有用户
-  router.get('/', authenticate, requireRole('admin'), async (req, res) => {
+  router.get('/', authenticate, requireAdminOrZonti(db), async (req, res) => {
     try {
       const users = await db.query('SELECT id, username, name, department, remarks, role, permissions, created_at FROM users ORDER BY id DESC');
       // 解析 permissions JSON
