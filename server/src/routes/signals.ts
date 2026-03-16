@@ -589,11 +589,11 @@ export function signalRoutes(db: Database) {
         if (Object.keys(fields).length > 0) {
           const setClauses = Object.keys(fields).map(k => `"${k}" = ?`).join(', ');
           await db.run(
-            `UPDATE signals SET ${setClauses}, status = 'Draft', version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+            `UPDATE signals SET ${setClauses}, status = 'Draft', import_status = NULL, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
             [...Object.values(fields), signalId]
           );
         } else {
-          await db.run(`UPDATE signals SET status = 'Draft', updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [signalId]);
+          await db.run(`UPDATE signals SET status = 'Draft', import_status = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [signalId]);
         }
 
         if (Array.isArray(endpoints)) {
@@ -690,11 +690,11 @@ export function signalRoutes(db: Database) {
       if (Object.keys(fields).length > 0) {
         const setClauses = Object.keys(fields).map(k => `"${k}" = ?`).join(', ');
         await db.run(
-          `UPDATE signals SET ${setClauses}, status = 'Pending', version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+          `UPDATE signals SET ${setClauses}, status = 'Pending', import_status = NULL, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
           [...Object.values(fields), signalId]
         );
       } else {
-        await db.run(`UPDATE signals SET status = 'Pending', updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [signalId]);
+        await db.run(`UPDATE signals SET status = 'Pending', import_status = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [signalId]);
       }
 
       // 替换端点
@@ -826,7 +826,7 @@ export function signalRoutes(db: Database) {
         currentEps.map((e: any) => ({ deviceId: e.device_id, pinId: e.pin_id }))
       );
 
-      await db.run(`UPDATE signals SET status = 'Pending', updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [signalId]);
+      await db.run(`UPDATE signals SET status = 'Pending', import_status = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [signalId]);
 
       await submitChangeRequest(db, {
         projectId: signal.project_id,

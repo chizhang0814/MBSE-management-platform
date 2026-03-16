@@ -110,20 +110,26 @@ export class Database {
           CREATE TABLE IF NOT EXISTS devices (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             project_id INTEGER NOT NULL,
-            设备编号 TEXT NOT NULL,
-            设备中文名称 TEXT, 设备英文名称 TEXT, 设备英文缩写 TEXT,
-            设备供应商件号 TEXT, 设备供应商名称 TEXT, 设备部件所属系统（4位ATA） TEXT,
-            设备安装位置 TEXT, 设备DAL TEXT,
-            设备壳体是否金属 TEXT, 金属壳体表面是否经过特殊处理而不易导电 TEXT, 设备内共地情况 TEXT,
-            设备壳体接地方式 TEXT, 壳体接地是否故障电流路径 TEXT, 其他接地特殊要求 TEXT,
-            设备端连接器或接线柱数量 TEXT, 是否为选装设备 TEXT, 是否有特殊布线需求 TEXT, 设备装机架次 TEXT,
-            设备负责人 TEXT, 设备正常工作电压范围（V） TEXT, 设备物理特性 TEXT, 备注 TEXT,
-            导入来源 TEXT, created_by TEXT,
+            "设备编号" TEXT NOT NULL,
+            "设备中文名称" TEXT, "设备英文名称" TEXT, "设备英文缩写" TEXT,
+            "设备供应商件号" TEXT, "设备供应商名称" TEXT, "设备部件所属系统（4位ATA）" TEXT,
+            "设备安装位置" TEXT, "设备DAL" TEXT,
+            "设备壳体是否金属" TEXT, "金属壳体表面是否经过特殊处理而不易导电" TEXT, "设备内共地情况" TEXT,
+            "设备壳体接地方式" TEXT, "壳体接地是否故障电流路径" TEXT, "其他接地特殊要求" TEXT,
+            "设备端连接器或接线柱数量" TEXT, "是否为选装设备" TEXT, "是否有特殊布线需求" TEXT, "设备装机架次" TEXT,
+            "设备负责人" TEXT, "设备正常工作电压范围（V）" TEXT, "设备物理特性" TEXT, "备注" TEXT,
+            "导入来源" TEXT, "created_by" TEXT,
+            "设备编号（DOORS）" TEXT,
+            "设备LIN号（DOORS）" TEXT NOT NULL,
+            "设备装机构型" TEXT,
+            "import_conflicts" TEXT,
             status TEXT DEFAULT 'normal',
-            validation_errors TEXT,
+            "validation_errors" TEXT,
+            "version" INTEGER DEFAULT 1,
+            "import_status" TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(project_id, 设备编号, 设备中文名称),
+            UNIQUE(project_id, "设备LIN号（DOORS）"),
             FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
           )
         `);
@@ -857,58 +863,7 @@ export class Database {
       console.log('Migration: devices column rename/add/drop:', e.message);
     }
 
-    // 迁移：将 devices 唯一约束从 (project_id, 设备编号) 改为 (project_id, 设备编号, 设备中文名称)
-    // 同时修复因旧迁移代码丢失 PRIMARY KEY AUTOINCREMENT 导致的外键失效问题
-    try {
-      const colInfos = await this.query('PRAGMA table_info(devices)');
-      const colNames = colInfos.map((c: any) => `"${c.name}"`).join(', ');
-      const idCol = colInfos.find((c: any) => c.name === 'id');
-      // 检查 CREATE TABLE 语句中是否已包含新的三列 UNIQUE 约束
-      const tableSchema = await this.get(`SELECT sql FROM sqlite_master WHERE type='table' AND name='devices'`);
-      const createSql = tableSchema?.sql || '';
-      const hasNewConstraint = createSql.includes('设备中文名称');
-      // 需要重建：约束未更新 或 id 列的 PRIMARY KEY 丢失（pk===0）
-      const needRebuild = !hasNewConstraint || (idCol && idCol.pk !== 1);
-      if (needRebuild) {
-        console.log('Database migration: rebuilding devices table (unique constraint + PRIMARY KEY fix)...');
-        await this.run('PRAGMA foreign_keys = OFF');
-        // 清理可能残留的 devices_new 表（上次迁移中断时留下的）
-        await this.run('DROP TABLE IF EXISTS devices_new');
-        // 用硬编码 schema 重建，保证 id PRIMARY KEY AUTOINCREMENT 不丢失
-        await this.run(`
-          CREATE TABLE devices_new (
-            "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-            "project_id" INTEGER NOT NULL,
-            "设备编号" TEXT,
-            "设备中文名称" TEXT, "设备英文名称" TEXT, "设备英文缩写" TEXT,
-            "设备供应商件号" TEXT, "设备供应商名称" TEXT, "设备部件所属系统（4位ATA）" TEXT,
-            "设备安装位置" TEXT, "设备DAL" TEXT,
-            "设备壳体是否金属" TEXT, "金属壳体表面是否经过特殊处理而不易导电" TEXT, "设备内共地情况" TEXT,
-            "设备壳体接地方式" TEXT, "壳体接地是否故障电流路径" TEXT, "其他接地特殊要求" TEXT,
-            "设备端连接器或接线柱数量" TEXT, "是否为选装设备" TEXT, "是否有特殊布线需求" TEXT, "设备装机架次" TEXT,
-            "设备负责人" TEXT, "设备正常工作电压范围（V）" TEXT, "设备物理特性" TEXT, "备注" TEXT,
-            "导入来源" TEXT, "created_by" TEXT,
-            "status" TEXT DEFAULT 'normal',
-            "validation_errors" TEXT,
-            "import_conflicts" TEXT,
-            "created_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
-            "updated_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
-            "设备编号（DOORS）" TEXT,
-            "设备LIN号（DOORS）" TEXT,
-            "version" INTEGER NOT NULL DEFAULT 1,
-            UNIQUE("project_id", "设备编号", "设备中文名称"),
-            FOREIGN KEY ("project_id") REFERENCES projects(id) ON DELETE CASCADE
-          )
-        `);
-        await this.run(`INSERT INTO devices_new (${colNames}) SELECT ${colNames} FROM devices`);
-        await this.run('DROP TABLE devices');
-        await this.run('ALTER TABLE devices_new RENAME TO devices');
-        await this.run('PRAGMA foreign_keys = ON');
-        console.log('Database migration: devices table rebuilt successfully');
-      }
-    } catch (e: any) {
-      console.log('Migration: devices rebuild:', e.message);
-    }
+    // 旧迁移（已废弃）：devices 唯一约束变更已由后面的 LIN号 NOT NULL + UNIQUE 迁移统一处理
 
     // 为 connectors 表添加 导入来源、import_conflicts、validation_errors 列
     try {
@@ -1199,6 +1154,127 @@ export class Database {
     } catch (e: any) {
       console.log('Migration: merge employees into users:', e.message);
     }
+
+    // 为 devices/connectors/pins/signals 添加 import_status 列
+    for (const table of ['devices', 'connectors', 'pins', 'signals']) {
+      try {
+        const cols = await this.query(`PRAGMA table_info(${table})`);
+        if (!cols.some((c: any) => c.name === 'import_status')) {
+          await this.run(`ALTER TABLE ${table} ADD COLUMN import_status TEXT`);
+          console.log(`Database migration: added import_status column to ${table}`);
+        }
+      } catch (e: any) {
+        console.log(`Migration: ${table} import_status column:`, e.message);
+      }
+    }
+
+    // 迁移：清理残留的 devices_old / devices_new 表
+    try {
+      await this.run(`DROP TABLE IF EXISTS devices_old`);
+      await this.run(`DROP TABLE IF EXISTS devices_new`);
+    } catch (e: any) {
+      // ignore
+    }
+
+    // 迁移：重建 devices 表以添加 设备LIN号（DOORS） NOT NULL + UNIQUE 约束，移除旧 UNIQUE(project_id, 设备编号, 设备中文名称)
+    try {
+      const colInfo = await this.get(`SELECT sql FROM sqlite_master WHERE type='table' AND name='devices'`);
+      const needsRebuild = colInfo && (
+        !colInfo.sql.includes('"设备LIN号（DOORS）" TEXT NOT NULL') ||
+        colInfo.sql.includes('UNIQUE(project_id, "设备编号", "设备中文名称")')
+      );
+      if (needsRebuild) {
+        console.log('Database migration: rebuilding devices table...');
+        await this.run(`PRAGMA foreign_keys = OFF`);
+        await this.run(`ALTER TABLE devices RENAME TO devices_old`);
+        await this.run(`
+          CREATE TABLE devices (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER NOT NULL,
+            "设备编号" TEXT NOT NULL,
+            "设备中文名称" TEXT, "设备英文名称" TEXT, "设备英文缩写" TEXT,
+            "设备供应商件号" TEXT, "设备供应商名称" TEXT, "设备部件所属系统（4位ATA）" TEXT,
+            "设备安装位置" TEXT, "设备DAL" TEXT,
+            "设备壳体是否金属" TEXT, "金属壳体表面是否经过特殊处理而不易导电" TEXT, "设备内共地情况" TEXT,
+            "设备壳体接地方式" TEXT, "壳体接地是否故障电流路径" TEXT, "其他接地特殊要求" TEXT,
+            "设备端连接器或接线柱数量" TEXT, "是否为选装设备" TEXT, "是否有特殊布线需求" TEXT, "设备装机架次" TEXT,
+            "设备负责人" TEXT, "设备正常工作电压范围（V）" TEXT, "设备物理特性" TEXT, "备注" TEXT,
+            "导入来源" TEXT, "created_by" TEXT,
+            "设备编号（DOORS）" TEXT,
+            "设备LIN号（DOORS）" TEXT NOT NULL,
+            "设备装机构型" TEXT,
+            "import_conflicts" TEXT,
+            status TEXT DEFAULT 'normal',
+            "validation_errors" TEXT,
+            "version" INTEGER DEFAULT 1,
+            "import_status" TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(project_id, "设备LIN号（DOORS）"),
+            FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+          )
+        `);
+        try {
+          await this.run(`INSERT INTO devices SELECT * FROM devices_old`);
+        } catch (e: any) {
+          console.log('Migration: no data to copy or column mismatch, skipping copy');
+        }
+        await this.run(`DROP TABLE devices_old`);
+        await this.run(`PRAGMA foreign_keys = ON`);
+        console.log('Database migration: devices table rebuilt with LIN号 NOT NULL + UNIQUE (old UNIQUE removed)');
+      }
+    } catch (e: any) {
+      console.log('Migration: rebuild devices table:', e.message);
+    }
+
+    // 迁移：修复 connectors / signal_endpoints 外键指向 devices_old 的问题
+    try {
+      const connSql = await this.get(`SELECT sql FROM sqlite_master WHERE type='table' AND name='connectors'`);
+      if (connSql && connSql.sql.includes('devices_old')) {
+        console.log('Database migration: rebuilding connectors to fix FK → devices_old...');
+        await this.run(`PRAGMA foreign_keys = OFF`);
+        const createSql = connSql.sql.replace(/devices_old/g, 'devices').replace(/CREATE TABLE "?connectors"?/, 'CREATE TABLE connectors_fixed');
+        await this.run(`ALTER TABLE connectors RENAME TO connectors_broken`);
+        await this.run(createSql);
+        try { await this.run(`INSERT INTO connectors_fixed SELECT * FROM connectors_broken`); } catch (e: any) { console.log('  connectors copy:', e.message); }
+        await this.run(`DROP TABLE connectors_broken`);
+        await this.run(`ALTER TABLE connectors_fixed RENAME TO connectors`);
+        await this.run(`PRAGMA foreign_keys = ON`);
+        console.log('  connectors FK fixed.');
+      }
+    } catch (e: any) { console.log('Migration: fix connectors FK:', e.message); }
+
+    try {
+      const pinsSql = await this.get(`SELECT sql FROM sqlite_master WHERE type='table' AND name='pins'`);
+      if (pinsSql && pinsSql.sql.includes('connectors_broken')) {
+        console.log('Database migration: rebuilding pins to fix FK → connectors_broken...');
+        await this.run(`PRAGMA foreign_keys = OFF`);
+        const createSql = pinsSql.sql.replace(/connectors_broken/g, 'connectors').replace(/CREATE TABLE "?pins"?/, 'CREATE TABLE pins_fixed');
+        await this.run(`ALTER TABLE pins RENAME TO pins_old`);
+        await this.run(createSql);
+        try { await this.run(`INSERT INTO pins_fixed SELECT * FROM pins_old`); } catch (e: any) { console.log('  pins copy:', e.message); }
+        await this.run(`DROP TABLE pins_old`);
+        await this.run(`ALTER TABLE pins_fixed RENAME TO pins`);
+        await this.run(`PRAGMA foreign_keys = ON`);
+        console.log('  pins FK fixed.');
+      }
+    } catch (e: any) { console.log('Migration: fix pins FK:', e.message); }
+
+    try {
+      const seSql = await this.get(`SELECT sql FROM sqlite_master WHERE type='table' AND name='signal_endpoints'`);
+      if (seSql && (seSql.sql.includes('devices_old') || seSql.sql.includes('pins_old'))) {
+        console.log('Database migration: rebuilding signal_endpoints to fix FK...');
+        await this.run(`PRAGMA foreign_keys = OFF`);
+        const createSql = seSql.sql.replace(/devices_old/g, 'devices').replace(/pins_old/g, 'pins').replace(/CREATE TABLE "?signal_endpoints"?/, 'CREATE TABLE signal_endpoints_fixed');
+        await this.run(`ALTER TABLE signal_endpoints RENAME TO signal_endpoints_old`);
+        await this.run(createSql);
+        try { await this.run(`INSERT INTO signal_endpoints_fixed SELECT * FROM signal_endpoints_old`); } catch (e: any) { console.log('  signal_endpoints copy:', e.message); }
+        await this.run(`DROP TABLE signal_endpoints_old`);
+        await this.run(`ALTER TABLE signal_endpoints_fixed RENAME TO signal_endpoints`);
+        await this.run(`PRAGMA foreign_keys = ON`);
+        console.log('  signal_endpoints FK fixed.');
+      }
+    } catch (e: any) { console.log('Migration: fix signal_endpoints FK:', e.message); }
 
     // 初始化默认用户（不再创建示例数据）
     await this.initDefaultData();

@@ -19,7 +19,7 @@ interface DeviceRow {
   设备负责人?: string; '设备正常工作电压范围（V）'?: string; 设备物理特性?: string; 备注?: string;
   '设备编号（DOORS）'?: string; '设备LIN号（DOORS）'?: string;
   导入来源?: string; created_by?: string;
-  status?: string; validation_errors?: string; import_conflicts?: string;
+  status?: string; validation_errors?: string; import_conflicts?: string; // validation_errors JSON: { messages: string[], fields: string[] } or legacy string[]
   connector_count?: number;
   设备负责人姓名?: string;
   pending_item_type?: 'approval' | 'completion' | null;
@@ -171,6 +171,24 @@ const SIGNAL_FIELDS: { key: keyof SignalRow; label: string }[] = [
   { key: '备注', label: '备注' },
 ];
 
+// 解析 validation_errors JSON，兼容旧 string[] 格式和新 { messages, fields } 格式
+function parseValidationErrors(raw: string | undefined): { messages: string[], fields: string[] } {
+  if (!raw) return { messages: [], fields: [] };
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      // 旧格式：string[]，无法精确标红，退化为不标红任何字段
+      return { messages: parsed, fields: [] };
+    }
+    if (parsed && Array.isArray(parsed.messages)) {
+      return { messages: parsed.messages, fields: Array.isArray(parsed.fields) ? parsed.fields : [] };
+    }
+    return { messages: [], fields: [] };
+  } catch {
+    return { messages: [], fields: [] };
+  }
+}
+
 // ── 主组件 ────────────────────────────────────────────────
 
 export default function ProjectDataView() {
@@ -204,6 +222,7 @@ export default function ProjectDataView() {
   const [connectors, setConnectors] = useState<Record<number, ConnectorRow[]>>({});
   const [expandedConnectorId, setExpandedConnectorId] = useState<number | null>(null);
   const [pins, setPins] = useState<Record<number, PinRow[]>>({});
+  const [importDiffMap, setImportDiffMap] = useState<Record<string, { old_values: any; new_values: any } | null>>({});
 
   // ── 断面连接器视图状态 ──
   const [sectionConnectors, setSectionConnectors] = useState<SectionConnectorRow[]>([]);
@@ -440,6 +459,24 @@ export default function ProjectDataView() {
       setExpandedSignalId(null);
     } catch (e) { console.error('加载信号失败', e); }
     finally { setLoading(false); }
+  };
+
+  const loadImportDiff = async (entityTable: string, entityId: number) => {
+    const key = `${entityTable}_${entityId}`;
+    if (importDiffMap[key] !== undefined) return; // 已加载
+    try {
+      const res = await fetch(`/api/change-logs?entity_table=${entityTable}&entity_id=${entityId}`, { headers: API_HEADERS() });
+      const data = await res.json();
+      const importLog = (data.logs || []).find((l: any) => l.reason === '文件导入更新');
+      if (importLog) {
+        setImportDiffMap(prev => ({ ...prev, [key]: {
+          old_values: JSON.parse(importLog.old_values || '{}'),
+          new_values: JSON.parse(importLog.new_values || '{}'),
+        }}));
+      } else {
+        setImportDiffMap(prev => ({ ...prev, [key]: null }));
+      }
+    } catch { setImportDiffMap(prev => ({ ...prev, [key]: null })); }
   };
 
   const loadApprovalInfo = async (entityType: string, entityId: number) => {
@@ -1500,6 +1537,7 @@ export default function ProjectDataView() {
                           setExpandedDeviceId(device.id);
                           await loadConnectors(device.id);
                           if (device.status === 'Pending') await loadApprovalInfo('device', device.id);
+                          if ((device as any).import_status === 'updated') loadImportDiff('devices', device.id);
                         }
                         else { setExpandedDeviceId(null); }
                       }}
@@ -1559,6 +1597,12 @@ export default function ProjectDataView() {
                             {device.management_claim_requester} 正在申请管理此设备
                           </span>
                         )}
+                        {(device as any).import_status === 'uploaded' && (
+                          <span className="ml-1 px-1.5 py-0.5 rounded bg-teal-100 text-teal-700 text-xs font-semibold">已导入</span>
+                        )}
+                        {(device as any).import_status === 'updated' && (
+                          <span className="ml-1 px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 text-xs font-semibold">已更新</span>
+                        )}
                       </td>
                       <td className="px-4 py-2 text-gray-600">{device['设备LIN号（DOORS）'] || '-'}</td>
                       <td className="px-4 py-2 text-gray-700">{device.设备中文名称 || '-'}</td>
@@ -1593,6 +1637,30 @@ export default function ProjectDataView() {
                     <tr>
                       <td colSpan={10} className="px-0 py-0 bg-gray-50 border-b border-gray-200">
                         <div className="pl-8 pr-4 py-3">
+                          {/* 导入更新 diff */}
+                          {(device as any).import_status === 'updated' && (() => {
+                            const diff = importDiffMap[`devices_${device.id}`];
+                            if (!diff) return null;
+                            const keys = Object.keys(diff.new_values);
+                            if (keys.length === 0) return null;
+                            return (
+                              <div className="mb-3 border border-purple-200 rounded bg-purple-50 px-3 py-2 text-xs">
+                                <div className="font-semibold text-purple-700 mb-1">文件导入更新了以下字段：</div>
+                                <table className="w-auto border-collapse">
+                                  <thead><tr className="text-gray-500"><th className="pr-4 text-left font-medium">字段</th><th className="pr-4 text-left font-medium">原值</th><th className="text-left font-medium">新值</th></tr></thead>
+                                  <tbody>
+                                    {keys.map(k => (
+                                      <tr key={k} className="border-t border-purple-100">
+                                        <td className="pr-4 py-0.5 text-gray-600">{k}</td>
+                                        <td className="pr-4 py-0.5 text-red-600 line-through">{diff.old_values[k] || '-'}</td>
+                                        <td className="py-0.5 text-green-700 font-medium">{diff.new_values[k] || '-'}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            );
+                          })()}
                           {device.status === 'Draft' && device.import_conflicts && (() => {
                             const conflicts: string[] = (() => {
                               try { return JSON.parse(device.import_conflicts); } catch { return [device.import_conflicts]; }
@@ -1608,28 +1676,25 @@ export default function ProjectDataView() {
                             );
                           })()}
                           {(() => {
-                            const veList: string[] = (() => {
-                              try { return JSON.parse(device.validation_errors || '[]'); } catch { return []; }
-                            })();
-                            if (veList.length === 0) return null;
+                            const ve = parseValidationErrors(device.validation_errors);
+                            if (ve.messages.length === 0) return null;
                             return (
-                              <div className="mb-3 p-2 bg-red-50 border border-red-300 rounded text-xs text-red-800">
-                                <span className="font-semibold">校验未通过：</span>以下红色字段与DOORS内设备信息不符 — {veList.join('、')}。请核对设备信息
+                              <div className="mb-3 p-2 bg-red-50 border border-red-300 rounded text-xs text-red-800 whitespace-pre-wrap">
+                                <span className="font-semibold">校验未通过：</span>{'\n'}{ve.messages.map((v, i) => `${i + 1}. ${v}`).join('\n')}{'\n'}请核对设备信息
                               </div>
                             );
                           })()}
                           <div className="text-xs font-semibold text-gray-600 mb-2">设备详细信息</div>
                           <div className="grid grid-cols-4 gap-x-8 gap-y-1.5 text-xs">
                             {(() => {
-                              const veList: string[] = (() => {
-                                try { return JSON.parse(device.validation_errors || '[]'); } catch { return []; }
-                              })();
+                              const ve = parseValidationErrors(device.validation_errors);
                               return DEVICE_FIELDS.map(f => {
                                 // 导入来源为空时不显示
                                 if (f.key === '导入来源' && !(device as any)['导入来源']) return null;
-                                const isErr = veList.includes(String(f.key));
+                                const fk = String(f.key);
+                                const isErr = ve.fields.includes(fk);
                                 return (
-                                  <div key={String(f.key)} className="flex gap-1 min-w-0">
+                                  <div key={fk} className="flex gap-1 min-w-0">
                                     <span className={`shrink-0 ${isErr ? 'text-red-600 font-medium' : 'text-gray-400'}`}>{f.label}：</span>
                                     <span className={`truncate ${isErr ? 'text-red-600 font-medium' : 'text-gray-800'}`}
                                       title={(device as any)[f.key] || undefined}>
@@ -1791,6 +1856,7 @@ export default function ProjectDataView() {
                                               setExpandedConnectorId(conn.id);
                                               await loadPins(device.id, conn.id);
                                               if (conn.status === 'Pending') await loadApprovalInfo('connector', conn.id);
+                                              if ((conn as any).import_status === 'updated') loadImportDiff('connectors', conn.id);
                                             }
                                             else { setExpandedConnectorId(null); }
                                           }}
@@ -1821,6 +1887,12 @@ export default function ProjectDataView() {
                                             {conn.status === 'normal' && (
                                               <span className="ml-1 px-1 py-0.5 text-xs bg-green-100 text-green-700 rounded">已生效</span>
                                             )}
+                                            {(conn as any).import_status === 'uploaded' && (
+                                              <span className="ml-1 px-1 py-0.5 text-xs bg-teal-100 text-teal-700 rounded font-semibold">已导入</span>
+                                            )}
+                                            {(conn as any).import_status === 'updated' && (
+                                              <span className="ml-1 px-1 py-0.5 text-xs bg-purple-100 text-purple-700 rounded font-semibold">已更新</span>
+                                            )}
                                           </td>
                                           <td className="px-2 py-1">{conn.设备端元器件名称及类型 || '-'}</td>
                                           <td className="px-2 py-1">{conn.pin_count ?? 0}</td>
@@ -1847,6 +1919,31 @@ export default function ProjectDataView() {
                                                 {/* 连接器详情 */}
                                                 <div className="mb-2 p-2 bg-white border border-indigo-100 rounded text-xs">
                                                   <div className="font-semibold text-indigo-700 mb-1">连接器详情</div>
+
+                                                  {/* 导入更新 diff */}
+                                                  {(conn as any).import_status === 'updated' && (() => {
+                                                    const diff = importDiffMap[`connectors_${conn.id}`];
+                                                    if (!diff) return null;
+                                                    const keys = Object.keys(diff.new_values);
+                                                    if (keys.length === 0) return null;
+                                                    return (
+                                                      <div className="mb-2 border border-purple-200 rounded bg-purple-50 px-3 py-2">
+                                                        <div className="font-semibold text-purple-700 mb-1">文件导入更新了以下字段：</div>
+                                                        <table className="w-auto border-collapse">
+                                                          <thead><tr className="text-gray-500"><th className="pr-4 text-left font-medium">字段</th><th className="pr-4 text-left font-medium">原值</th><th className="text-left font-medium">新值</th></tr></thead>
+                                                          <tbody>
+                                                            {keys.map(k => (
+                                                              <tr key={k} className="border-t border-purple-100">
+                                                                <td className="pr-4 py-0.5 text-gray-600">{k}</td>
+                                                                <td className="pr-4 py-0.5 text-red-600 line-through">{diff.old_values[k] || '-'}</td>
+                                                                <td className="py-0.5 text-green-700 font-medium">{diff.new_values[k] || '-'}</td>
+                                                              </tr>
+                                                            ))}
+                                                          </tbody>
+                                                        </table>
+                                                      </div>
+                                                    );
+                                                  })()}
 
                                                   {/* 导入冲突信息 */}
                                                   {conn.import_conflicts && (() => {
@@ -1962,6 +2059,8 @@ export default function ProjectDataView() {
                                                             {pin.针孔号}
                                                             {pin.status === 'Pending' && <span className="ml-1 px-1 py-0.5 text-xs bg-blue-100 text-blue-700 rounded">审批中</span>}
                                                             {pin.status === 'normal' && <span className="ml-1 px-1 py-0.5 text-xs bg-green-100 text-green-700 rounded">已生效</span>}
+                                                            {(pin as any).import_status === 'uploaded' && <span className="ml-1 px-1 py-0.5 text-xs bg-teal-100 text-teal-700 rounded font-semibold">已导入</span>}
+                                                            {(pin as any).import_status === 'updated' && <span className="ml-1 px-1 py-0.5 text-xs bg-purple-100 text-purple-700 rounded font-semibold">已更新</span>}
                                                           </td>
                                                           <td className="px-2 py-1">{pin.端接尺寸 || '-'}</td>
                                                           <td className="px-2 py-1">{pin.屏蔽类型 || '-'}</td>
@@ -2361,6 +2460,7 @@ export default function ProjectDataView() {
                               setExpandedSignalId(signal.id);
                               await loadSignalDetail(signal.id, true);
                               if (signal.status === 'Pending') await loadApprovalInfo('signal', signal.id);
+                              if ((signal as any).import_status === 'updated') loadImportDiff('signals', signal.id);
                             }
                           }}
                           className="text-gray-400 hover:text-green-600 font-mono text-xs"
@@ -2382,6 +2482,12 @@ export default function ProjectDataView() {
                         )}
                         {signal.status === 'Active' && (
                           <span className="px-1.5 py-0.5 rounded bg-green-100 text-green-700 text-xs font-semibold">已生效</span>
+                        )}
+                        {(signal as any).import_status === 'uploaded' && (
+                          <span className="ml-1 px-1.5 py-0.5 rounded bg-teal-100 text-teal-700 text-xs font-semibold">已导入</span>
+                        )}
+                        {(signal as any).import_status === 'updated' && (
+                          <span className="ml-1 px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 text-xs font-semibold">已更新</span>
                         )}
                       </td>
                       <td className="px-4 py-2 text-xs">{signal.信号名称摘要 || '-'}</td>
@@ -2464,6 +2570,31 @@ export default function ProjectDataView() {
                       <tr key={`${signal.id}-detail`}>
                         <td colSpan={7} className="px-0 py-0 bg-green-50">
                           <div className="pl-8 pr-4 py-3 text-xs">
+
+                            {/* 导入更新 diff */}
+                            {(signal as any).import_status === 'updated' && (() => {
+                              const diff = importDiffMap[`signals_${signal.id}`];
+                              if (!diff) return null;
+                              const keys = Object.keys(diff.new_values);
+                              if (keys.length === 0) return null;
+                              return (
+                                <div className="mb-3 border border-purple-200 rounded bg-purple-50 px-3 py-2">
+                                  <div className="font-semibold text-purple-700 mb-1">文件导入更新了以下字段：</div>
+                                  <table className="w-auto border-collapse text-xs">
+                                    <thead><tr className="text-gray-500"><th className="pr-4 text-left font-medium">字段</th><th className="pr-4 text-left font-medium">原值</th><th className="text-left font-medium">新值</th></tr></thead>
+                                    <tbody>
+                                      {keys.map(k => (
+                                        <tr key={k} className="border-t border-purple-100">
+                                          <td className="pr-4 py-0.5 text-gray-600">{k}</td>
+                                          <td className="pr-4 py-0.5 text-red-600 line-through">{diff.old_values[k] || '-'}</td>
+                                          <td className="py-0.5 text-green-700 font-medium">{diff.new_values[k] || '-'}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              );
+                            })()}
 
                             {/* 连接摘要 */}
                             {detail.endpoints?.length >= 1 && (
@@ -2830,15 +2961,13 @@ export default function ProjectDataView() {
             <div className="bg-white rounded-lg p-6 max-w-2xl w-full max-h-[85vh] overflow-y-auto">
               <h2 className="text-xl font-bold mb-4">{editingDevice ? '编辑设备' : '添加设备'}</h2>
               {(() => {
-                const editVeList: string[] = (() => {
-                  try { return JSON.parse(editingDevice?.validation_errors || '[]'); } catch { return []; }
-                })();
+                const editVe = parseValidationErrors(editingDevice?.validation_errors);
                 return (
               <div className="grid grid-cols-2 gap-4">
                 {DEVICE_FIELDS.map(f => {
                   // 导入来源为空时不显示
                   if (f.key === '导入来源' && !(deviceForm as any)['导入来源']) return null;
-                  const isErr = editVeList.includes(String(f.key));
+                  const isErr = editVe.fields.includes(String(f.key));
                   const fw = fieldWarnings[f.key as string];
                   return (
                   <div key={f.key}>

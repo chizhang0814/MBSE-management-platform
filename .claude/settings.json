@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ssh -i \"D:\\\\Downloads\\\\mbse.pem\" -F /dev/null -o StrictHostKeyChecking=no root@8.140.11.97 \"sqlite3 /opt/mbse-platform/data/sqlite/eicd.db \"\"SELECT COUNT\\(*\\) FROM devices; SELECT COUNT\\(*\\) FROM users; SELECT COUNT\\(*\\) FROM projects;\"\"\")",
+      "Bash(scp -F /dev/null -i \"D:\\\\Downloads\\\\mbse.pem\" -o StrictHostKeyChecking=no root@8.140.11.97:/tmp/eicd_export.db \"d:\\\\Downloads\\\\MBSE综合管理平台\\\\server\\\\eicd_prod_tmp.db\")",
+      "Bash(ls -la \"d:\\\\Downloads\\\\MBSE综合管理平台\\\\server\\\\eicd.db\"*)",
+      "Bash(ls -la \"d:/Downloads/MBSE综合管理平台/server/\"eicd*)",
+      "Bash(npx kill-port 3000)",
+      "Bash(tar --exclude='node_modules' --exclude='.git' --exclude='server/dist' --exclude='server/backups' --exclude='data' --exclude='server/eicd.db*' --exclude='.claude' --exclude='server/dup_check_tmp.mjs' --exclude='*.bak*' -czf mbse-deploy.tar.gz \"MBSE综合管理平台/\")",
+      "Bash(# Check all node/tsx processes tasklist)",
+      "Bash(__NEW_LINE_084dd2556b393ab6__ echo \"=== Backend LOG after PUT ===\")",
+      "Bash(# Kill ALL node processes \\(will also kill vite frontend\\) taskkill //F //IM node.exe sleep 2 # Verify nothing on port 3000 netstat -ano)"
+    ]
+  }
+}

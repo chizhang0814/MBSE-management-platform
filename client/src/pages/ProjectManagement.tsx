@@ -528,7 +528,7 @@ export default function ProjectManagement() {
                 <div className="mb-4">
                   {/* 汇总统计 */}
                   {!importing && (() => {
-                    let totalSuccess = 0, totalSkipped = 0, totalErrors = 0;
+                    let totalSuccess = 0, totalSkipped = 0, totalErrors = 0, totalWarnings = 0;
                     for (const fr of importResults) {
                       if (fr.error) { totalErrors++; continue; }
                       for (const sheet of Object.values(fr.results || {}) as any[]) {
@@ -536,11 +536,15 @@ export default function ProjectManagement() {
                         totalSuccess += sheet.success || 0;
                         totalSkipped += Array.isArray(sheet.skipped) ? sheet.skipped.length : 0;
                         totalErrors += Array.isArray(sheet.errors) ? sheet.errors.length : 0;
+                        totalWarnings += Array.isArray(sheet.warnings) ? sheet.warnings.length : 0;
                       }
                     }
                     return (
                       <div className="mb-3 px-3 py-2 bg-blue-50 border border-blue-200 rounded text-sm font-medium text-blue-800">
-                        导入完成：新增 {totalSuccess} 条 / 跳过 {totalSkipped} 条 / 问题 {totalErrors} 条
+                        导入完成：新增 {totalSuccess} 条
+                        {totalSkipped > 0 && ` / 跳过 ${totalSkipped} 条`}
+                        {totalErrors > 0 && ` / 未导入 ${totalErrors} 条`}
+                        {totalWarnings > 0 && ` / 校验警告 ${totalWarnings} 条`}
                       </div>
                     );
                   })()}
@@ -554,25 +558,39 @@ export default function ProjectManagement() {
                         Object.entries(fileResult.results || {}).map(([key, sheet]: [string, any]) => {
                           if (!sheet) return null;
                           const skippedList: string[] = Array.isArray(sheet.skipped) ? sheet.skipped : [];
-                          const hasErrors = sheet.errors?.length > 0;
-                          const hasSkipped = skippedList.length > 0;
+                          const errorList: string[] = Array.isArray(sheet.errors) ? sheet.errors : [];
+                          const warningList: string[] = Array.isArray(sheet.warnings) ? sheet.warnings : [];
+                          const hasIssue = errorList.length > 0 || warningList.length > 0;
                           return (
-                            <div key={key} className={`px-2 py-1 rounded text-xs ${hasErrors ? 'bg-yellow-50 text-yellow-800' : 'bg-green-50 text-green-800'}`}>
+                            <div key={key} className={`px-2 py-1 rounded text-xs ${hasIssue ? 'bg-yellow-50 text-yellow-800' : 'bg-green-50 text-green-800'}`}>
                               <span className="font-medium">{sheet.name}：</span>
                               新增 {sheet.success} 条
-                              {hasSkipped ? ` / 跳过 ${skippedList.length} 条` : ''}
-                              {hasErrors ? ` / 问题 ${sheet.errors.length} 条` : ''}
-                              {hasSkipped && (
+                              {skippedList.length > 0 && ` / 跳过 ${skippedList.length} 条`}
+                              {errorList.length > 0 && ` / 未导入 ${errorList.length} 条`}
+                              {warningList.length > 0 && ` / 校验警告 ${warningList.length} 条`}
+                              {skippedList.length > 0 && (
                                 <ul className="mt-0.5 space-y-0.5 max-h-16 overflow-y-auto text-gray-600">
                                   {skippedList.slice(0, 10).map((s: string, idx: number) => <li key={idx}>• {s}</li>)}
                                   {skippedList.length > 10 && <li>... 还有 {skippedList.length - 10} 条</li>}
                                 </ul>
                               )}
-                              {hasErrors && (
-                                <ul className="mt-0.5 space-y-0.5 max-h-16 overflow-y-auto">
-                                  {sheet.errors.slice(0, 10).map((e: string, idx: number) => <li key={idx}>• {e}</li>)}
-                                  {sheet.errors.length > 10 && <li>... 还有 {sheet.errors.length - 10} 条</li>}
-                                </ul>
+                              {errorList.length > 0 && (
+                                <div className="mt-0.5">
+                                  <span className="font-medium text-red-700">未导入原因：</span>
+                                  <ul className="space-y-0.5 max-h-16 overflow-y-auto text-red-700">
+                                    {errorList.slice(0, 10).map((e: string, idx: number) => <li key={idx}>• {e}</li>)}
+                                    {errorList.length > 10 && <li>... 还有 {errorList.length - 10} 条</li>}
+                                  </ul>
+                                </div>
+                              )}
+                              {warningList.length > 0 && (
+                                <div className="mt-0.5">
+                                  <span className="font-medium text-amber-700">校验警告（已导入为Draft）：</span>
+                                  <ul className="space-y-0.5 max-h-16 overflow-y-auto text-amber-700">
+                                    {warningList.slice(0, 10).map((w: string, idx: number) => <li key={idx}>• {w}</li>)}
+                                    {warningList.length > 10 && <li>... 还有 {warningList.length - 10} 条</li>}
+                                  </ul>
+                                </div>
                               )}
                             </div>
                           );

@@ -12,6 +12,89 @@ export function deviceRoutes(db: Database) {
   const purgeExpiredLocks = () =>
     db.run("DELETE FROM edit_locks WHERE expires_at <= datetime('now')");
 
+  // ── 设备校验函数（导入和编辑共用）──────────────────────────
+  // 返回 { messages: 显示用错误信息, fields: 需标红的字段名 }
+  async function validateDevice(merged: Record<string, any>, projectId: number): Promise<{ messages: string[], fields: string[] }> {
+    const messages: string[] = [];
+    const fields: string[] = [];
+
+    // a) 通过 设备LIN号（DOORS） 在全机设备清单中查找
+    const linVal = (merged['设备LIN号（DOORS）'] || '').trim();
+    const adlMatch = await db.get(
+      `SELECT * FROM aircraft_device_list WHERE project_id = ? AND LIN号_DOORS = ?`,
+      [projectId, linVal]
+    );
+    if (!adlMatch) {
+      messages.push(`在DOORS全机设备清单的设备编号管理Sheet里没有设备LIN号（DOORS）为"${linVal}"的设备`);
+      fields.push('设备LIN号（DOORS）');
+    } else {
+      const comparePairs: [string, string, string][] = [
+        ['设备编号', (merged['设备编号'] || '').trim(), (adlMatch.电设备编号 || '').trim()],
+        ['设备中文名称', (merged['设备中文名称'] || '').trim(), (adlMatch.object_text || '').trim()],
+        ['设备编号（DOORS）', (merged['设备编号（DOORS）'] || '').trim(), (adlMatch.设备编号_DOORS || '').trim()],
+        ['设备安装位置', (merged['设备安装位置'] || '').trim(), (adlMatch.设备布置区域 || '').trim()],
+      ];
+      const mismatches = comparePairs.filter(([, importVal, doorsVal]) => importVal !== doorsVal);
+      if (mismatches.length > 0) {
+        const details = mismatches.map(([col, importVal, doorsVal]) =>
+          `      "${col}"列 DOORS内值为"${doorsVal}"，导入值为"${importVal}"`
+        ).join('；\n');
+        messages.push(`已在DOORS全机设备清单的设备编号管理Sheet里找到设备LIN号（DOORS）为"${linVal}"的设备，但如下信息不符：\n${details}`);
+        fields.push(...mismatches.map(([col]) => col));
+      }
+    }
+
+    // c) 设备DAL
+    const dalVal = (merged['设备DAL'] || '').trim();
+    if (!['A', 'B', 'C', 'D', 'E', '其他'].includes(dalVal)) {
+      messages.push(`设备DAL必须是A/B/C/D/E/其他，当前值为"${dalVal}"`);
+      fields.push('设备DAL');
+    }
+
+    // d) 设备部件所属系统（4位ATA）
+    const ataVal = (merged['设备部件所属系统（4位ATA）'] || '').trim();
+    if (!/^\d{2}-\d{2}$/.test(ataVal) && ataVal !== '其他') {
+      messages.push(`设备部件所属系统（4位ATA）格式应为12-34的四位数字或"其他"，当前值为"${ataVal}"`);
+      fields.push('设备部件所属系统（4位ATA）');
+    }
+
+    // e) 设备壳体是否金属
+    const isMetalShell = (merged['设备壳体是否金属'] || '').trim();
+    if (!['是', '否'].includes(isMetalShell)) {
+      messages.push(`设备壳体是否金属必须是"是"或"否"，额外信息请在"备注"中补充，当前值为"${isMetalShell}"`);
+      fields.push('设备壳体是否金属');
+    }
+
+    // f) 金属壳体表面处理
+    const shellTreated = (merged['金属壳体表面是否经过特殊处理而不易导电'] || '').trim();
+    if (!['是', '否'].includes(isMetalShell)) {
+      messages.push(`金属壳体表面是否经过特殊处理而不易导电：因"设备壳体是否金属"校验未通过，无法判断，当前值为"${shellTreated}"`);
+      fields.push('金属壳体表面是否经过特殊处理而不易导电');
+    } else if (isMetalShell === '是' && !['是', '否'].includes(shellTreated)) {
+      messages.push(`金属壳体表面是否经过特殊处理而不易导电：当"设备壳体是否金属"为"是"时只能填"是"或"否"，额外信息请在"备注"中补充，当前值为"${shellTreated}"`);
+      fields.push('金属壳体表面是否经过特殊处理而不易导电');
+    } else if (isMetalShell === '否' && shellTreated !== 'N/A') {
+      messages.push(`金属壳体表面是否经过特殊处理而不易导电：当"设备壳体是否金属"为"否"时必须填"N/A"，额外信息请在"备注"中补充，当前值为"${shellTreated}"`);
+      fields.push('金属壳体表面是否经过特殊处理而不易导电');
+    }
+
+    // g) 设备壳体接地方式
+    const groundMethod = (merged['设备壳体接地方式'] || '').trim();
+    if (!['线搭接', '面搭接', '无'].includes(groundMethod)) {
+      messages.push(`设备壳体接地方式必须是"线搭接"/"面搭接"/"无"，额外信息请在"备注"中补充，当前值为"${groundMethod}"`);
+      fields.push('设备壳体接地方式');
+    }
+
+    // h) 壳体接地是否故障电流路径
+    const faultPath = (merged['壳体接地是否故障电流路径'] || '').trim();
+    if (!['是', '否'].includes(faultPath)) {
+      messages.push(`壳体接地是否故障电流路径必须是"是"或"否"，额外信息请在"备注"中补充，当前值为"${faultPath}"`);
+      fields.push('壳体接地是否故障电流路径');
+    }
+
+    return { messages, fields };
+  }
+
   // ── 设备列表 ──────────────────────────────────────────────
 
   // GET /api/devices?projectId=N[&myDevices=true]
@@ -327,6 +410,20 @@ export function deviceRoutes(db: Database) {
         return res.status(403).json({ error: '无权限，需要设备管理员或总体人员角色' });
       }
 
+      // 校验 设备LIN号（DOORS）不能为空
+      const linNum = String(fields['设备LIN号（DOORS）'] || '').trim();
+      if (!linNum) {
+        return res.status(400).json({ error: '设备LIN号（DOORS）不能为空' });
+      }
+      // 校验项目内唯一
+      const linDup = await db.get(
+        `SELECT id FROM devices WHERE project_id = ? AND "设备LIN号（DOORS）" = ?`,
+        [project_id, linNum]
+      );
+      if (linDup) {
+        return res.status(409).json({ error: `设备LIN号（DOORS）"${linNum}"在本项目中已存在` });
+      }
+
       // admin → 直接写入
       if (isAdmin) {
         const insertStatus = forceDraft ? 'Draft' : 'normal';
@@ -402,7 +499,7 @@ export function deviceRoutes(db: Database) {
       return res.status(202).json({ pending: true, id: result.lastID, message: '已提交审批，等待审批通过' });
     } catch (error: any) {
       if (error.message?.includes('UNIQUE')) {
-        return res.status(409).json({ error: '该项目中设备编号已存在' });
+        return res.status(409).json({ error: '该项目中设备LIN号（DOORS）已存在' });
       }
       res.status(500).json({ error: error.message || '创建设备失败' });
     }
@@ -495,6 +592,23 @@ export function deviceRoutes(db: Database) {
       delete fields.pending_sub_item_type;
       delete fields.has_pending_sub;
       delete fields.management_claim_requester;
+      delete fields.import_status;
+
+      // 校验 设备LIN号（DOORS）不能为空（若本次提交了该字段）
+      if ('设备LIN号（DOORS）' in fields) {
+        const linVal = String(fields['设备LIN号（DOORS）'] || '').trim();
+        if (!linVal) {
+          return res.status(400).json({ error: '设备LIN号（DOORS）不能为空' });
+        }
+        // 校验项目内唯一（排除自身）
+        const linDupPut = await db.get(
+          `SELECT id FROM devices WHERE project_id = ? AND "设备LIN号（DOORS）" = ? AND id != ?`,
+          [device.project_id, linVal, deviceId]
+        );
+        if (linDupPut) {
+          return res.status(409).json({ error: `设备LIN号（DOORS）"${linVal}"在本项目中已存在` });
+        }
+      }
 
       // 去除 设备部件所属系统（4位ATA） 首尾各类引号（含中文弯引号）
       const ATA_KEY = '设备部件所属系统（4位ATA）';
@@ -526,56 +640,16 @@ export function deviceRoutes(db: Database) {
         const projectId = device.project_id;
 
         if (forceDraft) {
-          await db.run(`UPDATE devices SET status = 'Draft' WHERE id = ?`, [deviceId]);
-        } else {
-          const veErrors: string[] = [];
-
-          const adlMatch = await db.get(
-            `SELECT 设备布置区域 FROM aircraft_device_list WHERE project_id = ? AND 电设备编号 = ? AND 设备编号_DOORS = ? AND LIN号_DOORS = ? AND object_text = ?`,
-            [projectId,
-             (merged['设备编号'] || '').trim(),
-             (merged['设备编号（DOORS）'] || '').trim(),
-             (merged['设备LIN号（DOORS）'] || '').trim(),
-             (merged['设备中文名称'] || '').trim()]
+          const ve = await validateDevice(merged, projectId);
+          await db.run(
+            `UPDATE devices SET status = 'Draft', validation_errors = ? WHERE id = ?`,
+            [JSON.stringify(ve), deviceId]
           );
-          if (!adlMatch) {
-            veErrors.push('设备编号（DOORS）', '设备LIN号（DOORS）', '设备编号', '设备中文名称', '设备安装位置');
-          } else {
-            if ((adlMatch.设备布置区域 || '').trim() !== (merged['设备安装位置'] || '').trim()) {
-              veErrors.push('设备安装位置');
-            }
-          }
-
-          if (!['A', 'B', 'C', 'D', 'E', '其他'].includes((merged['设备DAL'] || '').trim())) {
-            veErrors.push('设备DAL');
-          }
-
-          const ataVal = (merged['设备部件所属系统（4位ATA）'] || '').trim();
-          if (!/^\d{2}-\d{2}$/.test(ataVal) && ataVal !== '其他') {
-            veErrors.push('设备部件所属系统（4位ATA）');
-          }
-
-          const isMetalShell = (merged['设备壳体是否金属'] || '').trim();
-          if (!['是', '否'].includes(isMetalShell)) veErrors.push('设备壳体是否金属');
-
-          const shellTreated = (merged['金属壳体表面是否经过特殊处理而不易导电'] || '').trim();
-          if (isMetalShell === '是' && !['是', '否'].includes(shellTreated)) {
-            veErrors.push('金属壳体表面是否经过特殊处理而不易导电');
-          } else if (isMetalShell === '否' && shellTreated !== 'N/A') {
-            veErrors.push('金属壳体表面是否经过特殊处理而不易导电');
-          }
-
-          if (!['线搭接', '面搭接', '无'].includes((merged['设备壳体接地方式'] || '').trim())) {
-            veErrors.push('设备壳体接地方式');
-          }
-
-          if (!['是', '否'].includes((merged['壳体接地是否故障电流路径'] || '').trim())) {
-            veErrors.push('壳体接地是否故障电流路径');
-          }
-
+        } else {
+          const ve = await validateDevice(merged, projectId);
           await db.run(
             `UPDATE devices SET status = ?, validation_errors = ? WHERE id = ?`,
-            [veErrors.length > 0 ? 'Draft' : 'normal', JSON.stringify(veErrors), deviceId]
+            [ve.messages.length > 0 ? 'Draft' : 'normal', JSON.stringify(ve), deviceId]
           );
         }
 
@@ -587,7 +661,7 @@ export function deviceRoutes(db: Database) {
         const setClauses = Object.keys(fields).map(k => `"${k}" = ?`).join(', ');
         const vals = [...Object.values(fields), deviceId, version ?? 1];
         const r = await db.run(
-          `UPDATE devices SET ${setClauses}, status = 'Draft', version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND version = ?`,
+          `UPDATE devices SET ${setClauses}, status = 'Draft', import_status = NULL, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND version = ?`,
           vals
         );
         if (r.changes === 0) {
@@ -598,6 +672,14 @@ export function deviceRoutes(db: Database) {
            VALUES ('devices', ?, ?, 'devices', ?, ?, ?, '修改设备(Draft)', 'approved')`,
           [deviceId, deviceId, req.user!.id, JSON.stringify(device), JSON.stringify(fields)]
         );
+        // 重新校验并更新 validation_errors
+        const mergedDraft = { ...device, ...fields };
+        const veDraft = await validateDevice(mergedDraft, device.project_id);
+        await db.run(
+          `UPDATE devices SET validation_errors = ? WHERE id = ?`,
+          [JSON.stringify(veDraft), deviceId]
+        );
+
         return res.json({ success: true });
       }
 
@@ -615,7 +697,7 @@ export function deviceRoutes(db: Database) {
           // 应用字段变更
           const setClauses = Object.keys(fields).map(k => `"${k}" = ?`).join(', ');
           await db.run(
-            `UPDATE devices SET ${setClauses}, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+            `UPDATE devices SET ${setClauses}, import_status = NULL, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
             [...Object.values(fields), deviceId]
           );
           // 标记完善项为 done
@@ -648,7 +730,7 @@ export function deviceRoutes(db: Database) {
           // 应用字段变更
           const setClauses = Object.keys(fields).map(k => `"${k}" = ?`).join(', ');
           await db.run(
-            `UPDATE devices SET ${setClauses}, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+            `UPDATE devices SET ${setClauses}, import_status = NULL, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
             [...Object.values(fields), deviceId]
           );
           // 标记审批项为 done
@@ -670,7 +752,7 @@ export function deviceRoutes(db: Database) {
       // 非 admin、非 forceDraft → 应用字段变更并提交审批
       const setClauses = Object.keys(fields).map(k => `"${k}" = ?`).join(', ');
       await db.run(
-        `UPDATE devices SET ${setClauses}, status = 'Pending', version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+        `UPDATE devices SET ${setClauses}, status = 'Pending', import_status = NULL, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
         [...Object.values(fields), deviceId]
       );
 
@@ -705,7 +787,7 @@ export function deviceRoutes(db: Database) {
       return res.status(202).json({ pending: true, message: '已提交审批，等待审批通过' });
     } catch (error: any) {
       if (error.message?.includes('UNIQUE')) {
-        return res.status(409).json({ error: '该项目中设备编号已存在' });
+        return res.status(409).json({ error: '该项目中设备LIN号（DOORS）已存在' });
       }
       res.status(500).json({ error: error.message || '更新设备失败' });
     }
@@ -978,7 +1060,7 @@ export function deviceRoutes(db: Database) {
       if (forceDraft) {
         const setClauses = Object.keys(fields).map(k => `"${k}" = ?`).join(', ');
         const result = await db.run(
-          `UPDATE connectors SET ${setClauses}, status = 'Draft', version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND version = ?`,
+          `UPDATE connectors SET ${setClauses}, status = 'Draft', import_status = NULL, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND version = ?`,
           [...Object.values(fields), connectorId, version ?? 1]
         );
         if (result.changes === 0) {
@@ -995,7 +1077,7 @@ export function deviceRoutes(db: Database) {
       // 非 admin → 应用字段变更并提交审批
       const setClauses = Object.keys(fields).map(k => `"${k}" = ?`).join(', ');
       await db.run(
-        `UPDATE connectors SET ${setClauses}, status = 'Pending', version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+        `UPDATE connectors SET ${setClauses}, status = 'Pending', import_status = NULL, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
         [...Object.values(fields), connectorId]
       );
 
@@ -1269,7 +1351,7 @@ export function deviceRoutes(db: Database) {
       if (forceDraft) {
         const setClauses = Object.keys(fields).map(k => `"${k}" = ?`).join(', ');
         const result = await db.run(
-          `UPDATE pins SET ${setClauses}, status = 'Draft', version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND version = ?`,
+          `UPDATE pins SET ${setClauses}, status = 'Draft', import_status = NULL, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND version = ?`,
           [...Object.values(fields), pinId, version ?? 1]
         );
         if (result.changes === 0) {
@@ -1286,7 +1368,7 @@ export function deviceRoutes(db: Database) {
       // 非 admin → 应用字段变更并提交审批
       const setClauses = Object.keys(fields).map(k => `"${k}" = ?`).join(', ');
       await db.run(
-        `UPDATE pins SET ${setClauses}, status = 'Pending', version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+        `UPDATE pins SET ${setClauses}, status = 'Pending', import_status = NULL, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
         [...Object.values(fields), pinId]
       );
 

@@ -350,7 +350,7 @@ export default function UploadedFiles() {
         {/* 文件详情对话框 */}
         {selectedFile && (() => {
           const tableTypeLabel = getImportTypeLabel(selectedFile.table_type);
-          type SheetResult = { name?: string; success: number; skipped: string[]; errors: string[] };
+          type SheetResult = { name?: string; success: number; skipped: string[]; errors: string[]; warnings?: string[] };
           const { sheetResults, errorList, skippedList } = (() => {
             try {
               if (!selectedFile.error_details) return { sheetResults: null, errorList: [] as string[], skippedList: [] as string[] };
@@ -381,7 +381,40 @@ export default function UploadedFiles() {
                 {/* Header */}
                 <div className="flex justify-between items-center px-6 py-4 border-b">
                   <h3 className="text-xl font-bold">导入详情</h3>
-                  <button onClick={() => setSelectedFile(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        // 构建导出数据
+                        const rows: string[][] = [['Sheet', '类型', '详情']];
+                        if (sheetResults) {
+                          Object.entries(sheetResults).forEach(([sheetKey, sr]) => {
+                            (sr.skipped || []).forEach(s => rows.push([sheetKey, '跳过', s]));
+                            (sr.errors || []).forEach(e => rows.push([sheetKey, '导入失败', e]));
+                            (sr.warnings || []).forEach(w => rows.push([sheetKey, '校验警告', w]));
+                          });
+                        } else {
+                          skippedList.forEach(s => rows.push(['', '跳过', s]));
+                          errorList.forEach(e => rows.push(['', '导入失败', e]));
+                        }
+                        if (rows.length === 1) { alert('没有需要导出的详情记录'); return; }
+                        // BOM + CSV
+                        const csvContent = '\uFEFF' + rows.map(r =>
+                          r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')
+                        ).join('\n');
+                        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `导入详情_${selectedFile.original_filename || selectedFile.filename}_${new Date().toISOString().slice(0, 10)}.csv`;
+                        a.click();
+                        URL.revokeObjectURL(url);
+                      }}
+                      className="px-3 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-700"
+                    >
+                      导出详情
+                    </button>
+                    <button onClick={() => setSelectedFile(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+                  </div>
                 </div>
 
                 {/* Body — scrollable */}
@@ -468,13 +501,13 @@ export default function UploadedFiles() {
                   {/* 分 Sheet 详情（新格式） */}
                   {sheetResults ? (
                     Object.entries(sheetResults).map(([sheetKey, sr]) => {
-                      const hasDetail = (sr.skipped?.length || 0) + (sr.errors?.length || 0) > 0;
+                      const hasDetail = (sr.skipped?.length || 0) + (sr.errors?.length || 0) + (sr.warnings?.length || 0) > 0;
                       return (
                         <div key={sheetKey}>
                           <h4 className="text-sm font-semibold text-gray-700 mb-1">
                             Sheet：{sheetKey}
                             <span className="ml-2 text-xs font-normal text-gray-500">
-                              成功 {sr.success} 条 / 跳过 {sr.skipped?.length || 0} 条 / 失败 {sr.errors?.length || 0} 条
+                              成功 {sr.success} 条 / 跳过 {sr.skipped?.length || 0} 条 / 失败 {sr.errors?.length || 0} 条{(sr.warnings?.length || 0) > 0 ? ` / 校验警告 ${sr.warnings!.length} 条` : ''}
                             </span>
                           </h4>
                           {hasDetail ? (
@@ -492,6 +525,14 @@ export default function UploadedFiles() {
                                   <div className="bg-red-50 px-3 py-1 text-xs text-red-600 border-b border-red-200 font-medium">失败（{sr.errors.length} 条）</div>
                                   <ul className="max-h-36 overflow-y-auto divide-y divide-red-100 text-xs text-red-800">
                                     {sr.errors.map((e, i) => <li key={i} className="px-3 py-1">{e}</li>)}
+                                  </ul>
+                                </div>
+                              )}
+                              {(sr.warnings?.length || 0) > 0 && (
+                                <div className="border border-orange-200 rounded-md overflow-hidden">
+                                  <div className="bg-orange-50 px-3 py-1 text-xs text-orange-700 border-b border-orange-200 font-medium">校验警告（{sr.warnings!.length} 条，已导入但校验未通过）</div>
+                                  <ul className="max-h-60 overflow-y-auto divide-y divide-orange-100 text-xs text-orange-800">
+                                    {sr.warnings!.map((w, i) => <li key={i} className="px-3 py-1 whitespace-pre-wrap">{w}</li>)}
                                   </ul>
                                 </div>
                               )}

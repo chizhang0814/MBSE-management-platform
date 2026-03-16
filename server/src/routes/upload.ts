@@ -350,7 +350,7 @@ export function uploadRoutes(db: Database) {
         `SELECT uf.*, u.username as uploaded_by_name
          FROM uploaded_files uf
          JOIN users u ON uf.uploaded_by = u.id
-         ORDER BY uf.id ASC`
+         ORDER BY uf.id DESC`
       );
       
       // 为每个文件查找对应的项目名称
