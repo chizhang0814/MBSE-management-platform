@@ -156,14 +156,14 @@ const SIGNAL_FIELDS: { key: keyof SignalRow; label: string }[] = [
   { key: '接地代码', label: '接地代码' },
   { key: '极性', label: '极性' },
   { key: '额定电压', label: '额定电压' },
-  { key: '额定电流', label: '额定电流' },
+  { key: '额定电流', label: '额定电流（A）' },
   { key: '设备正常工作电压范围', label: '设备正常工作电压范围' },
   { key: '是否成品线', label: '是否成品线' },
   { key: '成品线件号', label: '成品线件号' },
   { key: '成品线线规', label: '成品线线规' },
   { key: '成品线类型', label: '成品线类型' },
-  { key: '成品线长度', label: '成品线长度' },
-  { key: '成品线载流量', label: '成品线载流量' },
+  { key: '成品线长度', label: '成品线长度(MM)' },
+  { key: '成品线载流量', label: '成品线载流量(A)' },
   { key: '成品线线路压降', label: '成品线线路压降' },
   { key: '成品线标识', label: '成品线标识' },
   { key: '成品线与机上线束对接方式', label: '成品线与机上线束对接方式' },
@@ -248,6 +248,13 @@ export default function ProjectDataView() {
   const [signals, setSignals] = useState<SignalRow[]>([]);
   const [expandedSignalId, setExpandedSignalId] = useState<number | null>(null);
   const [signalDetails, setSignalDetails] = useState<Record<number, SignalDetail>>({});
+
+  // ── ATA导出状态 ──
+  const [showAtaExportModal, setShowAtaExportModal] = useState(false);
+  const [ataExportFilter, setAtaExportFilter] = useState('');
+  const [ataExportDevices, setAtaExportDevices] = useState<DeviceRow[]>([]);
+  const [ataExportSelectedIds, setAtaExportSelectedIds] = useState<Set<number>>(new Set());
+  const [ataExportLoading, setAtaExportLoading] = useState(false);
 
   // ── 通用UI状态 ──
   const [loading, setLoading] = useState(false);
@@ -2391,6 +2398,19 @@ export default function ProjectDataView() {
               className="bg-red-500 text-white px-3 py-1.5 rounded text-sm hover:bg-red-600"
             >清空信号视图数据</button>
           )}
+          <button
+            onClick={async () => {
+              if (!selectedProjectId) return;
+              setAtaExportFilter('');
+              setAtaExportSelectedIds(new Set());
+              // 加载全部设备
+              const res = await fetch(`/api/devices?projectId=${selectedProjectId}`, { headers: API_HEADERS() });
+              const data = await res.json();
+              setAtaExportDevices(data.devices || []);
+              setShowAtaExportModal(true);
+            }}
+            className="bg-teal-600 text-white px-3 py-1.5 rounded text-sm hover:bg-teal-700"
+          >ATA导出</button>
           {canManageSignals && (
             <button onClick={openAddSignal} className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700">
               + 添加信号
@@ -2622,22 +2642,41 @@ export default function ProjectDataView() {
                             {/* 信号属性 */}
                             <div className="grid grid-cols-2 gap-x-6 gap-y-1 mb-3">
 
+                              {/* 信号ATA */}
+                              {(() => {
+                                const v = (detail as any)['信号ATA'] || '';
+                                if (!v) return null;
+                                const valid = v === 'N/A' || /^\d{2}-(\d{2}|XX)$/.test(v);
+                                if (!valid) return null;
+                                return (
+                                  <div className="col-span-2 flex gap-2 mb-1">
+                                    <span className="text-gray-500 w-36 flex-shrink-0">信号ATA:</span>
+                                    <span className="text-gray-800">{v}</span>
+                                  </div>
+                                );
+                              })()}
+
                               {/* 线缆属性 */}
                               {[
                                 { key: '推荐导线线规', label: '推荐导线线规' },
                                 { key: '推荐导线线型', label: '推荐导线线型' },
+                                { key: '独立电源代码',  label: '独立电源代码' },
                                 { key: '敷设代码',      label: '敷设代码' },
                                 { key: '电磁兼容代码',  label: '电磁兼容代码' },
-                                { key: '独立电源代码',  label: '独立电源代码' },
+                                { key: '功能代码',      label: '功能代码' },
+                                { key: '余度代码',      label: '余度代码' },
                                 { key: '接地代码',      label: '接地代码' },
+                                { key: '极性',          label: '极性' },
                                 { key: '额定电压',      label: '额定电压' },
                                 { key: '设备正常工作电压范围', label: '设备正常工作电压范围' },
-                                { key: '额定电流',      label: '工作电流' },
+                                { key: '额定电流',      label: '额定电流（A）' },
+                                { key: '信号架次有效性', label: '信号架次有效性' },
                                 { key: '是否成品线',    label: '是否成品线' },
-                              ].filter(f => !!(detail as any)[f.key]).map(f => (
+                                { key: '备注',          label: '备注' },
+                              ].map(f => (
                                 <div key={f.key} className="flex gap-2">
                                   <span className="text-gray-500 w-36 flex-shrink-0">{f.label}:</span>
-                                  <span className="text-gray-800">{(detail as any)[f.key]}</span>
+                                  <span className="text-gray-800">{(detail as any)[f.key] || '-'}</span>
                                 </div>
                               ))}
 
@@ -2648,24 +2687,16 @@ export default function ProjectDataView() {
                                 { key: '成品线类型',            label: '成品线类型' },
                                 { key: '成品线长度',            label: '成品线长度(MM)' },
                                 { key: '成品线载流量',          label: '成品线载流量(A)' },
-                                { key: '成品线线路压降',        label: '成品线线路压降(V)' },
+                                { key: '成品线线路压降',        label: '成品线线路压降' },
                                 { key: '成品线标识',            label: '成品线标识' },
-                                { key: '成品线与机上线束对接方式', label: '成品线对接方式' },
+                                { key: '成品线与机上线束对接方式', label: '成品线与机上线束对接方式' },
                                 { key: '成品线安装责任',        label: '成品线安装责任' },
-                              ].filter(f => !!(detail as any)[f.key]).map(f => (
+                              ].map(f => (
                                 <div key={f.key} className="flex gap-2">
                                   <span className="text-gray-500 w-36 flex-shrink-0">{f.label}:</span>
-                                  <span className="text-gray-800">{(detail as any)[f.key]}</span>
+                                  <span className="text-gray-800">{(detail as any)[f.key] || '-'}</span>
                                 </div>
                               ))}
-
-                              {/* 备注 */}
-                              {detail.备注 && (
-                                <div className="flex gap-2 col-span-2">
-                                  <span className="text-gray-500 w-36 flex-shrink-0">备注:</span>
-                                  <span className="text-gray-800">{detail.备注}</span>
-                                </div>
-                              )}
                             </div>
 
                             {/* 端点详细信息表 */}
@@ -3390,13 +3421,10 @@ export default function ProjectDataView() {
                 {/* 其余字段 */}
                 {(() => {
                   const 成品线子字段: (keyof SignalRow)[] = ['成品线件号','成品线线规','成品线类型','成品线长度','成品线载流量','成品线线路压降','成品线标识','成品线与机上线束对接方式','成品线安装责任'];
-                  const 电源子字段: (keyof SignalRow)[] = ['额定电压', '额定电流', '设备正常工作电压范围'];
                   const isY = (signalForm as any)['是否成品线'] === 'Y';
-                  const isPower = ((signalForm as any)['连接类型'] || '').includes('电源');
                   return SIGNAL_FIELDS.filter(f => {
                     if (f.key === 'unique_id') return false;
                     if (成品线子字段.includes(f.key) && !isY) return false;
-                    if (电源子字段.includes(f.key) && !isPower) return false;
                     return true;
                   }).map(f => (
                     <div key={f.key}>
@@ -3416,8 +3444,10 @@ export default function ProjectDataView() {
                       ) : f.key === '极性' ? (
                         <select value={(signalForm as any)[f.key] || ''} onChange={e => setSignalForm({ ...signalForm, [f.key]: e.target.value })} className="w-full border border-gray-300 rounded px-2 py-1 text-sm">
                           <option value="">请选择</option>
-                          <option value="正">正</option>
-                          <option value="负">负</option>
+                          <option value="正极">正极</option>
+                          <option value="负极">负极</option>
+                          <option value="地">地</option>
+                          <option value="N/A">N/A</option>
                         </select>
                       ) : f.key === '接地代码' ? (
                         <select value={(signalForm as any)[f.key] || ''} onChange={e => setSignalForm({ ...signalForm, [f.key]: e.target.value })} className="w-full border border-gray-300 rounded px-2 py-1 text-sm">
@@ -3433,10 +3463,47 @@ export default function ProjectDataView() {
                           <option value="其他">其他（在备注中说明）</option>
                         </select>
                       ) : f.key === '信号ATA' ? (
-                        <select value={(signalForm as any)[f.key] || ''} onChange={e => setSignalForm({ ...signalForm, [f.key]: e.target.value })} className="w-full border border-gray-300 rounded px-2 py-1 text-sm">
-                          <option value="">请选择</option>
-                          {['21','23','24','25','27','30','31','32','33','34','42','45','46','52','86','90','92','N/A'].map(v => <option key={v} value={v}>{v}</option>)}
-                        </select>
+                        <div className="flex gap-1">
+                          <select
+                            value={(() => {
+                              const v = ((signalForm as any)['信号ATA'] || '').trim();
+                              if (v === 'N/A') return 'N/A';
+                              const prefix = v.split('-')[0];
+                              return ['21','23','24','25','27','30','31','32','33','34','42','45','46','52','86','90','92'].includes(prefix) ? prefix : '';
+                            })()}
+                            onChange={e => {
+                              const sel = e.target.value;
+                              if (sel === 'N/A') setSignalForm({ ...signalForm, 信号ATA: 'N/A' });
+                              else if (sel) setSignalForm({ ...signalForm, 信号ATA: sel });
+                              else setSignalForm({ ...signalForm, 信号ATA: '' });
+                            }}
+                            className="w-20 border border-gray-300 rounded px-1 py-1 text-sm flex-shrink-0"
+                          >
+                            <option value="">--</option>
+                            {['21','23','24','25','27','30','31','32','33','34','42','45','46','52','86','90','92'].map(v => (
+                              <option key={v} value={v}>{v}</option>
+                            ))}
+                            <option value="N/A">N/A</option>
+                          </select>
+                          <input
+                            type="text"
+                            value={(signalForm as any)['信号ATA'] || ''}
+                            onChange={e => setSignalForm({ ...signalForm, 信号ATA: e.target.value })}
+                            onBlur={() => {
+                              const v = ((signalForm as any)['信号ATA'] || '').trim();
+                              if (/^\d{2}$/.test(v)) {
+                                setSignalForm(prev => ({ ...prev, 信号ATA: `${v}-XX` }));
+                              }
+                            }}
+                            placeholder="如 27-XX"
+                            className={`flex-1 border rounded px-2 py-1 text-sm ${
+                              (() => {
+                                const v = ((signalForm as any)['信号ATA'] || '').trim();
+                                return v && v !== 'N/A' && !/^\d{2}-(\d{2}|XX)$/.test(v) ? 'border-red-400' : 'border-gray-300';
+                              })()
+                            }`}
+                          />
+                        </div>
                       ) : (
                         <input type="text" value={(signalForm as any)[f.key] || ''} onChange={e => setSignalForm({ ...signalForm, [f.key]: e.target.value })} className="w-full border border-gray-300 rounded px-2 py-1 text-sm" />
                       )}
@@ -3611,6 +3678,131 @@ export default function ProjectDataView() {
           entityLabel={historyTarget.entityLabel}
           onClose={() => setHistoryTarget(null)}
         />
+      )}
+
+      {/* ATA导出模态框 */}
+      {showAtaExportModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl w-[600px] max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between px-5 py-3 border-b">
+              <h3 className="text-base font-semibold">ATA导出 — 按设备选择信号端点对</h3>
+              <button onClick={() => setShowAtaExportModal(false)} className="text-gray-400 hover:text-gray-600 text-xl">×</button>
+            </div>
+            <div className="px-5 py-3 border-b flex items-center gap-3">
+              <label className="text-sm text-gray-600 shrink-0">ATA前两位筛选：</label>
+              <input
+                type="text"
+                placeholder="如：27"
+                value={ataExportFilter}
+                onChange={e => {
+                  const v = e.target.value.trim();
+                  setAtaExportFilter(v);
+                  if (v) {
+                    const matched = ataExportDevices
+                      .filter(d => {
+                        const ata = (d as any)['设备部件所属系统（4位ATA）'] || '';
+                        return ata.startsWith(v);
+                      })
+                      .map(d => d.id);
+                    setAtaExportSelectedIds(new Set(matched));
+                  } else {
+                    setAtaExportSelectedIds(new Set());
+                  }
+                }}
+                className="border rounded px-2 py-1 text-sm w-24"
+              />
+              <span className="text-sm text-gray-500">
+                已选 {ataExportSelectedIds.size} 台设备 / 共 {ataExportDevices.length} 台
+              </span>
+              <button
+                onClick={() => setAtaExportSelectedIds(new Set(ataExportDevices.map(d => d.id)))}
+                className="ml-auto text-xs text-blue-600 hover:underline"
+              >全选</button>
+              <button
+                onClick={() => setAtaExportSelectedIds(new Set())}
+                className="text-xs text-gray-500 hover:underline"
+              >清空</button>
+            </div>
+            <div className="flex-1 overflow-y-auto px-5 py-2">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-gray-500 border-b">
+                    <th className="py-1 w-8 text-left"></th>
+                    <th className="py-1 text-left">设备编号</th>
+                    <th className="py-1 text-left">设备LIN号</th>
+                    <th className="py-1 text-left">ATA</th>
+                    <th className="py-1 text-left">设备中文名称</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[...ataExportDevices].sort((a, b) => {
+                    const ataA = ((a as any)['设备部件所属系统（4位ATA）'] || '').slice(0, 2);
+                    const ataB = ((b as any)['设备部件所属系统（4位ATA）'] || '').slice(0, 2);
+                    return ataA.localeCompare(ataB);
+                  }).map(d => {
+                    const ata = (d as any)['设备部件所属系统（4位ATA）'] || '';
+                    const checked = ataExportSelectedIds.has(d.id);
+                    return (
+                      <tr key={d.id} className="border-b border-gray-50 hover:bg-gray-50">
+                        <td className="py-0.5">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => {
+                              setAtaExportSelectedIds(prev => {
+                                const next = new Set(prev);
+                                if (checked) next.delete(d.id); else next.add(d.id);
+                                return next;
+                              });
+                            }}
+                          />
+                        </td>
+                        <td className="py-0.5">{(d as any)['设备编号'] || ''}</td>
+                        <td className="py-0.5 font-mono">{(d as any)['设备LIN号（DOORS）'] || ''}</td>
+                        <td className="py-0.5">{ata}</td>
+                        <td className="py-0.5">{(d as any)['设备中文名称'] || ''}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div className="px-5 py-3 border-t flex justify-end gap-2">
+              <button onClick={() => setShowAtaExportModal(false)} className="px-4 py-1.5 text-sm border rounded hover:bg-gray-50">取消</button>
+              <button
+                disabled={ataExportSelectedIds.size === 0 || ataExportLoading}
+                onClick={async () => {
+                  if (!selectedProjectId || ataExportSelectedIds.size === 0) return;
+                  setAtaExportLoading(true);
+                  try {
+                    const res = await fetch('/api/signals/export-pairs', {
+                      method: 'POST',
+                      headers: { ...API_HEADERS(), 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ projectId: selectedProjectId, deviceIds: Array.from(ataExportSelectedIds) }),
+                    });
+                    if (!res.ok) {
+                      const e = await res.json();
+                      alert(e.error || '导出失败');
+                      return;
+                    }
+                    const blob = await res.blob();
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `signal_pairs_export_${new Date().toISOString().slice(0,10)}.csv`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  } finally {
+                    setAtaExportLoading(false);
+                  }
+                }}
+                className="px-4 py-1.5 text-sm bg-teal-600 text-white rounded hover:bg-teal-700 disabled:opacity-50"
+              >
+                {ataExportLoading ? '导出中...' : `导出CSV（${ataExportSelectedIds.size}台设备）`}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </Layout>
   );

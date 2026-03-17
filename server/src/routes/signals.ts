@@ -846,5 +846,117 @@ export function signalRoutes(db: Database) {
     }
   });
 
+  // ── 导出信号端点对 CSV ──────────────────────────────────────
+  // POST /api/signals/export-pairs
+  // Body: { projectId, deviceIds: number[] }
+  router.post('/export-pairs', authenticate, async (req: AuthRequest, res) => {
+    try {
+      const { projectId, deviceIds } = req.body as { projectId: number; deviceIds: number[] };
+      if (!projectId || !Array.isArray(deviceIds) || deviceIds.length === 0) {
+        return res.status(400).json({ error: '缺少 projectId 或 deviceIds' });
+      }
+
+      const ph = deviceIds.map(() => '?').join(',');
+
+      // 找出与所选设备有关的所有信号
+      const signals = await db.query(
+        `SELECT DISTINCT s.id, s.unique_id, s.独立电源代码, s.敷设代码, s.电磁兼容代码, s.功能代码, s.余度代码
+         FROM signals s
+         JOIN signal_endpoints se ON se.signal_id = s.id
+         WHERE s.project_id = ? AND se.device_id IN (${ph})`,
+        [projectId, ...deviceIds]
+      );
+
+      // 对每条信号获取全部端点详情
+      const rows: string[][] = [];
+
+      for (const sig of signals) {
+        const endpoints = await db.query(
+          `SELECT se.id, se.device_id, se.pin_id,
+                  COALESCE(se."端接尺寸", p.端接尺寸) AS 端接尺寸,
+                  p.针孔号,
+                  c."设备端元器件编号"
+           FROM signal_endpoints se
+           LEFT JOIN pins p ON se.pin_id = p.id
+           LEFT JOIN connectors c ON p.connector_id = c.id
+           WHERE se.signal_id = ?
+           ORDER BY se.endpoint_index, se.id`,
+          [sig.id]
+        );
+
+        if (endpoints.length < 2) continue;
+
+        const selectedSet = new Set(deviceIds.map(Number));
+
+        // 生成所有满足条件的端点对（至少一个端点属于所选设备，且两端不同）
+        for (let i = 0; i < endpoints.length; i++) {
+          for (let j = i + 1; j < endpoints.length; j++) {
+            const a = endpoints[i];
+            const b = endpoints[j];
+            const aSelected = selectedSet.has(Number(a.device_id));
+            const bSelected = selectedSet.has(Number(b.device_id));
+
+            if (!aSelected && !bSelected) continue;
+
+            // 决定从/到：所选设备作为从端；若两端都被选中，按 deviceIds 中的索引顺序决定
+            let fromEp, toEp;
+            if (aSelected && !bSelected) {
+              fromEp = a; toEp = b;
+            } else if (!aSelected && bSelected) {
+              fromEp = b; toEp = a;
+            } else {
+              // 两端都被选中，按 deviceIds 中顺序
+              const aIdx = deviceIds.indexOf(Number(a.device_id));
+              const bIdx = deviceIds.indexOf(Number(b.device_id));
+              fromEp = aIdx <= bIdx ? a : b;
+              toEp   = aIdx <= bIdx ? b : a;
+            }
+
+            const 敷设字母 = [
+              sig.独立电源代码 || '',
+              sig.敷设代码 || '',
+              sig.电磁兼容代码 || '',
+              sig.功能代码 || '',
+              sig.余度代码 || '',
+            ].join('-');
+
+            rows.push([
+              '',                                           // 线束号
+              fromEp['设备端元器件编号'] || '',              // 端元器件编号（从）
+              fromEp['针孔号'] || '',                        // 针孔号（从）
+              '',                                           // 端接代号（从）
+              '',                                           // 导线号
+              '',                                           // 导线材料
+              fromEp['端接尺寸'] || '',                      // AWG
+              '',                                           // 长度（mm）
+              toEp['设备端元器件编号'] || '',                // 端元器件编号（到）
+              toEp['针孔号'] || '',                          // 针孔号（到）
+              '',                                           // 端接代号（到）
+              敷设字母,                                      // 敷设字母
+              '',                                           // 线路图图内号
+              '',                                           // 备注
+            ]);
+          }
+        }
+      }
+
+      // 生成 CSV（BOM for Excel）
+      const header = ['线束号', '端元器件编号（从）', '针孔号（从）', '端接代号（从）',
+        '导线号', '导线材料', 'AWG', '长度（mm）',
+        '端元器件编号（到）', '针孔号（到）', '端接代号（到）',
+        '敷设字母', '线路图图内号', '备注'];
+
+      const escape = (v: string) => `"${String(v).replace(/"/g, '""')}"`;
+      const csvLines = [header.map(escape).join(','), ...rows.map(r => r.map(escape).join(','))];
+      const csv = '\uFEFF' + csvLines.join('\r\n');
+
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', 'attachment; filename="signal_pairs_export.csv"');
+      res.send(csv);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   return router;
 }
