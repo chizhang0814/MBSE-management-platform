@@ -2409,7 +2409,7 @@ export default function ProjectDataView() {
               setAtaExportDevices(data.devices || []);
             }}
             className="bg-teal-600 text-white px-3 py-1.5 rounded text-sm hover:bg-teal-700"
-          >ATA导出</button>
+          >WB导出</button>
           {canManageSignals && (
             <button onClick={openAddSignal} className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700">
               + 添加信号
@@ -3684,7 +3684,7 @@ export default function ProjectDataView() {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg shadow-xl w-[600px] max-h-[80vh] flex flex-col">
             <div className="flex items-center justify-between px-5 py-3 border-b">
-              <h3 className="text-base font-semibold">ATA导出 — 按设备选择信号端点对</h3>
+              <h3 className="text-base font-semibold">WB导出 — 按设备选择信号端点对</h3>
               <button onClick={() => setShowAtaExportModal(false)} className="text-gray-400 hover:text-gray-600 text-xl">×</button>
             </div>
             <div className="px-5 py-3 border-b flex items-center gap-3">
