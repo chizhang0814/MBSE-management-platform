@@ -2403,11 +2403,10 @@ export default function ProjectDataView() {
               if (!selectedProjectId) return;
               setAtaExportFilter('');
               setAtaExportSelectedIds(new Set());
-              // 加载全部设备
+              setShowAtaExportModal(true);
               const res = await fetch(`/api/devices?projectId=${selectedProjectId}`, { headers: API_HEADERS() });
               const data = await res.json();
               setAtaExportDevices(data.devices || []);
-              setShowAtaExportModal(true);
             }}
             className="bg-teal-600 text-white px-3 py-1.5 rounded text-sm hover:bg-teal-700"
           >ATA导出</button>
