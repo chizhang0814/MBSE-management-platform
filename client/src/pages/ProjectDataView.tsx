@@ -216,6 +216,7 @@ export default function ProjectDataView() {
   const [statusSummary, setStatusSummary] = useState<{ devices: { normal: number; Draft: number }; connectors: { normal: number; Draft: number }; pins: { normal: number; Draft: number } } | null>(null);
   const [historyTarget, setHistoryTarget] = useState<{ entityTable: string; entityId: number; entityLabel: string } | null>(null);
   const [deviceFilters, setDeviceFilters] = useState<Record<string, string>>({});
+  const [signalFilters, setSignalFilters] = useState<Record<string, string>>({});
   const [configFilterSelected, setConfigFilterSelected] = useState<string[]>([]);
   const [configFilterOpen, setConfigFilterOpen] = useState(false);
   const [expandedDeviceId, setExpandedDeviceId] = useState<number | null>(null);
@@ -246,8 +247,12 @@ export default function ProjectDataView() {
 
   // ── 信号视图状态 ──
   const [signals, setSignals] = useState<SignalRow[]>([]);
+  const [signalTotal, setSignalTotal] = useState(0);
   const [expandedSignalId, setExpandedSignalId] = useState<number | null>(null);
   const [signalDetails, setSignalDetails] = useState<Record<number, SignalDetail>>({});
+  const [signalDisplayCount, setSignalDisplayCount] = useState(50);
+  const signalSentinelRef = useRef<HTMLDivElement | null>(null);
+  const signalLoadVersion = useRef(0);
 
   // ── ATA导出状态 ──
   const [showAtaExportModal, setShowAtaExportModal] = useState(false);
@@ -337,6 +342,19 @@ export default function ProjectDataView() {
     else if (activeView === 'signals') loadSignals();
     else loadSectionConnectors();
   }, [selectedProjectId, activeView, filterMode]);
+
+  // 信号视图滚动加载：监听哨兵元素
+  useEffect(() => {
+    const sentinel = signalSentinelRef.current;
+    if (!sentinel) return;
+    const observer = new IntersectionObserver(entries => {
+      if (entries[0].isIntersecting) {
+        setSignalDisplayCount(prev => prev + 100);
+      }
+    }, { threshold: 0.1 });
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  });
 
   useEffect(() => {
     if (!selectedProjectId) { setProjectMembers([]); setMemberRoles([]); return; }
@@ -457,15 +475,44 @@ export default function ProjectDataView() {
 
   const loadSignals = async () => {
     if (!selectedProjectId) return;
+    // 递增版本号，让旧的后台循环自动放弃
+    const version = ++signalLoadVersion.current;
     setLoading(true);
+    const myQ = filterMode === 'my' ? '&myDevices=true' : filterMode === 'related' ? '&relatedDevices=true' : '';
+    const baseUrl = `/api/signals?projectId=${selectedProjectId}${myQ}`;
     try {
-      const myQ = filterMode === 'my' ? '&myDevices=true' : filterMode === 'related' ? '&relatedDevices=true' : '';
-      const res = await fetch(`/api/signals?projectId=${selectedProjectId}${myQ}`, { headers: API_HEADERS() });
+      // 第一批：50条，快速显示
+      const res = await fetch(`${baseUrl}&limit=50&offset=0`, { headers: API_HEADERS() });
       const data = await res.json();
-      setSignals(data.signals || []);
+      if (signalLoadVersion.current !== version) return; // 已被新请求取代
+      const first: any[] = data.signals || [];
+      const total: number = data.total ?? first.length;
+      setSignals(first);
+      setSignalTotal(total);
+      setSignalDisplayCount(50);
       setExpandedSignalId(null);
-    } catch (e) { console.error('加载信号失败', e); }
-    finally { setLoading(false); }
+      setLoading(false);
+
+      // 后台静默拉取剩余，每批200条
+      if (total > 50) {
+        let offset = 50;
+        while (offset < total) {
+          if (signalLoadVersion.current !== version) return; // 已过时，停止
+          const r = await fetch(`${baseUrl}&limit=200&offset=${offset}`, { headers: API_HEADERS() });
+          if (!r.ok || signalLoadVersion.current !== version) break;
+          const d = await r.json();
+          const batch: any[] = d.signals || [];
+          if (batch.length === 0) break;
+          setSignals(prev => [...prev, ...batch]);
+          offset += batch.length;
+        }
+      }
+    } catch (e) {
+      if (signalLoadVersion.current === version) {
+        console.error('加载信号失败', e);
+        setLoading(false);
+      }
+    }
   };
 
   const loadImportDiff = async (entityTable: string, entityId: number) => {
@@ -2384,7 +2431,7 @@ export default function ProjectDataView() {
   const renderSignalView = () => (
     <div>
       <div className="flex justify-between items-center mb-3">
-        <h2 className="text-lg font-semibold">信号列表（{signals.length}条）</h2>
+        <h2 className="text-lg font-semibold">信号列表（{signalTotal}条）</h2>
         <div className="flex items-center gap-2">
           {isAdmin && (
             <button
@@ -2428,15 +2475,30 @@ export default function ProjectDataView() {
           if (filterMode === 'my_approval' && !(s.status === 'Pending' && s.pending_item_type === 'approval')) return false;
           if (filterMode === 'my_completion' && !(s.status === 'Pending' && s.pending_item_type === 'completion')) return false;
           if (filterMode === 'my_tasks' && !(s.status === 'Pending' && (s.pending_item_type === 'approval' || s.pending_item_type === 'completion'))) return false;
+          // 列过滤
+          for (const [key, val] of Object.entries(signalFilters)) {
+            if (!val) continue;
+            if (key === '_status') {
+              if (s.status !== val) return false;
+              continue;
+            }
+            const cell = String((s as any)[key] ?? '').toLowerCase();
+            if (!cell.includes(val.toLowerCase())) return false;
+          }
           return true;
         });
+        const hasAnySignalFilter = Object.values(signalFilters).some(v => v);
+        // 有筛选条件时显示全部过滤结果，否则按 displayCount 渐进渲染
+        const isFiltering = hasAnySignalFilter || filterMode !== 'all';
+        const displayedSignals = isFiltering ? filteredSignals : filteredSignals.slice(0, signalDisplayCount);
+        const hasMore = !isFiltering && filteredSignals.length > signalDisplayCount;
         return (
         <div className="bg-white rounded-lg shadow overflow-hidden">
-          {(filterMode === 'pending' || filterMode === 'my_approval' || filterMode === 'my_completion' || filterMode === 'my_tasks') && (
-            <div className="px-4 py-1.5 text-xs text-gray-500 bg-gray-50 border-b">
-              显示 {filteredSignals.length} / {signals.length} 条信号
-            </div>
-          )}
+          <div className="px-4 py-1.5 text-xs text-gray-500 bg-gray-50 border-b">
+            {isFiltering
+              ? `显示 ${filteredSignals.length} / ${signals.length} 条信号`
+              : `已载入 ${Math.min(signalDisplayCount, filteredSignals.length)} / ${filteredSignals.length} 条信号`}
+          </div>
           <table className="min-w-full text-sm">
             <thead className="bg-gray-50">
               <tr>
@@ -2449,9 +2511,55 @@ export default function ProjectDataView() {
                 <th className="px-4 py-2 text-left text-xs text-gray-500">创建人</th>
                 <th className="px-4 py-2 text-left text-xs text-gray-500">操作</th>
               </tr>
+              <tr className="bg-white border-b">
+                <th className="px-4 py-1"></th>
+                {/* Unique ID */}
+                <th className="px-4 py-1">
+                  <div className="relative">
+                    <input type="text" placeholder="筛选..." value={signalFilters['unique_id'] || ''}
+                      onChange={e => setSignalFilters(prev => ({ ...prev, unique_id: e.target.value }))}
+                      className="w-full px-1.5 py-0.5 pr-5 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-400" />
+                    {signalFilters['unique_id'] && (
+                      <button onClick={() => setSignalFilters(prev => ({ ...prev, unique_id: '' }))}
+                        className="absolute right-1 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs leading-none">&times;</button>
+                    )}
+                  </div>
+                </th>
+                {/* 状态 */}
+                <th className="px-4 py-1">
+                  <select value={signalFilters['_status'] || ''}
+                    onChange={e => setSignalFilters(prev => ({ ...prev, _status: e.target.value }))}
+                    className="w-full px-1 py-0.5 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-400 bg-white">
+                    <option value="">全部状态</option>
+                    <option value="Draft">Draft</option>
+                    <option value="Pending">审批中</option>
+                    <option value="Active">已生效</option>
+                  </select>
+                </th>
+                {/* 信号名称摘要、连接类型、端点摘要、创建人 */}
+                {(['信号名称摘要', '连接类型', 'endpoint_summary', 'created_by'] as const).map(col => (
+                  <th key={col} className="px-4 py-1">
+                    <div className="relative">
+                      <input type="text" placeholder="筛选..." value={signalFilters[col] || ''}
+                        onChange={e => setSignalFilters(prev => ({ ...prev, [col]: e.target.value }))}
+                        className="w-full px-1.5 py-0.5 pr-5 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-400" />
+                      {signalFilters[col] && (
+                        <button onClick={() => setSignalFilters(prev => ({ ...prev, [col]: '' }))}
+                          className="absolute right-1 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs leading-none">&times;</button>
+                      )}
+                    </div>
+                  </th>
+                ))}
+                {/* 操作列 - 清除按钮 */}
+                <th className="px-4 py-1">
+                  {hasAnySignalFilter && (
+                    <button onClick={() => setSignalFilters({})} className="text-xs text-gray-400 hover:text-red-500">全部清除</button>
+                  )}
+                </th>
+              </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {filteredSignals.map(signal => {
+              {displayedSignals.map(signal => {
                 const isExpanded = expandedSignalId === signal.id;
                 const detail = signalDetails[signal.id];
                 return (
@@ -2766,6 +2874,12 @@ export default function ProjectDataView() {
               })}
             </tbody>
           </table>
+          {/* 渐进加载哨兵 */}
+          {hasMore && (
+            <div ref={signalSentinelRef} className="py-3 text-center text-xs text-gray-400">
+              滚动加载更多... （已显示 {Math.min(signalDisplayCount, filteredSignals.length)} / {filteredSignals.length} 条）
+            </div>
+          )}
         </div>
         );
       })()}

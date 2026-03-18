@@ -115,6 +115,8 @@ export function signalRoutes(db: Database) {
       if (isNaN(projectId)) return res.status(400).json({ error: '缺少 projectId' });
 
       const myDevices = req.query.myDevices === 'true';
+      const limitParam = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+      const offsetParam = req.query.offset ? parseInt(req.query.offset as string) : 0;
       const username = req.user!.username;
       const userRole = req.user!.role;
 
@@ -153,6 +155,17 @@ export function signalRoutes(db: Database) {
       }
       sql += ' ORDER BY s.unique_id, s.id';
 
+      // 获取总数
+      const countSql = `SELECT COUNT(*) as total FROM (${sql}) t`;
+      const countRow = await db.get(countSql, params);
+      const total = countRow?.total ?? 0;
+
+      // 分页
+      if (limitParam !== undefined) {
+        sql += ` LIMIT ? OFFSET ?`;
+        params.push(limitParam, offsetParam);
+      }
+
       const signals = await db.query(sql, params);
 
       // 获取当前用户在 Pending 信号上的 pending_item_type
@@ -177,29 +190,60 @@ export function signalRoutes(db: Database) {
         }
       }
 
-      // 为每条信号附加端点摘要、信号名称摘要、can_edit、pending_item_type
-      const result = await Promise.all(signals.map(async (s: any) => {
-        const summaries = await buildSignalSummaries(db, s.id);
-        let can_edit = userRole === 'admin';
-        if (!can_edit) {
-          can_edit = await canOperateSignals(db, username, userRole, projectId);
-          if (!can_edit) {
-            // 普通用户：只能编辑有自己端点的信号
-            const ownEp = await db.get(
-              `SELECT se.id FROM signal_endpoints se
-               JOIN devices d ON se.device_id = d.id
-               WHERE se.signal_id = ? AND d.设备负责人 = ?
-               LIMIT 1`,
-              [s.id, username]
-            );
-            can_edit = !!ownEp;
-          }
+      // ── 批量查询端点摘要（一次 SQL 覆盖所有信号）──────────
+      const signalIds = signals.map((s: any) => s.id);
+      const summaryMap: Record<number, { endpoint_summary: string; 信号名称摘要: string }> = {};
+      if (signalIds.length > 0) {
+        const ph = signalIds.map(() => '?').join(',');
+        const allEndpoints = await db.query(
+          `SELECT se.signal_id, se.endpoint_index, se.信号名称, se.pin_id,
+                  p.针孔号, c.设备端元器件编号, d.设备编号
+           FROM signal_endpoints se
+           JOIN devices d ON se.device_id = d.id
+           LEFT JOIN pins p ON se.pin_id = p.id
+           LEFT JOIN connectors c ON p.connector_id = c.id
+           WHERE se.signal_id IN (${ph})
+           ORDER BY se.signal_id, se.endpoint_index`,
+          signalIds
+        );
+        const grouped: Record<number, any[]> = {};
+        for (const e of allEndpoints) {
+          if (!grouped[e.signal_id]) grouped[e.signal_id] = [];
+          grouped[e.signal_id].push(e);
         }
-        const pending_item_type = s.status === 'Pending' ? (pendingItemMap[s.id] ?? null) : null;
-        return { ...s, ...summaries, can_edit, pending_item_type };
-      }));
+        for (const id of signalIds) {
+          const eps = grouped[id] || [];
+          const addrParts = eps.map((e: any) =>
+            e.pin_id ? `${e.设备端元器件编号 || e.设备编号}-${e.针孔号}` : `${e.设备编号}(?)`
+          );
+          const nameParts = eps.filter((e: any) => e.信号名称).map((e: any) => e.信号名称);
+          summaryMap[id] = { endpoint_summary: addrParts.join(' - '), 信号名称摘要: nameParts.join(' - ') };
+        }
+      }
 
-      res.json({ signals: result });
+      // ── can_edit：项目级权限只查一次，再批量查端点归属 ────
+      let projectLevelEdit = userRole === 'admin' || await canOperateSignals(db, username, userRole, projectId);
+      const ownSignalIds = new Set<number>();
+      if (!projectLevelEdit && signalIds.length > 0) {
+        const ph = signalIds.map(() => '?').join(',');
+        const ownRows = await db.query(
+          `SELECT DISTINCT se.signal_id
+           FROM signal_endpoints se
+           JOIN devices d ON se.device_id = d.id
+           WHERE se.signal_id IN (${ph}) AND d.设备负责人 = ?`,
+          [...signalIds, username]
+        );
+        for (const r of ownRows) ownSignalIds.add(r.signal_id);
+      }
+
+      // ── 组装结果 ──────────────────────────────────────────
+      const result = signals.map((s: any) => {
+        const can_edit = projectLevelEdit || ownSignalIds.has(s.id);
+        const pending_item_type = s.status === 'Pending' ? (pendingItemMap[s.id] ?? null) : null;
+        return { ...s, ...(summaryMap[s.id] ?? { endpoint_summary: '', 信号名称摘要: '' }), can_edit, pending_item_type };
+      });
+
+      res.json({ signals: result, total, offset: offsetParam });
     } catch (error: any) {
       console.error('获取信号列表失败:', error);
       res.status(500).json({ error: error.message || '获取信号列表失败' });

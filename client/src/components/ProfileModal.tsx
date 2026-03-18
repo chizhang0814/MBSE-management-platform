@@ -91,7 +91,7 @@ export default function ProfileModal({ onClose }: Props) {
         body: JSON.stringify({ name: profile.name, department: profile.department }),
       });
       if (res.ok) {
-        updateUser({ name: profile.name });
+        updateUser({ employee_name: profile.name });
         setSaveMsg('保存成功');
       } else {
         const data = await res.json();
