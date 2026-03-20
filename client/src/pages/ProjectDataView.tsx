@@ -2626,7 +2626,7 @@ export default function ProjectDataView() {
                           <span className="text-gray-400 cursor-not-allowed" title="记录审批中，不可编辑">编辑/删除</span>
                         ) : (
                           <>
-                            {canManageSignals && (isAdmin || signal.can_edit) && (signalLockMap[signal.id] ? (
+                            {canManageSignals && (signalLockMap[signal.id] ? (
                               <span className="text-amber-600">🔒{signalLockMap[signal.id].lockedBy}</span>
                             ) : (
                               <button onClick={() => openEditSignal(signal)} className="text-blue-600 hover:text-blue-800">编辑</button>
@@ -3515,21 +3515,15 @@ export default function ProjectDataView() {
 
               {/* 信号属性 */}
               <div className="grid grid-cols-2 gap-3 mb-4">
-                {/* Unique ID（编辑时只读显示） */}
+                {/* Unique ID */}
                 <div>
                   <label className="block text-xs text-gray-600 mb-1">Unique ID <span className="text-red-500">*</span></label>
-                  {editingSignal ? (
-                    <div className="w-full border border-gray-200 bg-gray-50 rounded px-2 py-1 text-sm text-gray-500 font-mono">
-                      {(signalForm as any).unique_id || '-'}
-                    </div>
-                  ) : (
-                    <input
-                      type="text"
-                      value={(signalForm as any).unique_id || ''}
-                      onChange={e => setSignalForm({ ...signalForm, unique_id: e.target.value })}
-                      className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
-                    />
-                  )}
+                  <input
+                    type="text"
+                    value={(signalForm as any).unique_id || ''}
+                    onChange={e => setSignalForm({ ...signalForm, unique_id: e.target.value })}
+                    className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
+                  />
                 </div>
                 {/* 其余字段 */}
                 {(() => {

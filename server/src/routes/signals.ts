@@ -542,27 +542,28 @@ export function signalRoutes(db: Database) {
         return res.status(403).json({ error: '无权限修改信号' });
       }
 
-      // 设备管理员：当前端点中至少有一个属于本人负责的设备
-      const isDevMgr = role !== 'admin' && await isDeviceManager(db, username, signal.project_id);
-      if (isDevMgr) {
-        const ownEndpoint = await db.get(
-          `SELECT se.id FROM signal_endpoints se
-           JOIN devices d ON se.device_id = d.id
-           WHERE se.signal_id = ? AND d.设备负责人 = ?
-           LIMIT 1`,
-          [signalId, username]
-        );
-        if (!ownEndpoint) {
-          return res.status(403).json({ error: '无权限：该信号的端点中没有您负责的设备' });
-        }
-      }
-
       const { endpoints, version, submit: shouldSubmit, forceDraft, ...fields } = req.body;
       delete fields.id; delete fields.project_id; delete fields.created_at; delete fields.status;
       delete fields.pending_item_type;
 
-      // admin → 直接更新
-      if (role === 'admin') {
+      // Unique ID 唯一性检查（排除当前记录）
+      if (fields.unique_id) {
+        const dup = await db.get(
+          'SELECT id FROM signals WHERE project_id = ? AND unique_id = ? AND id != ?',
+          [signal.project_id, fields.unique_id, signalId]
+        );
+        if (dup) {
+          return res.status(400).json({ error: `Unique ID "${fields.unique_id}" 已被其他信号使用` });
+        }
+      }
+
+      // 临时策略：总体人员/设备管理员/EWIS管理员 → 与 admin 相同，直接更新不走审批
+      const isPrivilegedRole = role === 'admin'
+        || await isZontiRenyuan(db, username, signal.project_id)
+        || await isDeviceManager(db, username, signal.project_id)
+        || await isEwisAdmin(db, username, signal.project_id);
+
+      if (isPrivilegedRole) {
         if (Object.keys(fields).length > 0) {
           const setClauses = Object.keys(fields).map(k => `"${k}" = ?`).join(', ');
           const result = await db.run(
