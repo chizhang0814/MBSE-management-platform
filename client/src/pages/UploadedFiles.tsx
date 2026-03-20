@@ -350,7 +350,7 @@ export default function UploadedFiles() {
         {/* 文件详情对话框 */}
         {selectedFile && (() => {
           const tableTypeLabel = getImportTypeLabel(selectedFile.table_type);
-          type SheetResult = { name?: string; success: number; skipped: string[]; errors: string[]; warnings?: string[] };
+          type SheetResult = { name?: string; success: number; merged?: number; skipped: string[]; errors: string[]; warnings?: string[] };
           const { sheetResults, errorList, skippedList } = (() => {
             try {
               if (!selectedFile.error_details) return { sheetResults: null, errorList: [] as string[], skippedList: [] as string[] };
@@ -507,7 +507,7 @@ export default function UploadedFiles() {
                           <h4 className="text-sm font-semibold text-gray-700 mb-1">
                             Sheet：{sheetKey}
                             <span className="ml-2 text-xs font-normal text-gray-500">
-                              成功 {sr.success} 条 / 跳过 {sr.skipped?.length || 0} 条 / 失败 {sr.errors?.length || 0} 条{(sr.warnings?.length || 0) > 0 ? ` / 校验警告 ${sr.warnings!.length} 条` : ''}
+                              新建 {sr.success} 条{(sr.merged || 0) > 0 ? ` / 合并 ${sr.merged} 条` : ''} / 跳过 {sr.skipped?.length || 0} 条 / 失败 {sr.errors?.length || 0} 条{(sr.warnings?.length || 0) > 0 ? ` / 校验警告 ${sr.warnings!.length} 条` : ''}
                             </span>
                           </h4>
                           {hasDetail ? (

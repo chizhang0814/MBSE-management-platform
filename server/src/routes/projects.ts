@@ -613,7 +613,7 @@ export function projectRoutes(db: Database) {
 
         // ─── 含"电气接口清单"的 Sheet(s) → signals + signal_endpoints ──
 
-        let s2Success = 0, s2Error = 0;
+        let s2Success = 0, s2Merged = 0, s2Error = 0;
         const s2Skipped: string[] = [];
         const s2Errors: string[] = [];
 
@@ -623,7 +623,7 @@ export function projectRoutes(db: Database) {
           // 用 header:1 读原始二维数组，避免 xlsx 合并同名列的问题
           const rawRows: any[][] = xlsx.utils.sheet_to_json(sheet2, { header: 1, defval: '' }) as any[][];
 
-          let sheetS2 = 0, sheetE2 = 0;
+          let sheetS2 = 0, sheetE2 = 0, sheetM2 = 0;
           const sheetErrors2: string[] = [];
           const sheetSk2: string[] = [];
 
@@ -812,99 +812,28 @@ export function projectRoutes(db: Database) {
                 }
               }
 
-              // ── 步骤5/6：根据 unique_id 是否存在分支处理 ─────────────
-              const existingSignal = sigFields['unique_id']
-                ? await db.get(
-                    'SELECT * FROM signals WHERE project_id = ? AND unique_id = ?',
-                    [projectId, sigFields['unique_id']]
-                  )
-                : null;
+              // ── 步骤5/6：按 pin_id 重叠检测合并 ─────────────────────
+              const newPinIds = resolvedEps.filter(ep => ep.pinId !== null).map(ep => ep.pinId!);
 
-              if (existingSignal) {
-                // 查已有信号的端点（用于匹配判断）
-                const existingEps: Array<{ devNum: string; linNo: string; compId: string; pinNum: string }> = await db.query(
-                  `SELECT d."设备编号" as devNum, d."设备LIN号（DOORS）" as linNo,
-                          c."设备端元器件编号" as compId, p."针孔号" as pinNum
-                   FROM signal_endpoints se
-                   JOIN devices d ON se.device_id = d.id
-                   LEFT JOIN pins p ON se.pin_id = p.id
-                   LEFT JOIN connectors c ON p.connector_id = c.id
-                   WHERE se.signal_id = ?`,
-                  [existingSignal.id]
-                );
+              if (newPinIds.length === 0) {
+                // 两个端点均无针孔号 → 导入失败
+                sheetE2++;
+                sheetErrors2.push(`第${rowNum}行: 两个端点均无针孔号，无法导入`);
+                continue;
+              }
 
-                // 找出在旧记录中不存在的端点（四字段完全匹配）
-                const newEps = resolvedEps.filter(ep =>
-                  !existingEps.some(eep =>
-                    eep.devNum === ep.devNum &&
-                    eep.linNo  === ep.linNo  &&
-                    eep.compId === ep.compId &&
-                    eep.pinNum === ep.pinNum
-                  )
-                );
+              // 查找包含这些 pin_id 的已有信号
+              const pinPh = newPinIds.map(() => '?').join(',');
+              const matchedSignals: Array<{ signal_id: number }> = await db.query(
+                `SELECT DISTINCT se.signal_id
+                 FROM signal_endpoints se
+                 JOIN signals s ON se.signal_id = s.id
+                 WHERE s.project_id = ? AND se.pin_id IN (${pinPh})`,
+                [projectId, ...newPinIds]
+              );
 
-                if (newEps.length === 0) {
-                  // 所有端点均已存在 → 整行失败
-                  sheetE2++;
-                  sheetErrors2.push(`第${rowNum}行: 信号[${sigFields['unique_id']}]已存在且所有端点均已存在，跳过`);
-                  continue;
-                }
-
-                // 追加新端点，endpoint_index 接续最大值
-                const maxIdxRow = await db.get(
-                  'SELECT MAX(endpoint_index) as m FROM signal_endpoints WHERE signal_id = ?',
-                  [existingSignal.id]
-                );
-                let nextIdx: number = (maxIdxRow?.m ?? -1) + 1;
-
-                for (const ep of newEps) {
-                  if (!ep.pinId) continue;
-                  const epInput  = ep.epIndex === 0 ? fromInput  : toInput;
-                  const epOutput = ep.epIndex === 0 ? fromOutput : toOutput;
-                  const epRemark = ep.epIndex === 0 ? fromRemark : toRemark;
-                  await db.run(
-                    `INSERT INTO signal_endpoints
-                       (signal_id, device_id, pin_id, endpoint_index, "端接尺寸", "信号名称", "信号定义", "input", "output", "备注")
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                    [existingSignal.id, ep.deviceId, ep.pinId, nextIdx++,
-                     ep.termSize || null, ep.sigName || null, ep.sigDef || null, epInput, epOutput, epRemark]
-                  );
-                }
-
-                // 更新信号字段（有变化的列），记录 diff
-                const SIG_SKIP = new Set(['created_by', 'status', 'import_status', 'import_conflicts', 'unique_id']);
-                const sigOldVals: Record<string, string> = {};
-                const sigNewVals: Record<string, string> = {};
-                for (const [col, newVal] of Object.entries(sigFields)) {
-                  if (SIG_SKIP.has(col)) continue;
-                  const oldVal = String(existingSignal[col] ?? '').trim();
-                  const newValStr = String(newVal ?? '').trim();
-                  if (oldVal !== newValStr) { sigOldVals[col] = oldVal; sigNewVals[col] = newValStr; }
-                }
-                if (Object.keys(sigNewVals).length > 0) {
-                  const sigSetClauses = Object.keys(sigNewVals).map(k => `"${k}" = ?`).join(', ');
-                  await db.run(
-                    `UPDATE signals SET ${sigSetClauses}, import_status = 'updated', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-                    [...Object.values(sigNewVals), existingSignal.id]
-                  );
-                  await db.run(
-                    `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, old_values, new_values, reason, status)
-                     VALUES ('signals', ?, ?, 'signals', ?, ?, ?, '文件导入更新', 'approved')`,
-                    [existingSignal.id, existingSignal.id, req.user!.id, JSON.stringify(sigOldVals), JSON.stringify(sigNewVals)]
-                  );
-                }
-                // 在 import_conflicts 记录本次合并
-                const mergeNote = `[${originalName}/${sigSheetName}/第${rowNum}行] 合并新增端点: ${newEps.map(ep => `${ep.devNum}/${ep.compId}/${ep.pinNum}`).join(', ')}`;
-                const prevConflicts: string[] = (() => {
-                  try { return JSON.parse(existingSignal.import_conflicts || '[]'); } catch { return []; }
-                })();
-                prevConflicts.push(mergeNote);
-                await db.run('UPDATE signals SET import_conflicts = ? WHERE id = ?', [JSON.stringify(prevConflicts), existingSignal.id]);
-
-                sheetS2++;
-
-              } else {
-                // unique_id 不存在 → 新建信号 + 所有端点
+              if (matchedSignals.length === 0) {
+                // ── 无匹配 → 新建信号 + 所有端点 ──────────────────
                 sigFields['created_by'] = req.user!.username;
                 sigFields['status'] = 'Active';
                 const sigCols2 = Object.keys(sigFields).map(k => `"${k}"`).join(', ');
@@ -931,6 +860,136 @@ export function projectRoutes(db: Database) {
                 }
 
                 sheetS2++;
+
+              } else {
+                // ── 有匹配 → 合并 ────────────────────────────────
+                // 选主信号（id 最小的）
+                const allMatchedIds = matchedSignals.map(m => m.signal_id).sort((a, b) => a - b);
+                const primaryId = allMatchedIds[0];
+                const secondaryIds = allMatchedIds.slice(1);
+
+                // 加载主信号
+                const primarySignal = await db.get('SELECT * FROM signals WHERE id = ?', [primaryId]);
+                let primaryUniqueId: string = primarySignal.unique_id || '';
+                const mergeNotes: string[] = (() => {
+                  try { return JSON.parse(primarySignal.import_conflicts || '[]'); } catch { return []; }
+                })();
+
+                // 收集主信号已有的 pin_id 集合
+                const primaryExistingPins: Array<{ pin_id: number }> = await db.query(
+                  'SELECT pin_id FROM signal_endpoints WHERE signal_id = ? AND pin_id IS NOT NULL',
+                  [primaryId]
+                );
+                const primaryPinSet = new Set(primaryExistingPins.map(p => p.pin_id));
+
+                // 合并其余旧信号到主信号
+                for (const secId of secondaryIds) {
+                  const secSignal = await db.get('SELECT unique_id, import_conflicts FROM signals WHERE id = ?', [secId]);
+                  const secUniqueId = secSignal?.unique_id || '';
+
+                  // 合并 import_conflicts 历史
+                  const secConflicts: string[] = (() => {
+                    try { return JSON.parse(secSignal?.import_conflicts || '[]'); } catch { return []; }
+                  })();
+                  mergeNotes.push(...secConflicts);
+
+                  // 迁移端点（pin_id 去重）
+                  const secEndpoints: Array<{ id: number; pin_id: number | null; device_id: number; endpoint_index: number; 端接尺寸: string; 信号名称: string; 信号定义: string; input: number; output: number; 备注: string }> = await db.query(
+                    'SELECT * FROM signal_endpoints WHERE signal_id = ?',
+                    [secId]
+                  );
+                  const maxIdxRow = await db.get(
+                    'SELECT MAX(endpoint_index) as m FROM signal_endpoints WHERE signal_id = ?',
+                    [primaryId]
+                  );
+                  let nextIdx: number = (maxIdxRow?.m ?? -1) + 1;
+
+                  for (const sep of secEndpoints) {
+                    if (sep.pin_id && primaryPinSet.has(sep.pin_id)) continue; // 去重
+                    await db.run(
+                      `INSERT INTO signal_endpoints (signal_id, device_id, pin_id, endpoint_index, "端接尺寸", "信号名称", "信号定义", "input", "output", "备注")
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                      [primaryId, sep.device_id, sep.pin_id, nextIdx++,
+                       sep['端接尺寸'] || null, sep['信号名称'] || null, sep['信号定义'] || null, sep.input || 0, sep.output || 0, sep['备注'] || null]
+                    );
+                    if (sep.pin_id) primaryPinSet.add(sep.pin_id);
+                  }
+
+                  // 拼接 unique_id
+                  primaryUniqueId += '+' + secUniqueId;
+
+                  // 记录信号合并事件
+                  mergeNotes.push(`[${originalName}/${sigSheetName}/第${rowNum}行] 信号合并：将信号 ${secUniqueId}(id=${secId}) 合并入主信号 ${primarySignal.unique_id}(id=${primaryId})`);
+
+                  // 删除被合并的旧信号（CASCADE 会删除其 signal_endpoints）
+                  await db.run('DELETE FROM signals WHERE id = ?', [secId]);
+                }
+
+                // 合并新记录到主信号
+                const maxIdxRow2 = await db.get(
+                  'SELECT MAX(endpoint_index) as m FROM signal_endpoints WHERE signal_id = ?',
+                  [primaryId]
+                );
+                let nextIdx2: number = (maxIdxRow2?.m ?? -1) + 1;
+                const addedEps: string[] = [];
+
+                for (const ep of resolvedEps) {
+                  if (!ep.pinId) continue;
+                  if (primaryPinSet.has(ep.pinId)) continue; // 去重
+                  const epInput  = ep.epIndex === 0 ? fromInput  : toInput;
+                  const epOutput = ep.epIndex === 0 ? fromOutput : toOutput;
+                  const epRemark = ep.epIndex === 0 ? fromRemark : toRemark;
+                  await db.run(
+                    `INSERT INTO signal_endpoints
+                       (signal_id, device_id, pin_id, endpoint_index, "端接尺寸", "信号名称", "信号定义", "input", "output", "备注")
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                    [primaryId, ep.deviceId, ep.pinId, nextIdx2++,
+                     ep.termSize || null, ep.sigName || null, ep.sigDef || null, epInput, epOutput, epRemark]
+                  );
+                  primaryPinSet.add(ep.pinId);
+                  addedEps.push(`${ep.devNum}/${ep.compId}/${ep.pinNum}`);
+                }
+
+                // 拼接新记录的 unique_id
+                const newUniqueId = sigFields['unique_id'] || '';
+                primaryUniqueId += '+' + newUniqueId;
+
+                // 记录合并事件
+                const epDesc = addedEps.length > 0
+                  ? `合并新增端点: ${addedEps.join(', ')}`
+                  : '合并（所有端点已存在，无新增）';
+                mergeNotes.push(`[${originalName}/${sigSheetName}/第${rowNum}行] ${epDesc}; 新记录unique_id: ${newUniqueId || '(空)'}`);
+
+                // 更新信号字段（有变化的列），记录 diff
+                const SIG_SKIP = new Set(['created_by', 'status', 'import_status', 'import_conflicts', 'unique_id']);
+                const sigOldVals: Record<string, string> = {};
+                const sigNewVals: Record<string, string> = {};
+                for (const [col, newVal] of Object.entries(sigFields)) {
+                  if (SIG_SKIP.has(col)) continue;
+                  const oldVal = String(primarySignal[col] ?? '').trim();
+                  const newValStr = String(newVal ?? '').trim();
+                  if (oldVal !== newValStr) { sigOldVals[col] = oldVal; sigNewVals[col] = newValStr; }
+                }
+                if (Object.keys(sigNewVals).length > 0) {
+                  const sigSetClauses = Object.keys(sigNewVals).map(k => `"${k}" = ?`).join(', ');
+                  await db.run(
+                    `UPDATE signals SET ${sigSetClauses}, import_status = 'updated', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+                    [...Object.values(sigNewVals), primaryId]
+                  );
+                  await db.run(
+                    `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, old_values, new_values, reason, status)
+                     VALUES ('signals', ?, ?, 'signals', ?, ?, ?, '文件导入更新', 'approved')`,
+                    [primaryId, primaryId, req.user!.id, JSON.stringify(sigOldVals), JSON.stringify(sigNewVals)]
+                  );
+                }
+
+                // 更新主信号的 unique_id 和 import_conflicts
+                await db.run(
+                  'UPDATE signals SET unique_id = ?, import_conflicts = ?, import_status = \'updated\', updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                  [primaryUniqueId, JSON.stringify(mergeNotes), primaryId]
+                );
+
+                sheetM2++;
               }
 
             } catch (err: any) {
@@ -938,9 +997,9 @@ export function projectRoutes(db: Database) {
               sheetErrors2.push(`第${rowNum}行: ${err.message}`);
             }
           }
-          s2Success += sheetS2; s2Skipped.push(...sheetSk2); s2Error += sheetE2;
+          s2Success += sheetS2; s2Merged += sheetM2; s2Skipped.push(...sheetSk2); s2Error += sheetE2;
           s2Errors.push(...sheetErrors2);
-          results[sigSheetName] = { name: sigSheetName, success: sheetS2, skipped: sheetSk2, errors: sheetErrors2 };
+          results[sigSheetName] = { name: sigSheetName, success: sheetS2, merged: sheetM2, skipped: sheetSk2, errors: sheetErrors2 };
         } } // end for signalSheetNames + end doSignals
 
         // 按 Sheet 分组记录详情
@@ -959,8 +1018,8 @@ export function projectRoutes(db: Database) {
             `project_${projectId}`,
             phase,
             req.user!.id,
-            s0Success + s1Success + s2Success + s0Skipped.length + s1Skipped.length + s2Skipped.length + s0Errors.length + s1Errors.length + s2Errors.length,
-            s0Success + s1Success + s2Success,
+            s0Success + s1Success + s2Success + s2Merged + s0Skipped.length + s1Skipped.length + s2Skipped.length + s0Errors.length + s1Errors.length + s2Errors.length,
+            s0Success + s1Success + s2Success + s2Merged,
             s0Skipped.length + s1Skipped.length + s2Skipped.length,
             s0Errors.length + s1Errors.length + s2Errors.length,
             fileSize,

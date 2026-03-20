@@ -192,7 +192,7 @@ export function signalRoutes(db: Database) {
 
       // ── 批量查询端点摘要（一次 SQL 覆盖所有信号）──────────
       const signalIds = signals.map((s: any) => s.id);
-      const summaryMap: Record<number, { endpoint_summary: string; 信号名称摘要: string }> = {};
+      const summaryMap: Record<number, { endpoint_summary: string; 信号名称摘要: string; endpoint_count: number }> = {};
       if (signalIds.length > 0) {
         const ph = signalIds.map(() => '?').join(',');
         const allEndpoints = await db.query(
@@ -217,7 +217,7 @@ export function signalRoutes(db: Database) {
             e.pin_id ? `${e.设备端元器件编号 || e.设备编号}-${e.针孔号}` : `${e.设备编号}(?)`
           );
           const nameParts = eps.filter((e: any) => e.信号名称).map((e: any) => e.信号名称);
-          summaryMap[id] = { endpoint_summary: addrParts.join(' - '), 信号名称摘要: nameParts.join(' - ') };
+          summaryMap[id] = { endpoint_summary: addrParts.join(' - '), 信号名称摘要: nameParts.join(' - '), endpoint_count: eps.length };
         }
       }
 

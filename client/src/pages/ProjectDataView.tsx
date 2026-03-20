@@ -79,6 +79,7 @@ interface SignalRow {
   成品线长度?: string; 成品线载流量?: string; 成品线线路压降?: string; 成品线标识?: string;
   成品线与机上线束对接方式?: string; 成品线安装责任?: string; 备注?: string;
   endpoint_summary?: string;
+  endpoint_count?: number;
   can_edit?: boolean;
   has_unconfirmed?: number;
   status?: string;
@@ -203,7 +204,7 @@ export default function ProjectDataView() {
 
   // ── 视图切换 ──
   const [activeView, setActiveView] = useState<'devices' | 'signals' | 'section-connectors'>('devices');
-  const [filterMode, setFilterMode] = useState<'all' | 'my' | 'related' | 'pending' | 'my_approval' | 'my_completion' | 'my_tasks'>(user?.role === 'admin' ? 'all' : 'my');
+  const [filterMode, setFilterMode] = useState<'all' | 'my' | 'related' | 'pending' | 'my_approval' | 'my_completion' | 'my_tasks' | 'networking'>(user?.role === 'admin' ? 'all' : 'my');
 
   type ApprovalItem = { id: number; recipient_username: string; item_type: string; status: string; rejection_reason?: string; responded_at?: string; };
   type ApprovalInfo = { request: { id: number; current_phase: string; status: string; action_type: string; requester_username: string; created_at: string; old_payload?: string; payload?: string; } | null; items: ApprovalItem[]; my_pending_item: ApprovalItem | null; };
@@ -336,12 +337,17 @@ export default function ProjectDataView() {
     if (pidParam) setSelectedProjectId(parseInt(pidParam));
   }, [searchParams]);
 
+  // 信号视图中只有 all/my/related 会影响后端查询，其余为客户端筛选
+  const signalServerFilter = filterMode === 'my' ? 'my' : filterMode === 'related' ? 'related' : 'all';
+  // 设备/区段视图的所有 filterMode 都需要触发重新加载
+  const effectiveFilterKey = activeView === 'signals' ? signalServerFilter : filterMode;
+
   useEffect(() => {
     if (!selectedProjectId) return;
     if (activeView === 'devices') loadDevices();
     else if (activeView === 'signals') loadSignals();
     else loadSectionConnectors();
-  }, [selectedProjectId, activeView, filterMode]);
+  }, [selectedProjectId, activeView, effectiveFilterKey]);
 
   // 信号视图滚动加载：监听哨兵元素
   useEffect(() => {
@@ -2475,6 +2481,7 @@ export default function ProjectDataView() {
           if (filterMode === 'my_approval' && !(s.status === 'Pending' && s.pending_item_type === 'approval')) return false;
           if (filterMode === 'my_completion' && !(s.status === 'Pending' && s.pending_item_type === 'completion')) return false;
           if (filterMode === 'my_tasks' && !(s.status === 'Pending' && (s.pending_item_type === 'approval' || s.pending_item_type === 'completion'))) return false;
+          if (filterMode === 'networking' && (s.endpoint_count ?? 0) <= 2) return false;
           // 列过滤
           for (const [key, val] of Object.entries(signalFilters)) {
             if (!val) continue;
@@ -2502,8 +2509,9 @@ export default function ProjectDataView() {
           <table className="min-w-full text-sm">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-4 py-2 text-left text-xs text-gray-500 w-8"></th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500">Unique ID</th>
+                <th className="px-2 py-2 text-left text-xs text-gray-500 w-8">#</th>
+                <th className="px-2 py-2 text-left text-xs text-gray-500 w-8"></th>
+                <th className="px-4 py-2 text-left text-xs text-gray-500 max-w-[260px]">Unique ID</th>
                 <th className="px-4 py-2 text-left text-xs text-gray-500 min-w-[120px]">状态</th>
                 <th className="px-4 py-2 text-left text-xs text-gray-500">信号名称摘要</th>
                 <th className="px-4 py-2 text-left text-xs text-gray-500">连接类型</th>
@@ -2512,7 +2520,8 @@ export default function ProjectDataView() {
                 <th className="px-4 py-2 text-left text-xs text-gray-500">操作</th>
               </tr>
               <tr className="bg-white border-b">
-                <th className="px-4 py-1"></th>
+                <th className="px-2 py-1"></th>
+                <th className="px-2 py-1"></th>
                 {/* Unique ID */}
                 <th className="px-4 py-1">
                   <div className="relative">
@@ -2559,7 +2568,7 @@ export default function ProjectDataView() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {displayedSignals.map(signal => {
+              {displayedSignals.map((signal, displayIndex) => {
                 const isExpanded = expandedSignalId === signal.id;
                 const detail = signalDetails[signal.id];
                 return (
@@ -2579,7 +2588,8 @@ export default function ProjectDataView() {
                         else { setExpandedSignalId(null); }
                       }}
                     >
-                      <td className="px-4 py-2 text-center">
+                      <td className="px-2 py-2 text-center text-xs text-gray-400">{displayIndex + 1}</td>
+                      <td className="px-2 py-2 text-center">
                         <button
                           onClick={async () => {
                             if (isExpanded) setExpandedSignalId(null);
@@ -2595,7 +2605,7 @@ export default function ProjectDataView() {
                           {isExpanded ? '▼' : '▶'}
                         </button>
                       </td>
-                      <td className="px-4 py-2 font-mono text-xs">{signal.unique_id || '-'}</td>
+                      <td className="px-4 py-2 font-mono text-xs max-w-[260px] truncate" title={signal.unique_id || '-'}>{signal.unique_id || '-'}</td>
                       <td className="px-4 py-2">
                         {signal.status === 'Draft' && (
                           <span className="px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700 text-xs font-semibold">Draft</span>
@@ -2648,7 +2658,7 @@ export default function ProjectDataView() {
                       const approvalItems = items.filter((i: any) => i.item_type === 'approval');
                       return (
                         <tr key={`${signal.id}-approval`}>
-                          <td colSpan={8} className="px-0 py-0 bg-yellow-50 border-b border-yellow-200">
+                          <td colSpan={9} className="px-0 py-0 bg-yellow-50 border-b border-yellow-200">
                             <div className="pl-8 pr-4 py-3">
                               <div className="text-xs font-semibold text-gray-600 mb-2">审批进度（{request.action_type}）</div>
                               {completionItems.length > 0 && (
@@ -2695,7 +2705,7 @@ export default function ProjectDataView() {
 
                     {isExpanded && detail && (
                       <tr key={`${signal.id}-detail`}>
-                        <td colSpan={7} className="px-0 py-0 bg-green-50">
+                        <td colSpan={9} className="px-0 py-0 bg-green-50">
                           <div className="pl-8 pr-4 py-3 text-xs">
 
                             {/* 导入更新 diff */}
@@ -2719,6 +2729,22 @@ export default function ProjectDataView() {
                                       ))}
                                     </tbody>
                                   </table>
+                                </div>
+                              );
+                            })()}
+
+                            {/* 信号合并历史 */}
+                            {(detail as any).import_conflicts && (() => {
+                              const conflicts: string[] = (() => {
+                                try { return JSON.parse((detail as any).import_conflicts); } catch { return [(detail as any).import_conflicts]; }
+                              })();
+                              if (conflicts.length === 0) return null;
+                              return (
+                                <div className="mb-3 border border-amber-200 rounded bg-amber-50 px-3 py-2">
+                                  <div className="font-semibold text-amber-700 mb-1">信号合并记录（{conflicts.length}条）</div>
+                                  <ul className="list-disc list-inside text-xs text-gray-700 space-y-0.5 max-h-40 overflow-y-auto">
+                                    {conflicts.map((c, i) => <li key={i}>{c}</li>)}
+                                  </ul>
                                 </div>
                               );
                             })()}
@@ -2957,6 +2983,14 @@ export default function ProjectDataView() {
             >
               我的任务
             </button>
+            {activeView === 'signals' && (
+              <button
+                onClick={() => setFilterMode('networking')}
+                className={`px-3 py-1 rounded text-sm ${filterMode === 'networking' ? 'bg-white shadow text-green-600 font-medium' : 'text-gray-600'}`}
+              >
+                组网信号
+              </button>
+            )}
           </div>
 
           {/* 智能助手按钮 */}
