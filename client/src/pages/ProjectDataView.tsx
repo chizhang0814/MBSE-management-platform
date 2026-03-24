@@ -509,7 +509,11 @@ export default function ProjectDataView() {
           const d = await r.json();
           const batch: any[] = d.signals || [];
           if (batch.length === 0) break;
-          setSignals(prev => [...prev, ...batch]);
+          if (signalLoadVersion.current !== version) return;
+          setSignals(prev => {
+            if (signalLoadVersion.current !== version) return prev; // 防止过时批次追加
+            return [...prev, ...batch];
+          });
           offset += batch.length;
         }
       }
@@ -1454,22 +1458,22 @@ export default function ProjectDataView() {
           <table className="min-w-full text-sm">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-4 py-2 text-left text-xs text-gray-500 w-8"></th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500">设备编号</th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500">构型</th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500 min-w-[120px]">状态</th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500">设备LIN号（DOORS）</th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500">设备中文名称</th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500">ATA（前2位筛选）</th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500">DAL</th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500">设备负责人</th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500">连接器数</th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500">操作</th>
+                <th className="px-2 py-2 text-left text-xs text-gray-500 w-8"></th>
+                <th className="px-2 py-2 text-left text-xs text-gray-500 max-w-[90px]">设备编号</th>
+                <th className="px-2 py-2 text-left text-xs text-gray-500 max-w-[80px]">构型</th>
+                <th className="px-2 py-2 text-left text-xs text-gray-500 min-w-[100px]">状态</th>
+                <th className="px-2 py-2 text-left text-xs text-gray-500 max-w-[100px]">设备LIN号（DOORS）</th>
+                <th className="px-2 py-2 text-left text-xs text-gray-500">设备中文名称</th>
+                <th className="px-2 py-2 text-left text-xs text-gray-500 max-w-[70px]">ATA（前2位筛选）</th>
+                <th className="px-2 py-2 text-left text-xs text-gray-500 max-w-[60px]">DAL</th>
+                <th className="px-2 py-2 text-left text-xs text-gray-500 max-w-[80px]">设备负责人</th>
+                <th className="px-2 py-2 text-left text-xs text-gray-500 max-w-[60px]">连接器数</th>
+                <th className="px-2 py-2 text-left text-xs text-gray-500 w-[130px]">操作</th>
               </tr>
               <tr className="bg-white border-b">
                 <th className="px-4 py-1"></th>
                 {['设备编号'].map(col => (
-                  <th key={col} className="px-4 py-1">
+                  <th key={col} className="px-2 py-1 max-w-[90px]">
                     <div className="relative">
                       <input
                         type="text"
@@ -1485,7 +1489,7 @@ export default function ProjectDataView() {
                     </div>
                   </th>
                 ))}
-                <th className="px-4 py-1">
+                <th className="px-2 py-1 max-w-[80px]">
                   <div className="relative">
                     <button
                       onClick={() => setConfigFilterOpen(o => !o)}
@@ -1529,7 +1533,7 @@ export default function ProjectDataView() {
                     )}
                   </div>
                 </th>
-                <th className="px-4 py-1">
+                <th className="px-2 py-1">
                   <select
                     value={deviceFilters['_status'] || ''}
                     onChange={e => setDeviceFilters(prev => ({ ...prev, _status: e.target.value }))}
@@ -1542,15 +1546,20 @@ export default function ProjectDataView() {
                     <option value="sub_pending">子项待审批/完善</option>
                   </select>
                 </th>
-                {['设备LIN号（DOORS）', '设备中文名称', '设备部件所属系统（4位ATA）', '设备DAL', '设备负责人'].map(col => (
-                  <th key={col} className="px-4 py-1">
+                {['设备LIN号（DOORS）', '设备中文名称', '设备部件所属系统（4位ATA）', '设备DAL', '设备负责人'].map(col => {
+                  const isDAL = col === '设备DAL';
+                  const isATA = col === '设备部件所属系统（4位ATA）';
+                  const isLIN = col === '设备LIN号（DOORS）';
+                  const narrow = col === '设备负责人';
+                  return (
+                  <th key={col} className={`px-2 py-1 ${isDAL ? 'max-w-[60px]' : isATA ? 'max-w-[70px]' : isLIN ? 'max-w-[100px]' : narrow ? 'max-w-[80px]' : ''}`}>
                     <div className="relative">
                       <input
                         type="text"
                         placeholder="筛选..."
                         value={deviceFilters[col] || ''}
                         onChange={e => setDeviceFilters(prev => ({ ...prev, [col]: e.target.value }))}
-                        className="w-full px-1.5 py-0.5 pr-5 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-400"
+                        className="w-full px-1 py-0.5 pr-5 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-400"
                       />
                       {deviceFilters[col] && (
                         <button onClick={() => setDeviceFilters(prev => ({ ...prev, [col]: '' }))}
@@ -1558,8 +1567,9 @@ export default function ProjectDataView() {
                       )}
                     </div>
                   </th>
-                ))}
-                <th className="px-4 py-1">
+                  );
+                })}
+                <th className="px-2 py-1 max-w-[60px]">
                   <div className="relative">
                     <input
                       type="text"
@@ -1569,7 +1579,7 @@ export default function ProjectDataView() {
                         const v = e.target.value;
                         if (v === '' || /^\d+$/.test(v)) setDeviceFilters(prev => ({ ...prev, connector_count: v }));
                       }}
-                      className="w-full px-1.5 py-0.5 pr-5 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-400"
+                      className="w-full px-1 py-0.5 pr-5 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-400"
                     />
                     {deviceFilters['connector_count'] && (
                       <button onClick={() => setDeviceFilters(prev => ({ ...prev, connector_count: '' }))}
@@ -1618,8 +1628,8 @@ export default function ProjectDataView() {
                           {isExpanded ? '▼' : '▶'}
                         </button>
                       </td>
-                      <td className="px-4 py-2 font-medium">{device.设备编号}</td>
-                      <td className="px-4 py-2 text-sm">
+                      <td className="px-2 py-2 font-medium text-sm max-w-[90px] truncate" title={device.设备编号}>{device.设备编号}</td>
+                      <td className="px-2 py-2 text-sm max-w-[80px]">
                         {projectConfigurations.length === 0
                           ? <span className="text-gray-300">—</span>
                           : (() => {
@@ -1633,7 +1643,7 @@ export default function ProjectDataView() {
                             })()
                         }
                       </td>
-                      <td className="px-4 py-2">
+                      <td className="px-2 py-2">
                         {device.status === 'Draft' && (
                           <span className="px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700 text-xs font-semibold">Draft</span>
                         )}
@@ -1664,16 +1674,16 @@ export default function ProjectDataView() {
                           <span className="ml-1 px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 text-xs font-semibold">已更新</span>
                         )}
                       </td>
-                      <td className="px-4 py-2 text-gray-600">{device['设备LIN号（DOORS）'] || '-'}</td>
-                      <td className="px-4 py-2 text-gray-700">{device.设备中文名称 || '-'}</td>
-                      <td className="px-4 py-2 text-gray-600">{device['设备部件所属系统（4位ATA）'] || '-'}</td>
-                      <td className="px-4 py-2 text-gray-600">{device.设备DAL || '-'}</td>
-                      <td className="px-4 py-2 text-gray-600">
+                      <td className="px-2 py-2 text-gray-600 text-sm max-w-[100px] truncate" title={device['设备LIN号（DOORS）'] || '-'}>{device['设备LIN号（DOORS）'] || '-'}</td>
+                      <td className="px-2 py-2 text-gray-700 text-sm">{device.设备中文名称 || '-'}</td>
+                      <td className="px-2 py-2 text-gray-600 text-sm max-w-[70px] truncate" title={device['设备部件所属系统（4位ATA）'] || '-'}>{device['设备部件所属系统（4位ATA）'] || '-'}</td>
+                      <td className="px-2 py-2 text-gray-600 text-sm max-w-[60px] truncate" title={device.设备DAL || '-'}>{device.设备DAL || '-'}</td>
+                      <td className="px-2 py-2 text-gray-600 text-sm max-w-[80px] truncate" title={`${device.设备负责人 || '-'}${device.设备负责人姓名 ? ` (${device.设备负责人姓名})` : ''}`}>
                         {device.设备负责人 || '-'}
                         {device.设备负责人姓名 && <span className="text-gray-400 ml-1">({device.设备负责人姓名})</span>}
                       </td>
-                      <td className="px-4 py-2 text-gray-600">{device.connector_count ?? 0}</td>
-                      <td className="px-4 py-2 space-x-2">
+                      <td className="px-2 py-2 text-gray-600 text-sm text-center max-w-[60px]">{device.connector_count ?? 0}</td>
+                      <td className="px-2 py-2 space-x-2 whitespace-nowrap w-[130px]">
                           {canEditDevice(device) && (device.status === 'Pending' ? (
                             <span className="text-xs text-gray-400 cursor-not-allowed" title="记录审批中，不可编辑">编辑/删除</span>
                           ) : lock ? (
@@ -2266,7 +2276,7 @@ export default function ProjectDataView() {
                         {sc.updated_at ? new Date(sc.updated_at.includes('Z') || sc.updated_at.includes('+')
                           ? sc.updated_at : sc.updated_at.replace(' ', 'T') + 'Z').toLocaleString() : '-'}
                       </td>
-                      <td className="px-4 py-2 space-x-2">
+                      <td className="px-4 py-2 space-x-2 whitespace-nowrap">
                         {canEditSC(sc) && (
                           <>
                             <button onClick={() => openEditSC(sc)} className="text-blue-600 hover:text-blue-800 text-xs">编辑</button>
@@ -2504,26 +2514,26 @@ export default function ProjectDataView() {
           <div className="px-4 py-1.5 text-xs text-gray-500 bg-gray-50 border-b">
             {isFiltering
               ? `显示 ${filteredSignals.length} / ${signals.length} 条信号`
-              : `已载入 ${Math.min(signalDisplayCount, filteredSignals.length)} / ${filteredSignals.length} 条信号`}
+              : `已载入 ${Math.min(signalDisplayCount, filteredSignals.length)} / ${signalTotal} 条信号`}
           </div>
           <table className="min-w-full text-sm">
             <thead className="bg-gray-50">
               <tr>
                 <th className="px-2 py-2 text-left text-xs text-gray-500 w-8">#</th>
                 <th className="px-2 py-2 text-left text-xs text-gray-500 w-8"></th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500 max-w-[260px]">Unique ID</th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500 min-w-[120px]">状态</th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500">信号名称摘要</th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500">连接类型</th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500">端点摘要</th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500">创建人</th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500">操作</th>
+                <th className="px-4 py-2 text-left text-xs text-gray-500 max-w-[120px]">Unique ID</th>
+                <th className="px-4 py-2 text-left text-xs text-gray-500 w-[200px]">状态</th>
+                <th className="px-4 py-2 text-left text-xs text-gray-500 max-w-[180px]">信号名称摘要</th>
+                <th className="px-4 py-2 text-left text-xs text-gray-500 w-[80px]">连接类型</th>
+                <th className="px-4 py-2 text-left text-xs text-gray-500 max-w-[180px]">端点摘要</th>
+                <th className="px-4 py-2 text-left text-xs text-gray-500 w-[120px]">创建人</th>
+                <th className="px-4 py-2 text-left text-xs text-gray-500 w-[130px]">操作</th>
               </tr>
               <tr className="bg-white border-b">
                 <th className="px-2 py-1"></th>
                 <th className="px-2 py-1"></th>
                 {/* Unique ID */}
-                <th className="px-4 py-1">
+                <th className="px-4 py-1 max-w-[120px]">
                   <div className="relative">
                     <input type="text" placeholder="筛选..." value={signalFilters['unique_id'] || ''}
                       onChange={e => setSignalFilters(prev => ({ ...prev, unique_id: e.target.value }))}
@@ -2535,7 +2545,7 @@ export default function ProjectDataView() {
                   </div>
                 </th>
                 {/* 状态 */}
-                <th className="px-4 py-1">
+                <th className="px-4 py-1 w-[200px]">
                   <select value={signalFilters['_status'] || ''}
                     onChange={e => setSignalFilters(prev => ({ ...prev, _status: e.target.value }))}
                     className="w-full px-1 py-0.5 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-400 bg-white">
@@ -2605,8 +2615,8 @@ export default function ProjectDataView() {
                           {isExpanded ? '▼' : '▶'}
                         </button>
                       </td>
-                      <td className="px-4 py-2 font-mono text-xs max-w-[260px] truncate" title={signal.unique_id || '-'}>{signal.unique_id || '-'}</td>
-                      <td className="px-4 py-2">
+                      <td className="px-4 py-2 font-mono text-xs max-w-[120px] truncate" title={signal.unique_id || '-'}>{signal.unique_id || '-'}</td>
+                      <td className="px-4 py-2 w-[200px]">
                         {signal.status === 'Draft' && (
                           <span className="px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700 text-xs font-semibold">Draft</span>
                         )}
@@ -2627,11 +2637,11 @@ export default function ProjectDataView() {
                           <span className="ml-1 px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 text-xs font-semibold">已更新</span>
                         )}
                       </td>
-                      <td className="px-4 py-2 text-xs">{signal.信号名称摘要 || '-'}</td>
-                      <td className="px-4 py-2 text-gray-600">{signal.连接类型 || '-'}</td>
-                      <td className="px-4 py-2 text-gray-600 text-xs">{signal.endpoint_summary || '-'}</td>
-                      <td className="px-4 py-2 text-gray-600 text-xs">{signal.created_by || '-'}</td>
-                      <td className="px-4 py-2 space-x-2 text-xs">
+                      <td className="px-4 py-2 text-xs max-w-[180px] truncate" title={signal.信号名称摘要 || '-'}>{signal.信号名称摘要 || '-'}</td>
+                      <td className="px-4 py-2 text-gray-600 w-[80px] truncate" title={signal.连接类型 || '-'}>{signal.连接类型 || '-'}</td>
+                      <td className="px-4 py-2 text-gray-600 text-xs max-w-[180px] truncate" title={signal.endpoint_summary || '-'}>{signal.endpoint_summary || '-'}</td>
+                      <td className="px-4 py-2 text-gray-600 text-xs w-[120px] truncate" title={signal.created_by || '-'}>{signal.created_by || '-'}</td>
+                      <td className="px-4 py-2 space-x-2 text-xs whitespace-nowrap w-[130px]">
                         {signal.status === 'Pending' ? (
                           <span className="text-gray-400 cursor-not-allowed" title="记录审批中，不可编辑">编辑/删除</span>
                         ) : (
