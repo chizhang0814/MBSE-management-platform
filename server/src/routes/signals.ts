@@ -965,7 +965,6 @@ export function signalRoutes(db: Database) {
             } else if (!aSelected && bSelected) {
               fromEp = b; toEp = a;
             } else {
-              // 两端都被选中，按 deviceIds 中顺序
               const aIdx = deviceIds.indexOf(Number(a.device_id));
               const bIdx = deviceIds.indexOf(Number(b.device_id));
               fromEp = aIdx <= bIdx ? a : b;
@@ -1019,7 +1018,7 @@ export function signalRoutes(db: Database) {
         }
       }
 
-      // 生成 CSV（BOM for Excel）
+      // 流式写出 CSV（BOM for Excel），逐行发送避免大数据集内存积压
       const header = [
         'Unique ID', '连接类型', '信号ATA', '信号架次有效性',
         '线束号', '端元器件编号（从）', '针孔号（从）', '端接代号（从）',
@@ -1033,12 +1032,13 @@ export function signalRoutes(db: Database) {
       ];
 
       const escape = (v: string) => `"${String(v).replace(/"/g, '""')}"`;
-      const csvLines = [header.map(escape).join(','), ...rows.map(r => r.map(escape).join(','))];
-      const csv = '\uFEFF' + csvLines.join('\r\n');
-
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');
       res.setHeader('Content-Disposition', 'attachment; filename="signal_pairs_export.csv"');
-      res.send(csv);
+      res.write('\uFEFF' + header.map(escape).join(',') + '\r\n');
+      for (const r of rows) {
+        res.write(r.map(escape).join(',') + '\r\n');
+      }
+      res.end();
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
