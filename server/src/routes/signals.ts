@@ -918,22 +918,31 @@ export function signalRoutes(db: Database) {
         [projectId, ...deviceIds]
       );
 
-      // 对每条信号获取全部端点详情
+      // 批量查所有相关信号的端点（一次查询，避免 N+1）
+      const signalIds = signals.map((s: any) => s.id);
+      const epPh = signalIds.map(() => '?').join(',');
+      const allEndpoints = await db.query(
+        `SELECT se.signal_id, se.id, se.device_id, se.pin_id,
+                COALESCE(se."端接尺寸", p.端接尺寸) AS 端接尺寸,
+                p.针孔号,
+                c."设备端元器件编号"
+         FROM signal_endpoints se
+         LEFT JOIN pins p ON se.pin_id = p.id
+         LEFT JOIN connectors c ON p.connector_id = c.id
+         WHERE se.signal_id IN (${epPh})
+         ORDER BY se.signal_id, se.endpoint_index, se.id`,
+        signalIds
+      );
+      const endpointsBySig: Record<number, any[]> = {};
+      for (const ep of allEndpoints) {
+        if (!endpointsBySig[ep.signal_id]) endpointsBySig[ep.signal_id] = [];
+        endpointsBySig[ep.signal_id].push(ep);
+      }
+
       const rows: string[][] = [];
 
       for (const sig of signals) {
-        const endpoints = await db.query(
-          `SELECT se.id, se.device_id, se.pin_id,
-                  COALESCE(se."端接尺寸", p.端接尺寸) AS 端接尺寸,
-                  p.针孔号,
-                  c."设备端元器件编号"
-           FROM signal_endpoints se
-           LEFT JOIN pins p ON se.pin_id = p.id
-           LEFT JOIN connectors c ON p.connector_id = c.id
-           WHERE se.signal_id = ?
-           ORDER BY se.endpoint_index, se.id`,
-          [sig.id]
-        );
+        const endpoints = endpointsBySig[sig.id] || [];
 
         if (endpoints.length < 2) continue;
 
