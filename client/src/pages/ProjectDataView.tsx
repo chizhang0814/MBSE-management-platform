@@ -92,7 +92,7 @@ interface SignalEndpoint {
   设备编号: string; 设备端元器件编号: string; 针孔号: string;
   屏蔽类型?: string; 端接尺寸?: string; 信号名称?: string; 信号定义?: string;
   设备中文名称?: string; 设备负责人?: string;
-  confirmed?: number;
+  confirmed?: number; input?: number; output?: number;
 }
 
 interface SignalDetail extends SignalRow {
@@ -1161,8 +1161,10 @@ export default function ProjectDataView() {
           信号定义: e.信号定义 || '',
           设备负责人: e.设备负责人 || '',
           confirmed: e.confirmed,
+          input: e.input ?? 0,
+          output: e.output ?? 0,
         }))
-      : [{ 设备编号: '', 设备端元器件编号: '', 针孔号: '', 信号名称: '', 信号定义: '', 设备负责人: '' }];
+      : [{ 设备编号: '', 设备端元器件编号: '', 针孔号: '', 信号名称: '', 信号定义: '', 设备负责人: '', input: 0, output: 0 }];
     setSignalEndpoints(epList);
     setEpDeviceSearch(epList.map(e => e.设备编号));
     setEpDeviceResults(epList.map(() => []));
@@ -1226,6 +1228,16 @@ export default function ProjectDataView() {
       if (!sf['是否成品线']) { alert('是否成品线不能为空'); return; }
     } else {
       if (!sf.unique_id?.trim()) { alert('草稿也需要填写 Unique ID'); return; }
+    }
+    // 电磁兼容代码 X 必须搭配 ESS 敷设代码
+    if (sf['电磁兼容代码'] === 'X' && sf['敷设代码'] !== 'ESS') {
+      alert(`电引爆线路（电磁兼容代码 X）必须标注为 ESS 重要线路，当前敷设代码为 ${sf['敷设代码'] || '（未填写）'}，请修改。`);
+      return;
+    }
+    // EFC/ESS 线路建议填写功能代码
+    if ((sf['敷设代码'] === 'EFC' || sf['敷设代码'] === 'ESS') && !sf['功能代码']?.trim()) {
+      const proceed = window.confirm(`当前信号敷设代码为 ${sf['敷设代码']}，属于取证线路，建议填写功能代码（来源于系统安全性分析）。\n\n是否仍要继续保存？`);
+      if (!proceed) return;
     }
     try {
       // 校验端点
@@ -3600,18 +3612,99 @@ export default function ProjectDataView() {
                           <option value="地">地</option>
                           <option value="N/A">N/A</option>
                         </select>
+                      ) : f.key === '独立电源代码' ? (
+                        <select value={(signalForm as any)[f.key] || ''} onChange={e => setSignalForm({ ...signalForm, [f.key]: e.target.value })} className="w-full border border-gray-300 rounded px-2 py-1 text-sm">
+                          <option value="">请选择</option>
+                          {[
+                            ['1EPP', '电推进系统供电线（左前/正级）'],
+                            ['1EPN', '电推进系统供电线（左前/负级）'],
+                            ['2EPP', '电推进系统供电线（右前/正极）'],
+                            ['2EPN', '电推进系统供电线（右前/负极）'],
+                            ['3EPP', '电推进系统供电线（左后/正极）'],
+                            ['3EPN', '电推进系统供电线（左后/负极）'],
+                            ['4EPP', '电推进系统供电线（右后/正极）'],
+                            ['4EPN', '电推进系统供电线（右后/负极）'],
+                            ['1HF', '左馈电线（270V）'],
+                            ['2HF', '右馈电线（270V）'],
+                            ['3HF', '备用馈电线（270V）'],
+                            ['1LF', '左馈电线（28V）'],
+                            ['2LF', '右馈电线（28V）'],
+                            ['3LF', '备用馈电线（28V）'],
+                            ['PP', '主供电线（配电盘箱间互联）'],
+                            ['1HP', '左通道供电线（断路器 >15A，270V）'],
+                            ['2HP', '右通道供电线（断路器 >15A，270V）'],
+                            ['3HP', '备用通道供电线（断路器 >15A，270V）'],
+                            ['1HN', '左通道供电线（断路器 ≤15A，270V）'],
+                            ['2HN', '右通道供电线（断路器 ≤15A，270V）'],
+                            ['3HN', '备用通道供电线（断路器 ≤15A，270V）'],
+                            ['1LP', '左通道供电线（断路器 >15A，28V）'],
+                            ['2LP', '右通道供电线（断路器 >15A，28V）'],
+                            ['3LP', '备用通道供电线（断路器 >15A，28V）'],
+                            ['1LN', '左通道供电线（断路器 ≤15A，28V）'],
+                            ['2LN', '右通道供电线（断路器 ≤15A，28V）'],
+                            ['3LN', '备用通道供电线（断路器 ≤15A，28V）'],
+                            ['CC', '同轴'],
+                            ['FO', '光纤'],
+                            ['CG', '机架地'],
+                            ['NN', '非馈电线/非供电线/非同轴/非光纤/非机架地'],
+                          ].map(([code, desc]) => (
+                            <option key={code} value={code}>{code} — {desc}</option>
+                          ))}
+                        </select>
+                      ) : f.key === '敷设代码' ? (
+                        <select value={(signalForm as any)[f.key] || ''} onChange={e => setSignalForm({ ...signalForm, [f.key]: e.target.value })} className="w-full border border-gray-300 rounded px-2 py-1 text-sm">
+                          <option value="">请选择</option>
+                          {[
+                            ['EFC', '电传飞控系统线路（含飞控功能供电线）'],
+                            ['ESS', '重要线路（技术性线路、电引爆装置线路等）'],
+                            ['NES', '非重要线路（商用性线路，如客舱娱乐等）'],
+                          ].map(([code, desc]) => (
+                            <option key={code} value={code}>{code} — {desc}</option>
+                          ))}
+                        </select>
+                      ) : f.key === '电磁兼容代码' ? (
+                        <>
+                          <select value={(signalForm as any)[f.key] || ''} onChange={e => setSignalForm({ ...signalForm, [f.key]: e.target.value })} className="w-full border border-gray-300 rounded px-2 py-1 text-sm">
+                            <option value="">请选择</option>
+                            {[
+                              ['D', '直流电功率（TRU、蓄电池到汇流条，及直流供电线）'],
+                              ['E', '发射（ISDN、A664、高速数据 >1MHz 等）'],
+                              ['S', '敏感（低电平模拟信号、视频、非平衡信号、音频、内话）'],
+                              ['G', '一般（1553B、ARINC429、离散信号、照明线、平衡信号等）'],
+                              ['R', '射频信号（发射/收发同轴电缆）'],
+                              ['X', '电引爆线路'],
+                              ['Z', '无电磁隔离要求（光纤、机架地等）'],
+                            ].map(([code, desc]) => (
+                              <option key={code} value={code}>{code} — {desc}</option>
+                            ))}
+                          </select>
+                          {(['FO', 'CG'].includes((signalForm as any)['独立电源代码']) && (signalForm as any)['电磁兼容代码'] !== 'Z') && (
+                            <p className="text-red-500 text-xs mt-1">💡 光纤/机架地通常无电磁隔离要求，建议将电磁兼容代码设为 Z。</p>
+                          )}
+                        </>
+                      ) : f.key === '余度代码' ? (
+                        <select value={(signalForm as any)[f.key] || ''} onChange={e => setSignalForm({ ...signalForm, [f.key]: e.target.value })} className="w-full border border-gray-300 rounded px-2 py-1 text-sm">
+                          <option value="">请选择</option>
+                          {[
+                            ['A', '余度通道 A'],
+                            ['B', '余度通道 B'],
+                            ['C', '余度通道 C'],
+                            ['D', '余度通道 D'],
+                            ['N', '无余度要求'],
+                          ].map(([code, desc]) => (
+                            <option key={code} value={code}>{code} — {desc}</option>
+                          ))}
+                        </select>
                       ) : f.key === '接地代码' ? (
                         <select value={(signalForm as any)[f.key] || ''} onChange={e => setSignalForm({ ...signalForm, [f.key]: e.target.value })} className="w-full border border-gray-300 rounded px-2 py-1 text-sm">
                           <option value="">请选择</option>
-                          <option value="A">A：机架地，用于设备机架/壳体接地（Chassis ground）</option>
-                          <option value="B">B：交流信号地，用于最大电流≤1A的交流信号接地（AC signal ground，≤1A）</option>
-                          <option value="C">C：直流信号地，用于最大电流≤1A的直流信号接地（DC signal ground，≤1A）</option>
-                          <option value="D">D：交流电源地，用于最大电流&gt;1A的交流电回路接地（AC power ground，&gt;1A）</option>
-                          <option value="E">E：直流电源地，用于最大电流&gt;1A的直流电回路接地（DC power ground，&gt;1A）</option>
-                          <option value="H">H：高频无线电设备电源地，用于高频系统电源回线接地（HFRE power ground）</option>
-                          <option value="I">I：高频无线电设备信号地，用于高频系统信号线接地（HFRE signal ground）</option>
-                          <option value="J">J：屏蔽地，导线屏蔽接地、EMI编织保护屏蔽接地（Shield Ground）</option>
-                          <option value="其他">其他（在备注中说明）</option>
+                          <option value="A">A：机架地（设备机架/壳体接地）</option>
+                          <option value="C">C：直流信号地（最大电流 ≤1A 的直流信号接地）</option>
+                          <option value="E">E：直流电源地（最大电流 &gt;1A 的直流电回路接地）</option>
+                          <option value="G">G：直流主电源地（发电机、TRU、蓄电池回线接地）</option>
+                          <option value="H">H：高频无线电设备电源地</option>
+                          <option value="I">I：高频无线电设备信号地</option>
+                          <option value="J">J：屏蔽地（导线屏蔽、EMI 编织保护屏蔽接地）</option>
                         </select>
                       ) : f.key === '信号ATA' ? (
                         <div className="flex gap-1">
@@ -3703,7 +3796,7 @@ export default function ProjectDataView() {
                         }} className="text-xs text-red-500">移除</button>
                       )}
                     </div>
-                    <div className="grid grid-cols-4 gap-2">
+                    <div className="grid grid-cols-5 gap-2">
                       {/* 设备选择 */}
                       <div className="relative">
                         <label className="block text-xs text-gray-500 mb-0.5">设备编号</label>
@@ -3765,8 +3858,31 @@ export default function ProjectDataView() {
                           {(epPinOptions[idx] || []).map(p => <option key={p.id} value={p.针孔号}>{p.针孔号}</option>)}
                         </select>
                       </div>
+                      {/* 信号方向 */}
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-0.5">信号方向</label>
+                        <select
+                          value={ep.input === 1 && ep.output === 1 ? 'BI-DIR' : ep.input === 1 ? 'INPUT' : ep.output === 1 ? 'OUTPUT' : 'N/A'}
+                          onChange={e => {
+                            const val = e.target.value;
+                            const newEp = [...signalEndpoints];
+                            newEp[idx] = {
+                              ...newEp[idx],
+                              input: val === 'INPUT' || val === 'BI-DIR' ? 1 : 0,
+                              output: val === 'OUTPUT' || val === 'BI-DIR' ? 1 : 0,
+                            };
+                            setSignalEndpoints(newEp);
+                          }}
+                          className="w-full border border-gray-300 rounded px-2 py-1 text-xs"
+                        >
+                          <option value="N/A">N/A</option>
+                          <option value="INPUT">INPUT</option>
+                          <option value="OUTPUT">OUTPUT</option>
+                          <option value="BI-DIR">BI-DIR</option>
+                        </select>
+                      </div>
                       {/* 信号名称 */}
-                      <div className="col-span-4">
+                      <div className="col-span-5">
                         <label className="block text-xs text-gray-500 mb-0.5">端点信号名称</label>
                         <input
                           type="text"
@@ -3776,7 +3892,7 @@ export default function ProjectDataView() {
                         />
                       </div>
                       {/* 信号定义 */}
-                      <div className="col-span-4">
+                      <div className="col-span-5">
                         <label className="block text-xs text-gray-500 mb-0.5">信号定义</label>
                         <input
                           type="text"

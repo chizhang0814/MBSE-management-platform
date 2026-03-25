@@ -473,9 +473,9 @@ export function signalRoutes(db: Database) {
       for (let i = 0; i < resolved.length; i++) {
         const { ep, deviceId, pinId } = resolved[i];
         await db.run(
-          `INSERT INTO signal_endpoints (signal_id, device_id, pin_id, endpoint_index, 信号名称, 信号定义)
-           VALUES (?, ?, ?, ?, ?, ?)`,
-          [signalId, deviceId, pinId, i, ep.信号名称 || null, ep.信号定义 || null]
+          `INSERT INTO signal_endpoints (signal_id, device_id, pin_id, endpoint_index, 信号名称, 信号定义, input, output)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [signalId, deviceId, pinId, i, ep.信号名称 || null, ep.信号定义 || null, ep.input ?? 0, ep.output ?? 0]
         );
       }
 
@@ -542,7 +542,7 @@ export function signalRoutes(db: Database) {
         return res.status(403).json({ error: '无权限修改信号' });
       }
 
-      const { endpoints, version, submit: shouldSubmit, forceDraft, ...fields } = req.body;
+      const { endpoints, version, submit: shouldSubmit, forceDraft, draft: _draft, ...fields } = req.body;
       delete fields.id; delete fields.project_id; delete fields.created_at; delete fields.status;
       delete fields.pending_item_type;
 
@@ -597,9 +597,9 @@ export function signalRoutes(db: Database) {
               pinId = pin.id;
             }
             await db.run(
-              `INSERT INTO signal_endpoints (signal_id, device_id, pin_id, endpoint_index, "端接尺寸", "信号名称", "信号定义")
-               VALUES (?, ?, ?, ?, ?, ?, ?)`,
-              [signalId, device.id, pinId, i, ep.端接尺寸 || null, ep.信号名称 || null, ep.信号定义 || null]
+              `INSERT INTO signal_endpoints (signal_id, device_id, pin_id, endpoint_index, "端接尺寸", "信号名称", "信号定义", input, output)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [signalId, device.id, pinId, i, ep.端接尺寸 || null, ep.信号名称 || null, ep.信号定义 || null, ep.input ?? 0, ep.output ?? 0]
             );
           }
 
@@ -659,9 +659,9 @@ export function signalRoutes(db: Database) {
               if (pin) pinId = pin.id;
             }
             await db.run(
-              `INSERT INTO signal_endpoints (signal_id, device_id, pin_id, endpoint_index, "端接尺寸", "信号名称", "信号定义")
-               VALUES (?, ?, ?, ?, ?, ?, ?)`,
-              [signalId, device.id, pinId, i, ep.端接尺寸 || null, ep.信号名称 || null, ep.信号定义 || null]
+              `INSERT INTO signal_endpoints (signal_id, device_id, pin_id, endpoint_index, "端接尺寸", "信号名称", "信号定义", input, output)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [signalId, device.id, pinId, i, ep.端接尺寸 || null, ep.信号名称 || null, ep.信号定义 || null, ep.input ?? 0, ep.output ?? 0]
             );
           }
         }
