@@ -327,7 +327,7 @@ export async function loadTableDataFromRelational(db: Database, projectId: numbe
     '设备端元器件匹配的元器件是否随设备交付', '针孔号', '端接尺寸', '备注',
   ];
 
-  // ③ 电气接口数据表 → electrical_interface 行（重建"设备"JSON数组）
+  // ③ 电气接口数据表 → 每行一对端点（from-to），超过2个端点的信号展开为多行
   const signalRows = await db.query(
     'SELECT * FROM signals WHERE project_id = ? ORDER BY unique_id, id',
     [projectId]
@@ -336,8 +336,8 @@ export async function loadTableDataFromRelational(db: Database, projectId: numbe
   const ifaceRowsRaw: Record<string, any>[] = [];
   for (const sig of signalRows) {
     const endpoints = await db.query(
-      `SELECT se.endpoint_index, se.端接尺寸 as 端接尺寸_ep,
-              p.针孔号, c.设备端元器件编号 as 连接器号, d.设备编号
+      `SELECT se.endpoint_index, se.端接尺寸 as 端接尺寸_ep, se.信号名称 as 信号名称_ep, se.信号定义 as 信号定义_ep,
+              p.针孔号, c.设备端元器件编号 as 连接器号, d.设备编号, d."设备LIN号（DOORS）" as lin号
        FROM signal_endpoints se
        JOIN pins p ON se.pin_id = p.id
        JOIN connectors c ON p.connector_id = c.id
@@ -347,28 +347,67 @@ export async function loadTableDataFromRelational(db: Database, projectId: numbe
       [sig.id]
     );
 
-    const devicesArray = endpoints.map((ep: any) => ({
-      '设备编号': ep.设备编号,
-      '连接器号': ep.连接器号,
-      '针孔号': ep.针孔号,
-      '端接尺寸': ep.端接尺寸_ep,
-    }));
-
-    ifaceRowsRaw.push({
-      ...sig,
+    // 信号基础字段（不含端点相关）
+    const base: Record<string, any> = {
       'Unique ID': sig.unique_id,
-      '设备': JSON.stringify(devicesArray),
-    });
+      '连接类型': sig['连接类型'],
+      '推荐导线线规': sig['推荐导线线规'],
+      '推荐导线线型': sig['推荐导线线型'],
+      '独立电源代码': sig['独立电源代码'],
+      '敷设代码': sig['敷设代码'],
+      '电磁兼容代码': sig['电磁兼容代码'],
+      '余度代码': sig['余度代码'],
+      '功能代码': sig['功能代码'],
+      '接地代码': sig['接地代码'],
+      '极性': sig['极性'],
+      '信号ATA': sig['信号ATA'],
+      '信号架次有效性': sig['信号架次有效性'],
+      '额定电压': sig['额定电压'],
+      '额定电流': sig['额定电流'],
+      '设备正常工作电压范围': sig['设备正常工作电压范围'],
+      '是否成品线': sig['是否成品线'],
+      '成品线件号': sig['成品线件号'],
+      '成品线线规': sig['成品线线规'],
+      '成品线类型': sig['成品线类型'],
+      '成品线长度': sig['成品线长度'],
+      '成品线载流量': sig['成品线载流量'],
+      '成品线线路压降': sig['成品线线路压降'],
+      '成品线标识': sig['成品线标识'],
+      '成品线与机上线束对接方式': sig['成品线与机上线束对接方式'],
+      '成品线安装责任': sig['成品线安装责任'],
+      '备注': sig['备注'],
+      '最后修改时间': sig['updated_at'],
+    };
+
+    if (endpoints.length === 0) {
+      // 无端点：导出一行空端点
+      ifaceRowsRaw.push({ ...base,
+        '设备（从）': '', '连接器（从）': '', '针孔号（从）': '', '端接尺寸（从）': '', '信号名称（从）': '', '信号定义（从）': '',
+        '设备（到）': '',  '连接器（到）': '',  '针孔号（到）': '',  '端接尺寸（到）': '',  '信号名称（到）': '',  '信号定义（到）': '',
+      });
+    } else {
+      // 以第0个端点为 from，其余每个端点各生成一行
+      const from = endpoints[0] as any;
+      const toList = endpoints.length >= 2 ? endpoints.slice(1) : [endpoints[0]];
+      for (const to of toList as any[]) {
+        ifaceRowsRaw.push({ ...base,
+          '设备（从）': from.设备编号,   '连接器（从）': from.连接器号,  '针孔号（从）': from.针孔号,  '端接尺寸（从）': from.端接尺寸_ep,  '信号名称（从）': from.信号名称_ep,  '信号定义（从）': from.信号定义_ep,
+          '设备（到）':  to.设备编号,    '连接器（到）': to.连接器号,    '针孔号（到）': to.针孔号,    '端接尺寸（到）': to.端接尺寸_ep,    '信号名称（到）': to.信号名称_ep,    '信号定义（到）': to.信号定义_ep,
+        });
+      }
+    }
   }
 
   const ifaceCols = [
-    'Unique ID', '信号名称', '信号定义', '连接类型', '设备',
+    'Unique ID', '连接类型',
+    '设备（从）', '连接器（从）', '针孔号（从）', '端接尺寸（从）', '信号名称（从）', '信号定义（从）',
+    '设备（到）',  '连接器（到）',  '针孔号（到）',  '端接尺寸（到）',  '信号名称（到）',  '信号定义（到）',
     '推荐导线线规', '推荐导线线型', '独立电源代码', '敷设代码',
     '电磁兼容代码', '余度代码', '功能代码', '接地代码', '极性',
-    '信号架次有效性', '额定电压', '额定电流', '设备正常工作电压范围',
+    '信号ATA', '信号架次有效性', '额定电压', '额定电流', '设备正常工作电压范围',
     '是否成品线', '成品线件号', '成品线线规', '成品线类型', '成品线长度',
     '成品线载流量', '成品线线路压降', '成品线标识', '成品线与机上线束对接方式',
-    '成品线安装责任', '备注',
+    '成品线安装责任', '备注', '最后修改时间',
   ];
 
   return [

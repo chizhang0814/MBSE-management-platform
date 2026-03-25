@@ -15,6 +15,14 @@ export async function isZontiRenyuan(db: Database, username: string, projectId: 
   return perms.some((p: any) => p.project_name === project.name && p.project_role === '总体人员');
 }
 
+/** 是否有审批权的总体人员（can_approve === true） */
+export async function isZontiApprover(db: Database, username: string, projectId: number): Promise<boolean> {
+  const project = await db.get('SELECT name FROM projects WHERE id = ?', [projectId]);
+  if (!project) return false;
+  const perms = await getUserPermissions(db, username);
+  return perms.some((p: any) => p.project_name === project.name && p.project_role === '总体人员' && p.can_approve === true);
+}
+
 export async function isEwisAdmin(db: Database, username: string, projectId: number): Promise<boolean> {
   const project = await db.get('SELECT name FROM projects WHERE id = ?', [projectId]);
   if (!project) return false;
@@ -29,7 +37,9 @@ export async function isDeviceManager(db: Database, username: string, projectId:
   return perms.some((p: any) => p.project_name === project.name && p.project_role === '设备管理员');
 }
 
-/** 返回项目内某角色的所有用户名列表 */
+/** 返回项目内某角色的所有用户名列表。
+ *  总体人员角色额外要求 can_approve === true，只有有审批权的才纳入审批流。
+ */
 export async function getProjectRoleMembers(db: Database, projectId: number, role: string): Promise<string[]> {
   const project = await db.get('SELECT name FROM projects WHERE id = ?', [projectId]);
   if (!project) return [];
@@ -38,7 +48,11 @@ export async function getProjectRoleMembers(db: Database, projectId: number, rol
   for (const u of users) {
     try {
       const perms = JSON.parse(u.permissions || '[]');
-      if (perms.some((p: any) => p.project_name === project.name && p.project_role === role)) {
+      if (perms.some((p: any) => {
+        if (p.project_name !== project.name || p.project_role !== role) return false;
+        if (role === '总体人员') return p.can_approve === true;
+        return true;
+      })) {
         result.push(u.username);
       }
     } catch {}

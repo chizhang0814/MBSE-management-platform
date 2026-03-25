@@ -105,8 +105,8 @@ export function usersRoutes(db: Database) {
 
       // 普通用户：只返回自己是总体人员的项目的 pending 申请
       const userRow = await db.get('SELECT permissions FROM users WHERE id = ?', [req.user.id]);
-      const perms: Array<{ project_name: string; project_role: string }> = userRow?.permissions ? JSON.parse(userRow.permissions) : [];
-      const zontiProjects = perms.filter(p => p.project_role === '总体人员').map(p => p.project_name);
+      const perms: Array<{ project_name: string; project_role: string; can_approve?: boolean }> = userRow?.permissions ? JSON.parse(userRow.permissions) : [];
+      const zontiProjects = perms.filter(p => p.project_role === '总体人员' && p.can_approve === true).map(p => p.project_name);
       if (zontiProjects.length === 0) return res.json({ requests: [] });
 
       const ph = zontiProjects.map(() => '?').join(',');
@@ -147,8 +147,8 @@ export function usersRoutes(db: Database) {
       const isAdmin = req.user.role === 'admin';
       if (!isAdmin) {
         const userRow = await db.get('SELECT permissions FROM users WHERE id = ?', [req.user.id]);
-        const perms: Array<{ project_name: string; project_role: string }> = userRow?.permissions ? JSON.parse(userRow.permissions) : [];
-        const isZonti = perms.some(p => p.project_name === request.project_name && p.project_role === '总体人员');
+        const perms: Array<{ project_name: string; project_role: string; can_approve?: boolean }> = userRow?.permissions ? JSON.parse(userRow.permissions) : [];
+        const isZonti = perms.some(p => p.project_name === request.project_name && p.project_role === '总体人员' && p.can_approve === true);
         if (!isZonti) return res.status(403).json({ error: '无权审批此申请' });
       }
 

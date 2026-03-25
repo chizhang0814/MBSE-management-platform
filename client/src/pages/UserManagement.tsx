@@ -6,6 +6,7 @@ interface Permission {
   project_name: string;
   project_role: string;
   reserved: string;
+  can_approve?: boolean;
 }
 
 interface User {
@@ -340,6 +341,9 @@ export default function UserManagement() {
                               <span className="font-medium">{perm.project_name}</span>
                               {' → '}
                               <span>{perm.project_role}</span>
+                              {perm.project_role === '总体人员' && perm.can_approve && (
+                                <span className="ml-1 text-blue-600 font-medium">（审批）</span>
+                              )}
                             </div>
                           ))
                         ) : (
@@ -435,7 +439,7 @@ export default function UserManagement() {
         {/* 添加/编辑用户对话框 */}
         {showModal && (
           <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+            <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full p-6">
               <div className="flex justify-between items-center mb-4">
                 <h3 className="text-xl font-bold">
                   {editingUser ? '编辑用户' : '添加用户'}
@@ -533,8 +537,8 @@ export default function UserManagement() {
                       </label>
                       <div className="space-y-3">
                         {formData.permissions.map((perm, idx) => (
-                          <div key={idx} className="flex space-x-2 items-end">
-                            <div className="flex-1">
+                          <div key={idx} className="flex gap-2 items-end">
+                            <div className="flex-1 min-w-0">
                               <label className="block text-xs text-gray-600 mb-1">项目名称</label>
                               <select
                                 value={perm.project_name}
@@ -566,13 +570,30 @@ export default function UserManagement() {
                                 ))}
                               </select>
                             </div>
-                            <div className="flex-1">
+                            <div className="flex-1 min-w-0">
                               <label className="block text-xs text-gray-600 mb-1">项目角色</label>
                               <select
+                                disabled={!perm.project_name}
                                 value={perm.project_role}
                                 onChange={(e) => {
+                                  const newRole = e.target.value;
                                   const newPerms = [...formData.permissions];
-                                  newPerms[idx] = { ...newPerms[idx], project_role: e.target.value };
+                                  let can_approve: boolean | undefined = undefined;
+                                  if (newRole === '总体人员') {
+                                    if (newPerms[idx].project_role === '总体人员') {
+                                      // 角色未变，保留原值
+                                      can_approve = newPerms[idx].can_approve ?? false;
+                                    } else {
+                                      // 刚切换为总体人员：若该项目无其他审批人则默认勾选
+                                      const projectName = newPerms[idx].project_name;
+                                      const hasOtherApprover = users.some(u =>
+                                        u.id !== editingUser?.id &&
+                                        (u.permissions || []).some(p => p.project_name === projectName && p.project_role === '总体人员' && p.can_approve === true)
+                                      );
+                                      can_approve = !hasOtherApprover;
+                                    }
+                                  }
+                                  newPerms[idx] = { ...newPerms[idx], project_role: newRole, can_approve };
                                   setFormData({ ...formData, permissions: newPerms });
                                 }}
                                 className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
@@ -586,6 +607,34 @@ export default function UserManagement() {
                                 <option value="只读">只读</option>
                               </select>
                             </div>
+                            {perm.project_role === '总体人员' && (() => {
+                              const otherApproversCount = users.filter(u =>
+                                u.id !== editingUser?.id &&
+                                (u.permissions || []).some(p => p.project_name === perm.project_name && p.project_role === '总体人员' && p.can_approve === true)
+                              ).length;
+                              const isLastApprover = !!perm.can_approve && otherApproversCount === 0;
+                              return (
+                                <div className="flex-shrink-0 pb-1">
+                                  <label className="block text-xs text-gray-600 mb-1 invisible">审批权</label>
+                                  <label className={`flex items-center gap-1.5 whitespace-nowrap select-none ${isLastApprover ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}>
+                                    <input
+                                      type="checkbox"
+                                      checked={!!perm.can_approve}
+                                      disabled={isLastApprover}
+                                      onChange={(e) => {
+                                        const newPerms = [...formData.permissions];
+                                        newPerms[idx] = { ...newPerms[idx], can_approve: e.target.checked };
+                                        setFormData({ ...formData, permissions: newPerms });
+                                      }}
+                                      className="w-3.5 h-3.5"
+                                    />
+                                    <span className="text-xs text-gray-600">
+                                      {isLastApprover ? '审批权（唯一，不可取消）' : '具有审批权'}
+                                    </span>
+                                  </label>
+                                </div>
+                              );
+                            })()}
                             <button
                               type="button"
                               onClick={() => {
