@@ -1276,6 +1276,22 @@ export class Database {
       }
     } catch (e: any) { console.log('Migration: fix signal_endpoints FK:', e.message); }
 
+    try {
+      const sigColsWt = await this.query('PRAGMA table_info(signals)');
+      if (!sigColsWt.some((c: any) => c.name === '线类型')) {
+        await this.run(`ALTER TABLE signals ADD COLUMN 线类型 TEXT`);
+        console.log('Database migration: added 线类型 column to signals');
+      }
+    } catch (e: any) { console.log('Migration: signals 线类型:', e.message); }
+
+    try {
+      const devColsDj = await this.query('PRAGMA table_info(devices)');
+      if (!devColsDj.some((c: any) => c.name === '设备等级')) {
+        await this.run(`ALTER TABLE devices ADD COLUMN 设备等级 TEXT`);
+        console.log('Database migration: added 设备等级 column to devices');
+      }
+    } catch (e: any) { console.log('Migration: devices 设备等级:', e.message); }
+
     // 初始化默认用户（不再创建示例数据）
     await this.initDefaultData();
   }

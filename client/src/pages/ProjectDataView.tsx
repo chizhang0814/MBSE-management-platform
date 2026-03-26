@@ -12,7 +12,7 @@ interface DeviceRow {
   id: number; project_id: number;
   设备编号: string; 设备中文名称?: string; 设备英文名称?: string; 设备英文缩写?: string;
   设备供应商件号?: string; 设备供应商名称?: string; '设备部件所属系统（4位ATA）'?: string;
-  设备安装位置?: string; 设备DAL?: string;
+  设备安装位置?: string; 设备DAL?: string; 设备等级?: string;
   设备壳体是否金属?: string; 金属壳体表面是否经过特殊处理而不易导电?: string; 设备内共地情况?: string;
   设备壳体接地方式?: string; 壳体接地是否故障电流路径?: string; 其他接地特殊要求?: string;
   设备端连接器或接线柱数量?: string; 是否为选装设备?: string; 是否有特殊布线需求?: string; 设备装机架次?: string; 设备装机构型?: string;
@@ -73,6 +73,7 @@ interface SignalRow {
   信号架次有效性?: string;
   推荐导线线规?: string; 推荐导线线型?: string;
   独立电源代码?: string; 敷设代码?: string; 电磁兼容代码?: string;
+  线类型?: string;
   余度代码?: string; 功能代码?: string; 接地代码?: string; 极性?: string;
   额定电压?: string; 额定电流?: string; 设备正常工作电压范围?: string;
   是否成品线?: string; 成品线件号?: string; 成品线线规?: string; 成品线类型?: string;
@@ -80,6 +81,7 @@ interface SignalRow {
   成品线与机上线束对接方式?: string; 成品线安装责任?: string; 备注?: string;
   endpoint_summary?: string;
   endpoint_count?: number;
+  导线等级?: string | null;
   can_edit?: boolean;
   has_unconfirmed?: number;
   status?: string;
@@ -123,6 +125,7 @@ const DEVICE_FIELDS: { key: keyof DeviceRow; label: string }[] = [
   { key: '设备部件所属系统（4位ATA）', label: '设备部件所属系统（4位ATA）' },
   { key: '设备安装位置', label: '设备安装位置' },
   { key: '设备DAL', label: '设备DAL' },
+  { key: '设备等级', label: '设备等级' },
   { key: '设备壳体是否金属', label: '设备壳体是否金属' },
   { key: '金属壳体表面是否经过特殊处理而不易导电', label: '金属壳体表面是否经过特殊处理而不易导电' },
   { key: '设备内共地情况', label: '设备内共地情况' },
@@ -145,6 +148,7 @@ const DEVICE_FIELDS: { key: keyof DeviceRow; label: string }[] = [
 const SIGNAL_FIELDS: { key: keyof SignalRow; label: string }[] = [
   { key: 'unique_id', label: 'Unique ID' },
   { key: '连接类型', label: '连接类型' },
+  { key: '线类型', label: '线类型' },
   { key: '信号ATA', label: '信号ATA' },
   { key: '信号架次有效性', label: '信号架次有效性' },
   { key: '推荐导线线规', label: '推荐导线线规' },
@@ -207,7 +211,7 @@ export default function ProjectDataView() {
   const [filterMode, setFilterMode] = useState<'all' | 'my' | 'related' | 'pending' | 'my_approval' | 'my_completion' | 'my_tasks' | 'networking'>(user?.role === 'admin' ? 'all' : 'my');
 
   type ApprovalItem = { id: number; recipient_username: string; item_type: string; status: string; rejection_reason?: string; responded_at?: string; };
-  type ApprovalInfo = { request: { id: number; current_phase: string; status: string; action_type: string; requester_username: string; created_at: string; old_payload?: string; payload?: string; } | null; items: ApprovalItem[]; my_pending_item: ApprovalItem | null; };
+  type ApprovalInfo = { request: { id: number; current_phase: string; status: string; action_type: string; requester_username: string; created_at: string; old_payload?: string; payload?: string; project_name?: string; } | null; items: ApprovalItem[]; my_pending_item: ApprovalItem | null; };
   const [approvalInfoMap, setApprovalInfoMap] = useState<Record<string, ApprovalInfo>>({});
 
   const [projectConfigurations, setProjectConfigurations] = useState<{ id: number; name: string }[]>([]);
@@ -1478,6 +1482,7 @@ export default function ProjectDataView() {
                 <th className="px-2 py-2 text-left text-xs text-gray-500">设备中文名称</th>
                 <th className="px-2 py-2 text-left text-xs text-gray-500 max-w-[70px]">ATA（前2位筛选）</th>
                 <th className="px-2 py-2 text-left text-xs text-gray-500 max-w-[60px]">DAL</th>
+                <th className="px-2 py-2 text-left text-xs text-gray-500 max-w-[50px]">等级</th>
                 <th className="px-2 py-2 text-left text-xs text-gray-500 max-w-[80px]">设备负责人</th>
                 <th className="px-2 py-2 text-left text-xs text-gray-500 max-w-[60px]">连接器数</th>
                 <th className="px-2 py-2 text-left text-xs text-gray-500 w-[130px]">操作</th>
@@ -1558,13 +1563,42 @@ export default function ProjectDataView() {
                     <option value="sub_pending">子项待审批/完善</option>
                   </select>
                 </th>
-                {['设备LIN号（DOORS）', '设备中文名称', '设备部件所属系统（4位ATA）', '设备DAL', '设备负责人'].map(col => {
+                {['设备LIN号（DOORS）', '设备中文名称', '设备部件所属系统（4位ATA）', '设备DAL'].map(col => {
                   const isDAL = col === '设备DAL';
                   const isATA = col === '设备部件所属系统（4位ATA）';
                   const isLIN = col === '设备LIN号（DOORS）';
-                  const narrow = col === '设备负责人';
                   return (
-                  <th key={col} className={`px-2 py-1 ${isDAL ? 'max-w-[60px]' : isATA ? 'max-w-[70px]' : isLIN ? 'max-w-[100px]' : narrow ? 'max-w-[80px]' : ''}`}>
+                  <th key={col} className={`px-2 py-1 ${isDAL ? 'max-w-[60px]' : isATA ? 'max-w-[70px]' : isLIN ? 'max-w-[100px]' : ''}`}>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        placeholder="筛选..."
+                        value={deviceFilters[col] || ''}
+                        onChange={e => setDeviceFilters(prev => ({ ...prev, [col]: e.target.value }))}
+                        className="w-full px-1 py-0.5 pr-5 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-400"
+                      />
+                      {deviceFilters[col] && (
+                        <button onClick={() => setDeviceFilters(prev => ({ ...prev, [col]: '' }))}
+                          className="absolute right-1 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs leading-none">&times;</button>
+                      )}
+                    </div>
+                  </th>
+                  );
+                })}
+                <th className="px-2 py-1 max-w-[50px]">
+                  <select
+                    value={deviceFilters['设备等级'] || ''}
+                    onChange={e => setDeviceFilters(prev => ({ ...prev, '设备等级': e.target.value }))}
+                    className="w-full px-1 py-0.5 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-400 bg-white"
+                  >
+                    <option value="">全部</option>
+                    {['1级', '2级', '3级', '4级', '5级'].map(v => <option key={v} value={v}>{v}</option>)}
+                  </select>
+                </th>
+                {['设备负责人'].map(col => {
+                  const narrow = true;
+                  return (
+                  <th key={col} className={`px-2 py-1 ${narrow ? 'max-w-[80px]' : ''}`}>
                     <div className="relative">
                       <input
                         type="text"
@@ -1690,6 +1724,7 @@ export default function ProjectDataView() {
                       <td className="px-2 py-2 text-gray-700 text-sm">{device.设备中文名称 || '-'}</td>
                       <td className="px-2 py-2 text-gray-600 text-sm max-w-[70px] truncate" title={device['设备部件所属系统（4位ATA）'] || '-'}>{device['设备部件所属系统（4位ATA）'] || '-'}</td>
                       <td className="px-2 py-2 text-gray-600 text-sm max-w-[60px] truncate" title={device.设备DAL || '-'}>{device.设备DAL || '-'}</td>
+                      <td className="px-2 py-2 text-gray-600 text-sm max-w-[50px] text-center">{device.设备等级 || '-'}</td>
                       <td className="px-2 py-2 text-gray-600 text-sm max-w-[80px] truncate" title={`${device.设备负责人 || '-'}${device.设备负责人姓名 ? ` (${device.设备负责人姓名})` : ''}`}>
                         {device.设备负责人 || '-'}
                         {device.设备负责人姓名 && <span className="text-gray-400 ml-1">({device.设备负责人姓名})</span>}
@@ -1717,7 +1752,7 @@ export default function ProjectDataView() {
                       <>
                     {/* 设备详情 */}
                     <tr>
-                      <td colSpan={10} className="px-0 py-0 bg-gray-50 border-b border-gray-200">
+                      <td colSpan={11} className="px-0 py-0 bg-gray-50 border-b border-gray-200">
                         <div className="pl-8 pr-4 py-3">
                           {/* 导入更新 diff */}
                           {(device as any).import_status === 'updated' && (() => {
@@ -1825,6 +1860,9 @@ export default function ProjectDataView() {
                                 } catch {}
                                 return (
                                   <>
+                                    {request.project_name && (
+                                      <div className="text-xs text-blue-600 font-medium mb-1">项目：{request.project_name}</div>
+                                    )}
                                     <div className="text-xs font-semibold text-gray-600 mb-2">审批进度（{actionLabel}）</div>
                                     {diffRows.length > 0 && (
                                       <div className="mb-2 text-xs border border-gray-200 rounded overflow-hidden">
@@ -2065,7 +2103,6 @@ export default function ProjectDataView() {
                                                       ['设备端元器件件号类型及件号', conn.设备端元器件件号类型及件号],
                                                       ['设备端元器件供应商名称', conn.设备端元器件供应商名称],
                                                       ['匹配的线束端元器件件号', conn.匹配的线束端元器件件号],
-                                                      ['匹配的线束线型', conn.匹配的线束线型],
                                                       ['尾附件件号', conn.尾附件件号],
                                                       ['触件型号', conn.触件型号],
                                                       ['随设备交付', conn.设备端元器件匹配的元器件是否随设备交付],
@@ -2096,6 +2133,7 @@ export default function ProjectDataView() {
                                                   const { request: ar, items: ais, my_pending_item: mpi } = ai;
                                                   return (
                                                     <div className="mb-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs">
+                                                      {ar.project_name && <div className="text-blue-600 font-medium mb-0.5">项目：{ar.project_name}</div>}
                                                       <div className="font-semibold text-gray-600 mb-1">审批进度（{ar.action_type}）</div>
                                                       {ais.map((it: any) => (
                                                         <div key={it.id} className="flex items-center gap-1.5 mb-0.5">
@@ -2166,6 +2204,7 @@ export default function ProjectDataView() {
                                                             <tr key={`${pin.id}-approval`}>
                                                               <td colSpan={4} className="px-2 py-1">
                                                                 <div className="p-2 bg-yellow-50 border border-yellow-200 rounded text-xs mb-1">
+                                                                  {ar.project_name && <div className="text-blue-600 font-medium mb-0.5">项目：{ar.project_name}</div>}
                                                                   <div className="font-semibold text-gray-600 mb-1">针孔 {pin.针孔号} 审批进度</div>
                                                                   {ais.map((it: any) => (
                                                                     <div key={it.id} className="flex items-center gap-1.5 mb-0.5">
@@ -2378,7 +2417,6 @@ export default function ProjectDataView() {
                                                       ['设备端元器件件号类型及件号', conn.设备端元器件件号类型及件号],
                                                       ['设备端元器件供应商名称', conn.设备端元器件供应商名称],
                                                       ['匹配的线束端元器件件号', conn.匹配的线束端元器件件号],
-                                                      ['匹配的线束线型', conn.匹配的线束线型],
                                                       ['随设备交付', conn.设备端元器件匹配的元器件是否随设备交付],
                                                       ['备注', conn.备注],
                                                     ] as [string, string | undefined][]).map(([label, val]) => (
@@ -2511,6 +2549,10 @@ export default function ProjectDataView() {
               if (s.status !== val) return false;
               continue;
             }
+            if (key === '导线等级') {
+              if ((s.导线等级 || '') !== val) return false;
+              continue;
+            }
             const cell = String((s as any)[key] ?? '').toLowerCase();
             if (!cell.includes(val.toLowerCase())) return false;
           }
@@ -2537,6 +2579,7 @@ export default function ProjectDataView() {
                 <th className="px-4 py-2 text-left text-xs text-gray-500 w-[200px]">状态</th>
                 <th className="px-4 py-2 text-left text-xs text-gray-500 max-w-[180px]">信号名称摘要</th>
                 <th className="px-4 py-2 text-left text-xs text-gray-500 w-[80px]">连接类型</th>
+                <th className="px-4 py-2 text-left text-xs text-gray-500 w-[90px]">导线等级</th>
                 <th className="px-4 py-2 text-left text-xs text-gray-500 max-w-[180px]">端点摘要</th>
                 <th className="px-4 py-2 text-left text-xs text-gray-500 w-[120px]">创建人</th>
                 <th className="px-4 py-2 text-left text-xs text-gray-500 w-[130px]">操作</th>
@@ -2567,8 +2610,35 @@ export default function ProjectDataView() {
                     <option value="Active">已生效</option>
                   </select>
                 </th>
-                {/* 信号名称摘要、连接类型、端点摘要、创建人 */}
-                {(['信号名称摘要', '连接类型', 'endpoint_summary', 'created_by'] as const).map(col => (
+                {/* 信号名称摘要、连接类型 */}
+                {(['信号名称摘要', '连接类型'] as const).map(col => (
+                  <th key={col} className="px-4 py-1">
+                    <div className="relative">
+                      <input type="text" placeholder="筛选..." value={signalFilters[col] || ''}
+                        onChange={e => setSignalFilters(prev => ({ ...prev, [col]: e.target.value }))}
+                        className="w-full px-1.5 py-0.5 pr-5 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-400" />
+                      {signalFilters[col] && (
+                        <button onClick={() => setSignalFilters(prev => ({ ...prev, [col]: '' }))}
+                          className="absolute right-1 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs leading-none">&times;</button>
+                      )}
+                    </div>
+                  </th>
+                ))}
+                {/* 导线等级 - 下拉菜单筛选 */}
+                <th className="px-4 py-1 w-[90px]">
+                  <select value={signalFilters['导线等级'] || ''}
+                    onChange={e => setSignalFilters(prev => ({ ...prev, '导线等级': e.target.value }))}
+                    className="w-full px-1 py-0.5 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-400 bg-white">
+                    <option value="">全部</option>
+                    <option value="1级">1级</option>
+                    <option value="2级">2级</option>
+                    <option value="3级">3级</option>
+                    <option value="4级">4级</option>
+                    <option value="5级">5级</option>
+                  </select>
+                </th>
+                {/* 端点摘要、创建人 */}
+                {(['endpoint_summary', 'created_by'] as const).map(col => (
                   <th key={col} className="px-4 py-1">
                     <div className="relative">
                       <input type="text" placeholder="筛选..." value={signalFilters[col] || ''}
@@ -2651,6 +2721,7 @@ export default function ProjectDataView() {
                       </td>
                       <td className="px-4 py-2 text-xs max-w-[180px] truncate" title={signal.信号名称摘要 || '-'}>{signal.信号名称摘要 || '-'}</td>
                       <td className="px-4 py-2 text-gray-600 w-[80px] truncate" title={signal.连接类型 || '-'}>{signal.连接类型 || '-'}</td>
+                      <td className="px-4 py-2 text-gray-600 text-xs w-[90px]">{signal.导线等级 || '-'}</td>
                       <td className="px-4 py-2 text-gray-600 text-xs max-w-[180px] truncate" title={signal.endpoint_summary || '-'}>{signal.endpoint_summary || '-'}</td>
                       <td className="px-4 py-2 text-gray-600 text-xs w-[120px] truncate" title={signal.created_by || '-'}>{signal.created_by || '-'}</td>
                       <td className="px-4 py-2 space-x-2 text-xs whitespace-nowrap w-[130px]">
@@ -2680,8 +2751,9 @@ export default function ProjectDataView() {
                       const approvalItems = items.filter((i: any) => i.item_type === 'approval');
                       return (
                         <tr key={`${signal.id}-approval`}>
-                          <td colSpan={9} className="px-0 py-0 bg-yellow-50 border-b border-yellow-200">
+                          <td colSpan={10} className="px-0 py-0 bg-yellow-50 border-b border-yellow-200">
                             <div className="pl-8 pr-4 py-3">
+                              {request.project_name && <div className="text-xs text-blue-600 font-medium mb-1">项目：{request.project_name}</div>}
                               <div className="text-xs font-semibold text-gray-600 mb-2">审批进度（{request.action_type}）</div>
                               {completionItems.length > 0 && (
                                 <div className="mb-2">
@@ -2727,7 +2799,7 @@ export default function ProjectDataView() {
 
                     {isExpanded && detail && (
                       <tr key={`${signal.id}-detail`}>
-                        <td colSpan={9} className="px-0 py-0 bg-green-50">
+                        <td colSpan={10} className="px-0 py-0 bg-green-50">
                           <div className="pl-8 pr-4 py-3 text-xs">
 
                             {/* 导入更新 diff */}
@@ -2811,8 +2883,17 @@ export default function ProjectDataView() {
                                 );
                               })()}
 
+                              {/* 导线等级（计算值） */}
+                              {(detail as any).导线等级 && (
+                                <div className="flex gap-2">
+                                  <span className="text-gray-500 w-36 flex-shrink-0">导线等级:</span>
+                                  <span className="text-gray-800 font-medium">{(detail as any).导线等级}</span>
+                                </div>
+                              )}
+
                               {/* 线缆属性 */}
                               {[
+                                { key: '线类型',        label: '线类型' },
                                 { key: '推荐导线线规', label: '推荐导线线规' },
                                 { key: '推荐导线线型', label: '推荐导线线型' },
                                 { key: '独立电源代码',  label: '独立电源代码' },
@@ -2821,10 +2902,12 @@ export default function ProjectDataView() {
                                 { key: '功能代码',      label: '功能代码' },
                                 { key: '余度代码',      label: '余度代码' },
                                 { key: '接地代码',      label: '接地代码' },
-                                { key: '极性',          label: '极性' },
-                                { key: '额定电压',      label: '额定电压' },
-                                { key: '设备正常工作电压范围', label: '设备正常工作电压范围' },
-                                { key: '额定电流',      label: '额定电流（A）' },
+                                ...((detail as any)['线类型'] !== '信号线' ? [
+                                  { key: '极性',          label: '极性' },
+                                  { key: '额定电压',      label: '额定电压' },
+                                  { key: '设备正常工作电压范围', label: '设备正常工作电压范围' },
+                                  { key: '额定电流',      label: '额定电流（A）' },
+                                ] : []),
                                 { key: '信号架次有效性', label: '信号架次有效性' },
                                 { key: '是否成品线',    label: '是否成品线' },
                                 { key: '备注',          label: '备注' },
@@ -3297,6 +3380,17 @@ export default function ProjectDataView() {
                           <option key={v} value={v}>{v}</option>
                         ))}
                       </select>
+                    ) : f.key === '设备等级' ? (
+                      <select
+                        value={(deviceForm as any)[f.key] || ''}
+                        onChange={e => setDeviceForm({ ...deviceForm, [f.key]: e.target.value })}
+                        className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
+                      >
+                        <option value="">请选择</option>
+                        {['1级', '2级', '3级', '4级', '5级'].map(v => (
+                          <option key={v} value={v}>{v}</option>
+                        ))}
+                      </select>
                     ) : (f.key === '设备壳体是否金属' || f.key === '是否为选装设备' || f.key === '壳体接地是否故障电流路径' || f.key === '是否有特殊布线需求') ? (
                       <select
                         value={(deviceForm as any)[f.key] || ''}
@@ -3361,7 +3455,6 @@ export default function ProjectDataView() {
                 { key: '设备端元器件件号类型及件号', label: '设备端元器件件号类型及件号' },
                 { key: '设备端元器件供应商名称', label: '设备端元器件供应商名称' },
                 { key: '匹配的线束端元器件件号', label: '匹配的线束端元器件件号' },
-                { key: '匹配的线束线型', label: '匹配的线束线型' },
                 { key: '尾附件件号', label: '尾附件件号' },
                 { key: '触件型号', label: '触件型号' },
                 { key: '设备端元器件匹配的元器件是否随设备交付', label: '设备端元器件匹配的元器件是否随设备交付' },
@@ -3461,7 +3554,6 @@ export default function ProjectDataView() {
                 { key: '设备端元器件件号类型及件号', label: '设备端元器件件号类型及件号' },
                 { key: '设备端元器件供应商名称', label: '设备端元器件供应商名称' },
                 { key: '匹配的线束端元器件件号', label: '匹配的线束端元器件件号' },
-                { key: '匹配的线束线型', label: '匹配的线束线型' },
                 { key: '设备端元器件匹配的元器件是否随设备交付', label: '设备端元器件匹配的元器件是否随设备交付' },
                 { key: '备注', label: '备注' },
               ].map(f => {
@@ -3584,10 +3676,13 @@ export default function ProjectDataView() {
                 {/* 其余字段 */}
                 {(() => {
                   const 成品线子字段: (keyof SignalRow)[] = ['成品线件号','成品线线规','成品线类型','成品线长度','成品线载流量','成品线线路压降','成品线标识','成品线与机上线束对接方式','成品线安装责任'];
+                  const 功率线字段: (keyof SignalRow)[] = ['极性', '额定电压', '额定电流', '设备正常工作电压范围'];
                   const isY = (signalForm as any)['是否成品线'] === 'Y';
+                  const is信号线 = (signalForm as any)['线类型'] === '信号线';
                   return SIGNAL_FIELDS.filter(f => {
                     if (f.key === 'unique_id') return false;
                     if (成品线子字段.includes(f.key) && !isY) return false;
+                    if (功率线字段.includes(f.key as keyof SignalRow) && is信号线) return false;
                     return true;
                   }).map(f => (
                     <div key={f.key}>
@@ -3603,6 +3698,26 @@ export default function ProjectDataView() {
                         <select value={(signalForm as any)[f.key] || ''} onChange={e => setSignalForm({ ...signalForm, [f.key]: e.target.value })} className="w-full border border-gray-300 rounded px-2 py-1 text-sm">
                           <option value="">请选择</option>
                           {['Y', 'N'].map(v => <option key={v} value={v}>{v}</option>)}
+                        </select>
+                      ) : f.key === '线类型' ? (
+                        <select
+                          value={(signalForm as any)[f.key] || ''}
+                          onChange={e => {
+                            const newType = e.target.value;
+                            const updates: any = { ...signalForm, 线类型: newType };
+                            if (newType === '信号线') {
+                              updates['极性'] = '';
+                              updates['额定电压'] = '';
+                              updates['额定电流'] = '';
+                              updates['设备正常工作电压范围'] = '';
+                            }
+                            setSignalForm(updates);
+                          }}
+                          className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
+                        >
+                          <option value="">请选择</option>
+                          <option value="功率线">功率线</option>
+                          <option value="信号线">信号线</option>
                         </select>
                       ) : f.key === '极性' ? (
                         <select value={(signalForm as any)[f.key] || ''} onChange={e => setSignalForm({ ...signalForm, [f.key]: e.target.value })} className="w-full border border-gray-300 rounded px-2 py-1 text-sm">

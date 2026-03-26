@@ -192,12 +192,12 @@ export function signalRoutes(db: Database) {
 
       // ── 批量查询端点摘要（一次 SQL 覆盖所有信号）──────────
       const signalIds = signals.map((s: any) => s.id);
-      const summaryMap: Record<number, { endpoint_summary: string; 信号名称摘要: string; endpoint_count: number }> = {};
+      const summaryMap: Record<number, { endpoint_summary: string; 信号名称摘要: string; endpoint_count: number; 导线等级: string | null }> = {};
       if (signalIds.length > 0) {
         const ph = signalIds.map(() => '?').join(',');
         const allEndpoints = await db.query(
           `SELECT se.signal_id, se.endpoint_index, se.信号名称, se.pin_id,
-                  p.针孔号, c.设备端元器件编号, d.设备编号
+                  p.针孔号, c.设备端元器件编号, d.设备编号, d.设备等级
            FROM signal_endpoints se
            JOIN devices d ON se.device_id = d.id
            LEFT JOIN pins p ON se.pin_id = p.id
@@ -217,7 +217,19 @@ export function signalRoutes(db: Database) {
             e.pin_id ? `${e.设备端元器件编号 || e.设备编号}-${e.针孔号}` : `${e.设备编号}(?)`
           );
           const nameParts = eps.filter((e: any) => e.信号名称).map((e: any) => e.信号名称);
-          summaryMap[id] = { endpoint_summary: addrParts.join(' - '), 信号名称摘要: nameParts.join(' - '), endpoint_count: eps.length };
+
+          // 导线等级：从端点所属设备的设备等级计算
+          let 导线等级: string | null = null;
+          const levels = eps.map((e: any) => e.设备等级).filter((v: any) => v);
+          if (levels.length > 0) {
+            const nums = levels.map((v: string) => parseInt(v));
+            if (nums.every((n: number) => !isNaN(n))) {
+              // 2个端点取最大值（最不重要），>2个端点取最小值（最重要）
+              导线等级 = String(eps.length <= 2 ? Math.max(...nums) : Math.min(...nums)) + '级';
+            }
+          }
+
+          summaryMap[id] = { endpoint_summary: addrParts.join(' - '), 信号名称摘要: nameParts.join(' - '), endpoint_count: eps.length, 导线等级 };
         }
       }
 
@@ -261,7 +273,7 @@ export function signalRoutes(db: Database) {
         `SELECT se.*,
                 p.针孔号, p.端接尺寸 as pin_端接尺寸,
                 c.id as connector_id, c.设备端元器件编号,
-                d.id as device_id, d.设备编号, d.设备中文名称, d.设备负责人
+                d.id as device_id, d.设备编号, d.设备中文名称, d.设备负责人, d.设备等级
          FROM signal_endpoints se
          JOIN devices d ON se.device_id = d.id
          LEFT JOIN pins p ON se.pin_id = p.id
@@ -271,7 +283,17 @@ export function signalRoutes(db: Database) {
         [signal.id]
       );
 
-      res.json({ signal: { ...signal, endpoints } });
+      // 导线等级：从端点所属设备的设备等级计算
+      let 导线等级: string | null = null;
+      const levels = endpoints.map((e: any) => e.设备等级).filter((v: any) => v);
+      if (levels.length > 0) {
+        const nums = levels.map((v: string) => parseInt(v));
+        if (nums.every((n: number) => !isNaN(n))) {
+          导线等级 = String(endpoints.length <= 2 ? Math.max(...nums) : Math.min(...nums)) + '级';
+        }
+      }
+
+      res.json({ signal: { ...signal, endpoints, 导线等级 } });
     } catch (error: any) {
       res.status(500).json({ error: error.message || '获取信号失败' });
     }

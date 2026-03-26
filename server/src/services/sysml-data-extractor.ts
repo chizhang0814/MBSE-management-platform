@@ -313,7 +313,7 @@ export async function loadTableDataFromRelational(db: Database, projectId: numbe
     `SELECT d.设备编号, d.设备中文名称 as 设备名称,
             c.设备端元器件编号 as 连接器号, c.设备端元器件编号, c."设备端元器件名称及类型",
             c."设备端元器件件号类型及件号", c."设备端元器件供应商名称",
-            c."匹配的线束端元器件件号", c."匹配的线束线型", c."设备端元器件匹配的元器件是否随设备交付",
+            c."匹配的线束端元器件件号", c."设备端元器件匹配的元器件是否随设备交付",
             NULL as 针孔号, NULL as 端接尺寸, c.备注
      FROM connectors c
      JOIN devices d ON c.device_id = d.id
@@ -323,7 +323,7 @@ export async function loadTableDataFromRelational(db: Database, projectId: numbe
   );
   const compCols = [
     '设备编号', '设备名称', '连接器号', '设备端元器件编号', '设备端元器件名称及类型',
-    '设备端元器件件号类型及件号', '设备端元器件供应商名称', '匹配的线束端元器件件号', '匹配的线束线型',
+    '设备端元器件件号类型及件号', '设备端元器件供应商名称', '匹配的线束端元器件件号',
     '设备端元器件匹配的元器件是否随设备交付', '针孔号', '端接尺寸', '备注',
   ];
 

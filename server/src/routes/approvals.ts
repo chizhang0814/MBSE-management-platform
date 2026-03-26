@@ -17,9 +17,10 @@ export function approvalRoutes(db: Database) {
       }
 
       const request = await db.get(
-        `SELECT ar.*, u.display_name as requester_display_name
+        `SELECT ar.*, u.display_name as requester_display_name, p.name as project_name
          FROM approval_requests ar
          LEFT JOIN users u ON ar.requester_id = u.id
+         LEFT JOIN projects p ON ar.project_id = p.id
          WHERE ar.entity_type = ? AND ar.entity_id = ? AND ar.status = 'pending'
          ORDER BY ar.created_at DESC LIMIT 1`,
         [entityType, entityId]

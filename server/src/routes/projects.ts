@@ -272,6 +272,198 @@ export function projectRoutes(db: Database) {
     }
   });
 
+  // ── 复制项目（仅管理员）──────────────────────────────────
+
+  router.post('/clone', authenticate, requireRole('admin'), async (req: AuthRequest, res) => {
+    try {
+      const { source_project_id, new_name } = req.body;
+      if (!source_project_id || !new_name || !new_name.trim()) {
+        return res.status(400).json({ error: '缺少源项目ID或新项目名称' });
+      }
+      const trimmedName = new_name.trim();
+
+      // 检查源项目
+      const source = await db.get('SELECT * FROM projects WHERE id = ?', [source_project_id]);
+      if (!source) return res.status(404).json({ error: '源项目不存在' });
+
+      // 检查名称重复
+      const dup = await db.get('SELECT id FROM projects WHERE name = ?', [trimmedName]);
+      if (dup) return res.status(400).json({ error: '项目名称已存在' });
+
+      const userId = req.user!.id;
+
+      // 在事务中完成全部复制
+      await db.run('BEGIN TRANSACTION');
+      try {
+        // ① 创建新项目
+        const projResult = await db.run(
+          'INSERT INTO projects (name, description, created_by) VALUES (?, ?, ?)',
+          [trimmedName, source.description || null, userId]
+        );
+        const newProjectId = projResult.lastID;
+
+        // ② 复制 project_configurations
+        const configs = await db.query(
+          'SELECT name, description FROM project_configurations WHERE project_id = ?',
+          [source_project_id]
+        );
+        for (const c of configs) {
+          await db.run(
+            'INSERT INTO project_configurations (project_id, name, description) VALUES (?, ?, ?)',
+            [newProjectId, c.name, c.description]
+          );
+        }
+
+        // ③ 复制 devices（记录 oldId → newId 映射）
+        const deviceMap: Record<number, number> = {};
+        const devices = await db.query('SELECT * FROM devices WHERE project_id = ?', [source_project_id]);
+        for (const d of devices) {
+          const cols = Object.keys(d).filter(k => !['id', 'project_id'].includes(k));
+          const placeholders = cols.map(() => '?').join(', ');
+          const values = cols.map(k => d[k]);
+          const r = await db.run(
+            `INSERT INTO devices (project_id, ${cols.map(c => `"${c}"`).join(', ')}) VALUES (?, ${placeholders})`,
+            [newProjectId, ...values]
+          );
+          deviceMap[d.id] = r.lastID;
+        }
+
+        // ④ 复制 connectors（记录映射）
+        const connectorMap: Record<number, number> = {};
+        const oldDeviceIds = Object.keys(deviceMap).map(Number);
+        if (oldDeviceIds.length > 0) {
+          const ph = oldDeviceIds.map(() => '?').join(',');
+          const connectors = await db.query(
+            `SELECT * FROM connectors WHERE device_id IN (${ph})`, oldDeviceIds
+          );
+          for (const c of connectors) {
+            const newDeviceId = deviceMap[c.device_id];
+            if (!newDeviceId) continue;
+            const cols = Object.keys(c).filter(k => !['id', 'device_id'].includes(k));
+            const placeholders = cols.map(() => '?').join(', ');
+            const values = cols.map(k => c[k]);
+            const r = await db.run(
+              `INSERT INTO connectors (device_id, ${cols.map(col => `"${col}"`).join(', ')}) VALUES (?, ${placeholders})`,
+              [newDeviceId, ...values]
+            );
+            connectorMap[c.id] = r.lastID;
+          }
+        }
+
+        // ⑤ 复制 pins（记录映射）
+        const pinMap: Record<number, number> = {};
+        const oldConnectorIds = Object.keys(connectorMap).map(Number);
+        if (oldConnectorIds.length > 0) {
+          const ph = oldConnectorIds.map(() => '?').join(',');
+          const pins = await db.query(
+            `SELECT * FROM pins WHERE connector_id IN (${ph})`, oldConnectorIds
+          );
+          for (const p of pins) {
+            const newConnectorId = connectorMap[p.connector_id];
+            if (!newConnectorId) continue;
+            const cols = Object.keys(p).filter(k => !['id', 'connector_id'].includes(k));
+            const placeholders = cols.map(() => '?').join(', ');
+            const values = cols.map(k => p[k]);
+            const r = await db.run(
+              `INSERT INTO pins (connector_id, ${cols.map(col => `"${col}"`).join(', ')}) VALUES (?, ${placeholders})`,
+              [newConnectorId, ...values]
+            );
+            pinMap[p.id] = r.lastID;
+          }
+        }
+
+        // ⑥ 复制 signals（记录映射）
+        const signalMap: Record<number, number> = {};
+        const signals = await db.query('SELECT * FROM signals WHERE project_id = ?', [source_project_id]);
+        for (const s of signals) {
+          const cols = Object.keys(s).filter(k => !['id', 'project_id'].includes(k));
+          const placeholders = cols.map(() => '?').join(', ');
+          const values = cols.map(k => s[k]);
+          const r = await db.run(
+            `INSERT INTO signals (project_id, ${cols.map(c => `"${c}"`).join(', ')}) VALUES (?, ${placeholders})`,
+            [newProjectId, ...values]
+          );
+          signalMap[s.id] = r.lastID;
+        }
+
+        // ⑦ 复制 signal_endpoints（重映射 signal_id, device_id, pin_id）
+        const oldSignalIds = Object.keys(signalMap).map(Number);
+        if (oldSignalIds.length > 0) {
+          const ph = oldSignalIds.map(() => '?').join(',');
+          const endpoints = await db.query(
+            `SELECT * FROM signal_endpoints WHERE signal_id IN (${ph})`, oldSignalIds
+          );
+          for (const ep of endpoints) {
+            const newSignalId = signalMap[ep.signal_id];
+            if (!newSignalId) continue;
+            const newDevId = ep.device_id ? (deviceMap[ep.device_id] || null) : null;
+            const newPinId = ep.pin_id ? (pinMap[ep.pin_id] || null) : null;
+            const cols = Object.keys(ep).filter(k => !['id', 'signal_id', 'device_id', 'pin_id'].includes(k));
+            const allCols = ['signal_id', 'device_id', 'pin_id', ...cols];
+            const placeholders = allCols.map(() => '?').join(', ');
+            const values = [newSignalId, newDevId, newPinId, ...cols.map(k => ep[k])];
+            await db.run(
+              `INSERT INTO signal_endpoints (${allCols.map(c => `"${c}"`).join(', ')}) VALUES (${placeholders})`,
+              values
+            );
+          }
+        }
+
+        // ⑧ 复制 aircraft_device_list
+        const adlRows = await db.query(
+          'SELECT * FROM aircraft_device_list WHERE project_id = ?', [source_project_id]
+        );
+        for (const row of adlRows) {
+          const cols = Object.keys(row).filter(k => !['id', 'project_id'].includes(k));
+          const placeholders = cols.map(() => '?').join(', ');
+          const values = cols.map(k => row[k]);
+          await db.run(
+            `INSERT INTO aircraft_device_list (project_id, ${cols.map(c => `"${c}"`).join(', ')}) VALUES (?, ${placeholders})`,
+            [newProjectId, ...values]
+          );
+        }
+
+        // ⑨ 复制用户权限：旧项目名 → 新项目名
+        const allUsers = await db.query('SELECT id, permissions FROM users WHERE permissions IS NOT NULL');
+        for (const u of allUsers) {
+          let perms: any[];
+          try { perms = JSON.parse(u.permissions); } catch { continue; }
+          if (!Array.isArray(perms)) continue;
+          const sourcePerms = perms.filter((p: any) => p.project_name === source.name);
+          if (sourcePerms.length === 0) continue;
+          // 为新项目添加同样的角色
+          for (const sp of sourcePerms) {
+            perms.push({ ...sp, project_name: trimmedName });
+          }
+          await db.run('UPDATE users SET permissions = ? WHERE id = ?', [JSON.stringify(perms), u.id]);
+        }
+
+        await db.run('COMMIT');
+
+        const stats = {
+          devices: devices.length,
+          connectors: Object.keys(connectorMap).length,
+          pins: Object.keys(pinMap).length,
+          signals: signals.length,
+          endpoints: oldSignalIds.length > 0 ? (await db.get(`SELECT COUNT(*) as cnt FROM signal_endpoints WHERE signal_id IN (${oldSignalIds.map(() => '?').join(',')})`, Object.values(signalMap)))?.cnt || 0 : 0,
+        };
+
+        res.json({
+          success: true,
+          message: `项目复制成功`,
+          project: { id: newProjectId, name: trimmedName },
+          stats,
+        });
+      } catch (innerErr) {
+        await db.run('ROLLBACK');
+        throw innerErr;
+      }
+    } catch (error: any) {
+      console.error('复制项目失败:', error);
+      res.status(500).json({ error: error.message || '复制项目失败' });
+    }
+  });
+
   // ── 导入数据（整本3-Sheet xlsx）──────────────────────────
 
   router.post(

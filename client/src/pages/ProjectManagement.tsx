@@ -42,6 +42,12 @@ export default function ProjectManagement() {
 
   const [formData, setFormData] = useState({ name: '', description: '' });
 
+  // 项目复制
+  const [showCloneModal, setShowCloneModal] = useState(false);
+  const [cloneSourceId, setCloneSourceId] = useState<number | ''>('');
+  const [cloneNewName, setCloneNewName] = useState('');
+  const [cloning, setCloning] = useState(false);
+
   // 构型管理
   const [showConfigModal, setShowConfigModal] = useState(false);
   const [configProjectId, setConfigProjectId] = useState<number | null>(null);
@@ -279,6 +285,29 @@ export default function ProjectManagement() {
     } catch (err: any) { alert(err.message || '删除失败'); }
   };
 
+  const handleClone = async () => {
+    if (!cloneSourceId || !cloneNewName.trim()) { alert('请选择源项目并输入新项目名称'); return; }
+    setCloning(true);
+    try {
+      const res = await fetch('/api/projects/clone', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` },
+        body: JSON.stringify({ source_project_id: cloneSourceId, new_name: cloneNewName.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '复制失败');
+      await loadProjects();
+      setShowCloneModal(false);
+      setCloneSourceId('');
+      setCloneNewName('');
+      alert(`项目复制成功！\n设备: ${data.stats?.devices || 0}, 连接器: ${data.stats?.connectors || 0}, 针孔: ${data.stats?.pins || 0}, 信号: ${data.stats?.signals || 0}`);
+    } catch (err: any) {
+      alert(err.message || '复制失败');
+    } finally {
+      setCloning(false);
+    }
+  };
+
   const handleExportSysml = async (projectId: number, projectName: string) => {
     try {
       const response = await fetch(`/api/projects/${projectId}/export-sysml`, {
@@ -351,12 +380,20 @@ export default function ProjectManagement() {
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-2xl font-bold text-gray-900">项目管理</h1>
           {isAdmin && (
-            <button
-              onClick={() => { setFormData({ name: '', description: '' }); setEditingProject(null); setShowCreateModal(true); }}
-              className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700"
-            >
-              创建项目
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={() => { setFormData({ name: '', description: '' }); setEditingProject(null); setShowCreateModal(true); }}
+                className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700"
+              >
+                创建项目
+              </button>
+              <button
+                onClick={() => { setCloneSourceId(''); setCloneNewName(''); setShowCloneModal(true); }}
+                className="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700"
+              >
+                复制项目
+              </button>
+            </div>
           )}
         </div>
 
@@ -442,6 +479,56 @@ export default function ProjectManagement() {
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {/* 复制项目对话框 */}
+        {showCloneModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg p-6 max-w-lg w-full">
+              <h2 className="text-xl font-bold mb-4">复制项目</h2>
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-1">选择源项目 *</label>
+                <select
+                  value={cloneSourceId}
+                  onChange={e => {
+                    const id = Number(e.target.value);
+                    setCloneSourceId(id || '');
+                    const src = projects.find(p => p.id === id);
+                    if (src) setCloneNewName(src.name + '(副本)');
+                  }}
+                  className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">请选择项目</option>
+                  {projects.map(p => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-1">新项目名称 *</label>
+                <input
+                  type="text"
+                  value={cloneNewName}
+                  onChange={e => setCloneNewName(e.target.value)}
+                  placeholder="输入新项目名称"
+                  className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                {cloneNewName.trim() && projects.some(p => p.name === cloneNewName.trim()) && (
+                  <p className="text-red-500 text-xs mt-1">项目名称已存在，请修改</p>
+                )}
+              </div>
+              <div className="flex justify-end gap-2">
+                <button onClick={() => setShowCloneModal(false)} className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50">取消</button>
+                <button
+                  onClick={handleClone}
+                  disabled={cloning || !cloneSourceId || !cloneNewName.trim() || projects.some(p => p.name === cloneNewName.trim())}
+                  className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+                >
+                  {cloning ? '复制中...' : '确认复制'}
+                </button>
+              </div>
+            </div>
           </div>
         )}
 

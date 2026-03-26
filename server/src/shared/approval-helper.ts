@@ -185,14 +185,18 @@ export async function submitChangeRequest(db: Database, params: SubmitChangeRequ
   };
   const label = actionLabels[actionType] || actionType;
 
+  // 查询项目名称
+  const project = await db.get('SELECT name FROM projects WHERE id = ?', [projectId]);
+  const projectName = project?.name || `项目#${projectId}`;
+
   for (const item of notifyItems) {
     const type = item.item_type === 'completion' ? 'completion_request' : 'approval_request';
     const title = item.item_type === 'completion'
-      ? `待完善：${label}`
-      : `待审批：${label}`;
+      ? `待完善：[${projectName}] ${label}`
+      : `待审批：[${projectName}] ${label}`;
     const message = item.item_type === 'completion'
-      ? `用户 ${requesterUsername} 提交了「${label}」请求，需要您补全相关字段。`
-      : `用户 ${requesterUsername} 提交了「${label}」请求，请进行审批。`;
+      ? `用户 ${requesterUsername} 在项目「${projectName}」中提交了「${label}」请求，需要您补全相关字段。`
+      : `用户 ${requesterUsername} 在项目「${projectName}」中提交了「${label}」请求，请进行审批。`;
     await db.run(
       `INSERT INTO notifications (recipient_username, type, title, message) VALUES (?, ?, ?, ?)`,
       [item.recipient_username, type, title, message]
@@ -234,10 +238,12 @@ export async function checkAndAdvancePhase(db: Database, approvalRequestId: numb
       request_device_management: '申请设备管理',
     };
     const label = actionLabels[req.action_type] || req.action_type;
+    const proj = await db.get('SELECT name FROM projects WHERE id = ?', [req.project_id]);
+    const projName = proj?.name || `项目#${req.project_id}`;
     for (const item of approvalItems) {
       await db.run(
         `INSERT INTO notifications (recipient_username, type, title, message) VALUES (?, 'approval_request', ?, ?)`,
-        [item.recipient_username, `待审批：${label}`, `完善阶段已完成，请对「${label}」进行审批。`]
+        [item.recipient_username, `待审批：[${projName}] ${label}`, `项目「${projName}」中完善阶段已完成，请对「${label}」进行审批。`]
       );
     }
     // 继续检查approval阶段
