@@ -3,7 +3,7 @@ import { Database } from '../database.js';
 import { authenticate, AuthRequest } from '../middleware/auth.js';
 import {
   isZontiRenyuan, isDeviceManager, isEwisAdmin, getProjectRoleMembers,
-  submitChangeRequest, checkAndAdvancePhase, ApprovalItemSpec,
+  submitChangeRequest, checkAndAdvancePhase, ApprovalItemSpec, SPECIAL_ERN_LIN,
 } from '../shared/approval-helper.js';
 
 export function signalRoutes(db: Database) {
@@ -153,7 +153,13 @@ export function signalRoutes(db: Database) {
         sql = `SELECT s.* FROM signals s WHERE s.project_id = ? ${draftClause}`;
         if (!canSeeAllDrafts) params.push(username);
       }
-      sql += ' ORDER BY s.unique_id, s.id';
+      const sortBy = req.query.sortBy as string;
+      const sortOrder = req.query.sortOrder === 'asc' ? 'ASC' : 'DESC';
+      if (sortBy === 'updated_at') {
+        sql += ` ORDER BY s.updated_at ${sortOrder}, s.id`;
+      } else {
+        sql += ' ORDER BY s.unique_id, s.id';
+      }
 
       // 获取总数
       const countSql = `SELECT COUNT(*) as total FROM (${sql}) t`;
@@ -271,7 +277,7 @@ export function signalRoutes(db: Database) {
 
       const endpoints = await db.query(
         `SELECT se.*,
-                p.针孔号, p.端接尺寸 as pin_端接尺寸,
+                p.针孔号, p.端接尺寸 as pin_端接尺寸, p.屏蔽类型 as pin_屏蔽类型,
                 c.id as connector_id, c.设备端元器件编号,
                 d.id as device_id, d.设备编号, d.设备中文名称, d.设备负责人, d.设备等级
          FROM signal_endpoints se
@@ -304,6 +310,11 @@ export function signalRoutes(db: Database) {
   router.post('/', authenticate, async (req: AuthRequest, res) => {
     try {
       const { project_id, endpoints, draft: isDraft, ...signalFields } = req.body;
+      delete signalFields['导线等级'];
+      // 连接类型非ARINC 429/CAN Bus时清空协议标识
+      if (signalFields['连接类型'] !== 'ARINC 429' && signalFields['连接类型'] !== 'CAN Bus') {
+        signalFields['协议标识'] = null;
+      }
       if (!project_id) return res.status(400).json({ error: '缺少 project_id' });
 
       const username = req.user!.username;
@@ -385,14 +396,33 @@ export function signalRoutes(db: Database) {
 
       const newPinIds = resolved.filter(r => r.pinId !== null).map(r => r.pinId!);
 
+      // ── 检测新信号是否包含ERN端点 → 跳过组网 ─────────
+      const newDeviceIds = [...new Set(resolved.map(r => r.deviceId))];
+      let newHasERN = false;
+      if (newDeviceIds.length > 0) {
+        const dph = newDeviceIds.map(() => '?').join(',');
+        const ernDev = await db.get(
+          `SELECT id FROM devices WHERE id IN (${dph}) AND "设备LIN号（DOORS）" = ?`,
+          [...newDeviceIds, SPECIAL_ERN_LIN]
+        );
+        newHasERN = !!ernDev;
+      }
+
       // ── 端点重叠检测（仅对有 pin_id 的完整端点）────────
-      if (newPinIds.length > 0) {
+      // 包含ERN端点的信号不参与组网
+      if (newPinIds.length > 0 && !newHasERN) {
         const ph = newPinIds.map(() => '?').join(',');
         const overlapping: Array<{ signal_id: number; overlap_count: number }> = await db.query(
           `SELECT se.signal_id, COUNT(*) as overlap_count
            FROM signal_endpoints se
            JOIN signals s ON se.signal_id = s.id
            WHERE s.project_id = ? AND se.pin_id IN (${ph})
+           -- 排除包含ERN端点的已有信号
+           AND NOT EXISTS (
+             SELECT 1 FROM signal_endpoints se2
+             JOIN devices d2 ON se2.device_id = d2.id
+             WHERE se2.signal_id = se.signal_id AND d2."设备LIN号（DOORS）" = '${SPECIAL_ERN_LIN}'
+           )
            GROUP BY se.signal_id
            ORDER BY overlap_count DESC`,
           [project_id, ...newPinIds]
@@ -566,7 +596,10 @@ export function signalRoutes(db: Database) {
 
       const { endpoints, version, submit: shouldSubmit, forceDraft, draft: _draft, ...fields } = req.body;
       delete fields.id; delete fields.project_id; delete fields.created_at; delete fields.status;
-      delete fields.pending_item_type;
+      delete fields.pending_item_type; delete fields['导线等级'];
+      if (fields['连接类型'] !== 'ARINC 429' && fields['连接类型'] !== 'CAN Bus') {
+        fields['协议标识'] = null;
+      }
 
       // Unique ID 唯一性检查（排除当前记录）
       if (fields.unique_id) {
@@ -623,6 +656,16 @@ export function signalRoutes(db: Database) {
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
               [signalId, device.id, pinId, i, ep.端接尺寸 || null, ep.信号名称 || null, ep.信号定义 || null, ep.input ?? 0, ep.output ?? 0]
             );
+            // 更新针孔的端接尺寸和屏蔽类型
+            if (pinId && (ep.端接尺寸 !== undefined || ep.屏蔽类型 !== undefined)) {
+              const pinUpdates: string[] = [];
+              const pinVals: any[] = [];
+              if (ep.端接尺寸 !== undefined) { pinUpdates.push('"端接尺寸" = ?'); pinVals.push(ep.端接尺寸 || null); }
+              if (ep.屏蔽类型 !== undefined) { pinUpdates.push('"屏蔽类型" = ?'); pinVals.push(ep.屏蔽类型 || null); }
+              if (pinUpdates.length > 0) {
+                await db.run(`UPDATE pins SET ${pinUpdates.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [...pinVals, pinId]);
+              }
+            }
           }
 
           if (forceDraft) {

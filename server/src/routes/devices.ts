@@ -3,8 +3,153 @@ import { Database } from '../database.js';
 import { authenticate, requireRole, AuthRequest } from '../middleware/auth.js';
 import {
   isZontiRenyuan, isDeviceManager, getProjectRoleMembers,
-  submitChangeRequest, ApprovalItemSpec,
+  submitChangeRequest, ApprovalItemSpec, SPECIAL_ERN_LIN, cascadeDeletePinShared,
 } from '../shared/approval-helper.js';
+import { validateConnectorCompId } from '../shared/column-schema.js';
+
+/** 检查设备是否为固有ERN（通过 devId 或已有 device row） */
+async function isERNDeviceById(db: Database, deviceId: number): Promise<boolean> {
+  const d = await db.get('SELECT "设备LIN号（DOORS）" as lin FROM devices WHERE id = ?', [deviceId]);
+  return String(d?.lin || '').trim() === SPECIAL_ERN_LIN;
+}
+
+// ── 级联删除辅助 ──────────────────────────────────────────
+
+interface DeleteImpact {
+  pins: Array<{ id: number; 针孔号: string; connector_id: number }>;
+  connectors: Array<{ id: number; 设备端元器件编号: string; device_id: number }>;
+  signalsDeleted: Array<{ id: number; unique_id: string }>; // 整条信号被删
+  signalsModified: Array<{ id: number; unique_id: string; removedEndpoints: number }>; // 仅删除端点
+}
+
+/** 计算删除某个 pin 的影响 */
+async function pinDeleteImpact(db: Database, pinId: number): Promise<DeleteImpact> {
+  const impact: DeleteImpact = { pins: [], connectors: [], signalsDeleted: [], signalsModified: [] };
+  const pin = await db.get('SELECT * FROM pins WHERE id = ?', [pinId]);
+  if (!pin) return impact;
+  impact.pins.push({ id: pin.id, 针孔号: pin['针孔号'], connector_id: pin.connector_id });
+
+  // 查找引用此 pin 的信号端点
+  const eps = await db.query(
+    `SELECT se.signal_id, s.unique_id, (SELECT COUNT(*) FROM signal_endpoints WHERE signal_id = se.signal_id) as ep_count
+     FROM signal_endpoints se JOIN signals s ON se.signal_id = s.id
+     WHERE se.pin_id = ?`,
+    [pinId]
+  );
+  const seen = new Set<number>();
+  for (const ep of eps) {
+    if (seen.has(ep.signal_id)) continue;
+    seen.add(ep.signal_id);
+    if (ep.ep_count <= 2) {
+      impact.signalsDeleted.push({ id: ep.signal_id, unique_id: ep.unique_id || '' });
+    } else {
+      impact.signalsModified.push({ id: ep.signal_id, unique_id: ep.unique_id || '', removedEndpoints: 1 });
+    }
+  }
+  return impact;
+}
+
+/** 计算删除某个 connector 的影响 */
+async function connectorDeleteImpact(db: Database, connectorId: number): Promise<DeleteImpact> {
+  const impact: DeleteImpact = { pins: [], connectors: [], signalsDeleted: [], signalsModified: [] };
+  const conn = await db.get('SELECT * FROM connectors WHERE id = ?', [connectorId]);
+  if (!conn) return impact;
+  impact.connectors.push({ id: conn.id, 设备端元器件编号: conn['设备端元器件编号'], device_id: conn.device_id });
+
+  const pins = await db.query('SELECT id FROM pins WHERE connector_id = ?', [connectorId]);
+  const delSigSet = new Set<number>();
+  const modSigMap = new Map<number, { unique_id: string; count: number }>();
+
+  for (const p of pins) {
+    const pi = await pinDeleteImpact(db, p.id);
+    impact.pins.push(...pi.pins);
+    for (const s of pi.signalsDeleted) {
+      if (!delSigSet.has(s.id)) { delSigSet.add(s.id); impact.signalsDeleted.push(s); }
+      modSigMap.delete(s.id); // 如果之前标为 modified，升级为 deleted
+    }
+    for (const s of pi.signalsModified) {
+      if (delSigSet.has(s.id)) continue;
+      const existing = modSigMap.get(s.id);
+      if (existing) { existing.count += s.removedEndpoints; }
+      else { modSigMap.set(s.id, { unique_id: s.unique_id, count: s.removedEndpoints }); }
+    }
+  }
+  impact.signalsModified = [...modSigMap.entries()].map(([id, v]) => ({ id, unique_id: v.unique_id, removedEndpoints: v.count }));
+  return impact;
+}
+
+/** 计算删除某个 device 的影响 */
+async function deviceDeleteImpact(db: Database, deviceId: number): Promise<DeleteImpact> {
+  const impact: DeleteImpact = { pins: [], connectors: [], signalsDeleted: [], signalsModified: [] };
+  const connectors = await db.query('SELECT id FROM connectors WHERE device_id = ?', [deviceId]);
+  const delSigSet = new Set<number>();
+  const modSigMap = new Map<number, { unique_id: string; count: number }>();
+
+  for (const c of connectors) {
+    const ci = await connectorDeleteImpact(db, c.id);
+    impact.connectors.push(...ci.connectors);
+    impact.pins.push(...ci.pins);
+    for (const s of ci.signalsDeleted) {
+      if (!delSigSet.has(s.id)) { delSigSet.add(s.id); impact.signalsDeleted.push(s); }
+      modSigMap.delete(s.id);
+    }
+    for (const s of ci.signalsModified) {
+      if (delSigSet.has(s.id)) continue;
+      const existing = modSigMap.get(s.id);
+      if (existing) { existing.count += s.removedEndpoints; }
+      else { modSigMap.set(s.id, { unique_id: s.unique_id, count: s.removedEndpoints }); }
+    }
+  }
+  impact.signalsModified = [...modSigMap.entries()].map(([id, v]) => ({ id, unique_id: v.unique_id, removedEndpoints: v.count }));
+  return impact;
+}
+
+// cascadeDeletePin 使用共享版本
+const cascadeDeletePin = cascadeDeletePinShared;
+
+/** 执行级联删除 connector */
+async function cascadeDeleteConnector(db: Database, connectorId: number, userId: number, parentLog: string[]): Promise<void> {
+  const conn = await db.get('SELECT * FROM connectors WHERE id = ?', [connectorId]);
+  if (!conn) return;
+
+  const pins = await db.query('SELECT id FROM pins WHERE connector_id = ?', [connectorId]);
+  const connLog: string[] = [];
+  for (const p of pins) {
+    await cascadeDeletePin(db, p.id, userId, connLog);
+  }
+
+  // 记录连接器删除日志（包含针孔和信号影响）
+  await db.run(
+    `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, old_values, reason, status)
+     VALUES ('connectors', ?, ?, 'connectors', ?, ?, ?, 'approved')`,
+    [connectorId, connectorId, userId, JSON.stringify(conn),
+     `删除连接器${connLog.length > 0 ? '；影响：' + connLog.join('；') : ''}`]
+  );
+  await db.run('DELETE FROM connectors WHERE id = ?', [connectorId]);
+  parentLog.push(`连接器 ${conn['设备端元器件编号']} 被删除（含 ${pins.length} 个针孔）`);
+}
+
+/** 执行级联删除 device */
+async function cascadeDeleteDevice(db: Database, deviceId: number, userId: number): Promise<string[]> {
+  const device = await db.get('SELECT * FROM devices WHERE id = ?', [deviceId]);
+  if (!device) return [];
+
+  const connectors = await db.query('SELECT id FROM connectors WHERE device_id = ?', [deviceId]);
+  const deviceLog: string[] = [];
+  for (const c of connectors) {
+    await cascadeDeleteConnector(db, c.id, userId, deviceLog);
+  }
+
+  // 记录设备删除日志（包含连接器、针孔、信号影响）
+  await db.run(
+    `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, old_values, reason, status)
+     VALUES ('devices', ?, ?, 'devices', ?, ?, ?, 'approved')`,
+    [deviceId, deviceId, userId, JSON.stringify(device),
+     `删除设备${deviceLog.length > 0 ? '；影响：' + deviceLog.join('；') : ''}`]
+  );
+  await db.run('DELETE FROM devices WHERE id = ?', [deviceId]);
+  return deviceLog;
+}
 
 export function deviceRoutes(db: Database) {
   const router = express.Router();
@@ -150,7 +295,13 @@ export function deviceRoutes(db: Database) {
         sql += ' AND d."设备负责人" = ?';
         params.push(username);
       }
-      sql += ' ORDER BY d.设备编号';
+      const sortBy = req.query.sortBy as string;
+      const sortOrder = req.query.sortOrder === 'asc' ? 'ASC' : 'DESC';
+      if (sortBy === 'updated_at') {
+        sql += ` ORDER BY d.updated_at ${sortOrder}, d.设备编号`;
+      } else {
+        sql += ' ORDER BY d.设备编号';
+      }
 
       const devices = await db.query(sql, params);
 
@@ -510,9 +661,13 @@ export function deviceRoutes(db: Database) {
       const device = await db.get('SELECT * FROM devices WHERE id = ?', [deviceId]);
       if (!device) return res.status(404).json({ error: '设备不存在' });
 
+      // 固有ERN设备仅admin可编辑
+      const isERN = String(device['设备LIN号（DOORS）'] || '').trim() === SPECIAL_ERN_LIN;
       const username = req.user!.username;
       const role = req.user!.role;
       const isAdmin = role === 'admin';
+      if (isERN && !isAdmin) return res.status(403).json({ error: '固有ERN设备不可编辑' });
+
       const isZonti = !isAdmin && await isZontiRenyuan(db, username, device.project_id);
 
       if (!isAdmin && !isZonti) {
@@ -614,34 +769,33 @@ export function deviceRoutes(db: Database) {
     }
   });
 
-  // DELETE /api/devices/:id
+  // GET /api/devices/:id/delete-impact — 预览删除影响
+  router.get('/:id/delete-impact', authenticate, async (req, res) => {
+    try {
+      const impact = await deviceDeleteImpact(db, parseInt(req.params.id));
+      res.json(impact);
+    } catch (error: any) { res.status(500).json({ error: error.message }); }
+  });
+
+  // DELETE /api/devices/:id — 级联删除
   router.delete('/:id', authenticate, async (req: AuthRequest, res) => {
     try {
       const deviceId = parseInt(req.params.id);
       const device = await db.get('SELECT * FROM devices WHERE id = ?', [deviceId]);
       if (!device) return res.status(404).json({ error: '设备不存在' });
 
+      const isERN = String(device['设备LIN号（DOORS）'] || '').trim() === SPECIAL_ERN_LIN;
       const username = req.user!.username;
       const role = req.user!.role;
       const isAdmin = role === 'admin';
+      if (isERN && !isAdmin) return res.status(403).json({ error: '固有ERN设备不可删除' });
+
       const isZonti = !isAdmin && await isZontiRenyuan(db, username, device.project_id);
+      if (!isAdmin && !isZonti) return res.status(403).json({ error: '无权限删除此设备' });
 
-      if (!isAdmin && !isZonti) {
-        return res.status(403).json({ error: '无权限删除此设备' });
-      }
-
-      // admin / 总体人员 → 直接删除
-      await db.run(
-        `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, old_values, reason, status)
-         VALUES ('devices', ?, ?, 'devices', ?, ?, '删除设备', 'approved')`,
-        [deviceId, deviceId, req.user!.id, JSON.stringify(device)]
-      );
-      await db.run('DELETE FROM devices WHERE id = ?', [deviceId]);
+      await cascadeDeleteDevice(db, deviceId, req.user!.id);
       return res.json({ success: true });
     } catch (error: any) {
-      if (error.message?.includes('FOREIGN KEY')) {
-        return res.status(409).json({ error: '设备仍有关联的信号端点，无法删除' });
-      }
       res.status(500).json({ error: error.message || '删除设备失败' });
     }
   });
@@ -672,15 +826,23 @@ export function deviceRoutes(db: Database) {
 
       const username = req.user!.username;
       const role = req.user!.role;
-      const devRow = await db.get('SELECT 设备负责人, project_id FROM devices WHERE id = ?', [deviceId]);
+      const devRow = await db.get('SELECT 设备负责人, project_id, "设备LIN号（DOORS）" as lin, "设备部件所属系统（4位ATA）" as ata FROM devices WHERE id = ?', [deviceId]);
       if (!devRow) return res.status(404).json({ error: '设备不存在' });
 
       const isAdmin = role === 'admin';
+      // 固有ERN设备的连接器仅admin可操作
+      if (String(devRow.lin || '').trim() === SPECIAL_ERN_LIN && !isAdmin) {
+        return res.status(403).json({ error: '固有ERN连接器不可添加' });
+      }
       const isZonti = !isAdmin && await isZontiRenyuan(db, username, devRow.project_id);
 
       if (!isAdmin && !isZonti) {
         return res.status(403).json({ error: '无权限，需要总体人员角色' });
       }
+
+      // 连接器编号格式校验
+      const compIdErr = validateConnectorCompId(fields['设备端元器件编号'], devRow.lin || '', devRow.ata || '');
+      if (compIdErr) return res.status(400).json({ error: compIdErr });
 
       // 设备级 设备端元器件编号 唯一性校验
       const compId = fields['设备端元器件编号'];
@@ -719,10 +881,13 @@ export function deviceRoutes(db: Database) {
       const connectorId = parseInt(req.params.id);
       const username = req.user!.username;
       const role = req.user!.role;
-      const devRow = await db.get('SELECT 设备负责人, project_id FROM devices WHERE id = ?', [req.params.devId]);
+      const devRow = await db.get('SELECT 设备负责人, project_id, "设备LIN号（DOORS）" as lin, "设备部件所属系统（4位ATA）" as ata FROM devices WHERE id = ?', [req.params.devId]);
       if (!devRow) return res.status(404).json({ error: '设备不存在' });
 
       const isAdmin = role === 'admin';
+      if (String(devRow.lin || '').trim() === SPECIAL_ERN_LIN && !isAdmin) {
+        return res.status(403).json({ error: '固有ERN连接器不可编辑' });
+      }
       const isZonti = !isAdmin && await isZontiRenyuan(db, username, devRow.project_id);
 
       if (!isAdmin && !isZonti) {
@@ -731,6 +896,12 @@ export function deviceRoutes(db: Database) {
 
       const { version, forceDraft, ...fields } = req.body;
       delete fields.id; delete fields.device_id; delete fields.created_at; delete fields.pin_count;
+
+      // 连接器编号格式校验
+      if (fields['设备端元器件编号']) {
+        const compIdErr = validateConnectorCompId(fields['设备端元器件编号'], devRow.lin || '', devRow.ata || '');
+        if (compIdErr) return res.status(400).json({ error: compIdErr });
+      }
 
       // 项目级 设备端元器件编号 唯一性校验（排除自身）
       const compId = fields['设备端元器件编号'];
@@ -769,33 +940,36 @@ export function deviceRoutes(db: Database) {
     }
   });
 
-  // DELETE /api/devices/:devId/connectors/:id
+  // GET /api/devices/:devId/connectors/:id/delete-impact
+  router.get('/:devId/connectors/:id/delete-impact', authenticate, async (req, res) => {
+    try {
+      const impact = await connectorDeleteImpact(db, parseInt(req.params.id));
+      res.json(impact);
+    } catch (error: any) { res.status(500).json({ error: error.message }); }
+  });
+
+  // DELETE /api/devices/:devId/connectors/:id — 级联删除
   router.delete('/:devId/connectors/:id', authenticate, async (req: AuthRequest, res) => {
     try {
       const connectorId = parseInt(req.params.id);
       const username = req.user!.username;
       const role = req.user!.role;
 
-      const devRow = await db.get('SELECT 设备负责人, project_id FROM devices WHERE id = ?', [req.params.devId]);
+      const devRow = await db.get('SELECT 设备负责人, project_id, "设备LIN号（DOORS）" as lin FROM devices WHERE id = ?', [req.params.devId]);
       if (!devRow) return res.status(404).json({ error: '设备不存在' });
 
       const isAdmin = role === 'admin';
-      const isZonti = !isAdmin && await isZontiRenyuan(db, username, devRow.project_id);
-
-      if (!isAdmin && !isZonti) {
-        return res.status(403).json({ error: '无权限删除连接器' });
+      if (String(devRow.lin || '').trim() === SPECIAL_ERN_LIN && !isAdmin) {
+        return res.status(403).json({ error: '固有ERN连接器不可删除' });
       }
+      const isZonti = !isAdmin && await isZontiRenyuan(db, username, devRow.project_id);
+      if (!isAdmin && !isZonti) return res.status(403).json({ error: '无权限删除连接器' });
 
       const connToDelete = await db.get('SELECT * FROM connectors WHERE id = ? AND device_id = ?', [connectorId, req.params.devId]);
       if (!connToDelete) return res.status(404).json({ error: '连接器不存在' });
 
-      // admin / 总体人员 → 直接删除
-      await db.run(
-        `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, old_values, reason, status)
-         VALUES ('connectors', ?, ?, 'connectors', ?, ?, '删除连接器', 'approved')`,
-        [connToDelete.id, connToDelete.id, req.user!.id, JSON.stringify(connToDelete)]
-      );
-      await db.run('DELETE FROM connectors WHERE id = ? AND device_id = ?', [connectorId, req.params.devId]);
+      const log: string[] = [];
+      await cascadeDeleteConnector(db, connectorId, req.user!.id, log);
       return res.json({ success: true });
     } catch (error: any) {
       res.status(500).json({ error: error.message || '删除连接器失败' });
@@ -827,12 +1001,16 @@ export function deviceRoutes(db: Database) {
       const username = req.user!.username;
       const role = req.user!.role;
       const devRow = await db.get(
-        'SELECT d.设备负责人, d.project_id FROM devices d JOIN connectors c ON c.device_id = d.id WHERE c.id = ?',
+        'SELECT d.设备负责人, d.project_id, d."设备LIN号（DOORS）" as lin FROM devices d JOIN connectors c ON c.device_id = d.id WHERE c.id = ?',
         [connectorId]
       );
       if (!devRow) return res.status(404).json({ error: '设备不存在' });
 
       const isAdmin = role === 'admin';
+      // 固有ERN设备的针孔仅admin可操作
+      if (String(devRow.lin || '').trim() === SPECIAL_ERN_LIN && !isAdmin) {
+        return res.status(403).json({ error: '固有ERN针孔不可添加' });
+      }
       const isDevMgr = !isAdmin && await isDeviceManager(db, username, devRow.project_id);
       const isZonti = !isAdmin && !isDevMgr && await isZontiRenyuan(db, username, devRow.project_id);
 
@@ -916,12 +1094,15 @@ export function deviceRoutes(db: Database) {
       const username = req.user!.username;
       const role = req.user!.role;
       const devRow = await db.get(
-        'SELECT d.设备负责人, d.project_id FROM devices d JOIN connectors c ON c.device_id = d.id WHERE c.id = ?',
+        'SELECT d.设备负责人, d.project_id, d."设备LIN号（DOORS）" as lin FROM devices d JOIN connectors c ON c.device_id = d.id WHERE c.id = ?',
         [req.params.connId]
       );
       if (!devRow) return res.status(404).json({ error: '设备不存在' });
 
       const isAdmin = role === 'admin';
+      if (String(devRow.lin || '').trim() === SPECIAL_ERN_LIN && !isAdmin) {
+        return res.status(403).json({ error: '固有ERN针孔不可编辑' });
+      }
       const isDevMgr = !isAdmin && await isDeviceManager(db, username, devRow.project_id);
       const isZonti = !isAdmin && !isDevMgr && await isZontiRenyuan(db, username, devRow.project_id);
 
@@ -1007,6 +1188,15 @@ export function deviceRoutes(db: Database) {
   });
 
   // DELETE /api/devices/:devId/connectors/:connId/pins/:id
+  // GET /api/devices/:devId/connectors/:connId/pins/:id/delete-impact
+  router.get('/:devId/connectors/:connId/pins/:id/delete-impact', authenticate, async (req, res) => {
+    try {
+      const impact = await pinDeleteImpact(db, parseInt(req.params.id));
+      res.json(impact);
+    } catch (error: any) { res.status(500).json({ error: error.message }); }
+  });
+
+  // DELETE /api/devices/:devId/connectors/:connId/pins/:id — 级联删除
   router.delete('/:devId/connectors/:connId/pins/:id', authenticate, async (req: AuthRequest, res) => {
     try {
       const pinId = parseInt(req.params.id);
@@ -1014,12 +1204,15 @@ export function deviceRoutes(db: Database) {
       const role = req.user!.role;
 
       const devRow = await db.get(
-        'SELECT d.设备负责人, d.project_id FROM devices d JOIN connectors c ON c.device_id = d.id WHERE c.id = ?',
+        'SELECT d.设备负责人, d.project_id, d."设备LIN号（DOORS）" as lin FROM devices d JOIN connectors c ON c.device_id = d.id WHERE c.id = ?',
         [req.params.connId]
       );
       if (!devRow) return res.status(404).json({ error: '设备不存在' });
 
       const isAdmin = role === 'admin';
+      if (String(devRow.lin || '').trim() === SPECIAL_ERN_LIN && !isAdmin) {
+        return res.status(403).json({ error: '固有ERN针孔不可删除' });
+      }
       const isDevMgr = !isAdmin && await isDeviceManager(db, username, devRow.project_id);
       const isZonti = !isAdmin && !isDevMgr && await isZontiRenyuan(db, username, devRow.project_id);
 
@@ -1027,7 +1220,6 @@ export function deviceRoutes(db: Database) {
         return res.status(403).json({ error: '无权限删除针孔' });
       }
 
-      // 设备管理员只能操作自己负责的设备
       if (isDevMgr && devRow.设备负责人 !== username) {
         return res.status(403).json({ error: '只能操作自己负责的设备的针孔' });
       }
@@ -1035,14 +1227,10 @@ export function deviceRoutes(db: Database) {
       const pinToDelete = await db.get('SELECT * FROM pins WHERE id = ? AND connector_id = ?', [pinId, req.params.connId]);
       if (!pinToDelete) return res.status(404).json({ error: '针孔不存在' });
 
-      // admin / 总体人员 → 直接删除
+      // admin / 总体人员 → 级联删除
       if (isAdmin || isZonti) {
-        await db.run(
-          `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, old_values, reason, status)
-           VALUES ('pins', ?, ?, 'pins', ?, ?, '删除针孔', 'approved')`,
-          [pinToDelete.id, pinToDelete.id, req.user!.id, JSON.stringify(pinToDelete)]
-        );
-        await db.run('DELETE FROM pins WHERE id = ? AND connector_id = ?', [pinId, req.params.connId]);
+        const log: string[] = [];
+        await cascadeDeletePin(db, pinId, req.user!.id, log);
         return res.json({ success: true });
       }
 
@@ -1070,9 +1258,6 @@ export function deviceRoutes(db: Database) {
 
       return res.status(202).json({ pending: true, message: '删除针孔请求已提交，等待审批' });
     } catch (error: any) {
-      if (error.message?.includes('FOREIGN KEY')) {
-        return res.status(409).json({ error: '该针孔已被信号端点引用，无法删除' });
-      }
       res.status(500).json({ error: error.message || '删除针孔失败' });
     }
   });

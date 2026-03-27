@@ -295,26 +295,26 @@ export function extractEicdStructure(tables: TableData[]): EicdStructure {
  */
 export async function loadTableDataFromRelational(db: Database, projectId: number): Promise<TableData[]> {
   // ① ATA设备表 → ata_device 行
-  const deviceRows = await db.query(
+  const deviceRows = (await db.query(
     'SELECT * FROM devices WHERE project_id = ? ORDER BY 设备编号',
     [projectId]
-  );
+  )).map((r: any) => ({ ...r, '最后修改时间': r.updated_at }));
   const deviceCols = [
-    '设备编号', '设备中文名称', '设备英文名称', '设备英文缩写',
+    '设备编号', '设备编号（DOORS）', '设备LIN号（DOORS）', '设备中文名称', '设备英文名称', '设备英文缩写',
     '设备供应商件号', '设备供应商名称', '设备部件所属系统（4位ATA）',
     '设备安装位置', '设备DAL', '设备壳体是否金属', '金属壳体表面是否经过特殊处理而不易导电',
     '设备内共地情况', '设备壳体接地方式', '壳体接地是否故障电流路径',
     '其他接地特殊要求', '设备端连接器或接线柱数量', '是否为选装设备', '设备装机架次',
-    '设备负责人', '设备正常工作电压范围（V）', '设备物理特性', '备注',
+    '设备负责人', '设备正常工作电压范围（V）', '设备物理特性', '备注', '最后修改时间',
   ];
 
   // ② 设备端元器件表 → device_component 行（pins JOIN connectors JOIN devices）
   const compRows = await db.query(
-    `SELECT d.设备编号, d.设备中文名称 as 设备名称,
-            c.设备端元器件编号 as 连接器号, c.设备端元器件编号, c."设备端元器件名称及类型",
+    `SELECT d.设备编号, d."设备LIN号（DOORS）", d.设备中文名称 as 设备名称,
+            c.设备端元器件编号, c."设备端元器件名称及类型",
             c."设备端元器件件号类型及件号", c."设备端元器件供应商名称",
             c."匹配的线束端元器件件号", c."设备端元器件匹配的元器件是否随设备交付",
-            NULL as 针孔号, NULL as 端接尺寸, c.备注
+            c.备注, c.updated_at as 最后修改时间
      FROM connectors c
      JOIN devices d ON c.device_id = d.id
      WHERE d.project_id = ?
@@ -322,9 +322,9 @@ export async function loadTableDataFromRelational(db: Database, projectId: numbe
     [projectId]
   );
   const compCols = [
-    '设备编号', '设备名称', '连接器号', '设备端元器件编号', '设备端元器件名称及类型',
+    '设备编号', '设备LIN号（DOORS）', '设备名称', '设备端元器件编号', '设备端元器件名称及类型',
     '设备端元器件件号类型及件号', '设备端元器件供应商名称', '匹配的线束端元器件件号',
-    '设备端元器件匹配的元器件是否随设备交付', '针孔号', '端接尺寸', '备注',
+    '设备端元器件匹配的元器件是否随设备交付', '备注', '最后修改时间',
   ];
 
   // ③ 电气接口数据表 → 每行一对端点（from-to），超过2个端点的信号展开为多行
@@ -337,7 +337,7 @@ export async function loadTableDataFromRelational(db: Database, projectId: numbe
   for (const sig of signalRows) {
     const endpoints = await db.query(
       `SELECT se.endpoint_index, se.端接尺寸 as 端接尺寸_ep, se.信号名称 as 信号名称_ep, se.信号定义 as 信号定义_ep,
-              p.针孔号, c.设备端元器件编号 as 连接器号, d.设备编号, d."设备LIN号（DOORS）" as lin号
+              p.针孔号, p.屏蔽类型, c.设备端元器件编号 as 连接器号, d.设备编号, d."设备LIN号（DOORS）" as lin号
        FROM signal_endpoints se
        JOIN pins p ON se.pin_id = p.id
        JOIN connectors c ON p.connector_id = c.id
@@ -382,8 +382,8 @@ export async function loadTableDataFromRelational(db: Database, projectId: numbe
     if (endpoints.length === 0) {
       // 无端点：导出一行空端点
       ifaceRowsRaw.push({ ...base,
-        '设备（从）': '', '连接器（从）': '', '针孔号（从）': '', '端接尺寸（从）': '', '信号名称（从）': '', '信号定义（从）': '',
-        '设备（到）': '',  '连接器（到）': '',  '针孔号（到）': '',  '端接尺寸（到）': '',  '信号名称（到）': '',  '信号定义（到）': '',
+        '设备（从）': '', 'LIN号（从）': '', '连接器（从）': '', '针孔号（从）': '', '端接尺寸（从）': '', '屏蔽类型（从）': '', '信号名称（从）': '', '信号定义（从）': '',
+        '设备（到）': '', 'LIN号（到）': '', '连接器（到）': '', '针孔号（到）': '', '端接尺寸（到）': '', '屏蔽类型（到）': '', '信号名称（到）': '', '信号定义（到）': '',
       });
     } else {
       // 以第0个端点为 from，其余每个端点各生成一行
@@ -391,8 +391,8 @@ export async function loadTableDataFromRelational(db: Database, projectId: numbe
       const toList = endpoints.length >= 2 ? endpoints.slice(1) : [endpoints[0]];
       for (const to of toList as any[]) {
         ifaceRowsRaw.push({ ...base,
-          '设备（从）': from.设备编号,   '连接器（从）': from.连接器号,  '针孔号（从）': from.针孔号,  '端接尺寸（从）': from.端接尺寸_ep,  '信号名称（从）': from.信号名称_ep,  '信号定义（从）': from.信号定义_ep,
-          '设备（到）':  to.设备编号,    '连接器（到）': to.连接器号,    '针孔号（到）': to.针孔号,    '端接尺寸（到）': to.端接尺寸_ep,    '信号名称（到）': to.信号名称_ep,    '信号定义（到）': to.信号定义_ep,
+          '设备（从）': from.设备编号, 'LIN号（从）': from.lin号, '连接器（从）': from.连接器号, '针孔号（从）': from.针孔号, '端接尺寸（从）': from.端接尺寸_ep, '屏蔽类型（从）': from.屏蔽类型, '信号名称（从）': from.信号名称_ep, '信号定义（从）': from.信号定义_ep,
+          '设备（到）': to.设备编号,   'LIN号（到）': to.lin号,   '连接器（到）': to.连接器号,   '针孔号（到）': to.针孔号,   '端接尺寸（到）': to.端接尺寸_ep,   '屏蔽类型（到）': to.屏蔽类型,   '信号名称（到）': to.信号名称_ep,   '信号定义（到）': to.信号定义_ep,
         });
       }
     }
@@ -400,8 +400,8 @@ export async function loadTableDataFromRelational(db: Database, projectId: numbe
 
   const ifaceCols = [
     'Unique ID', '连接类型',
-    '设备（从）', '连接器（从）', '针孔号（从）', '端接尺寸（从）', '信号名称（从）', '信号定义（从）',
-    '设备（到）',  '连接器（到）',  '针孔号（到）',  '端接尺寸（到）',  '信号名称（到）',  '信号定义（到）',
+    '设备（从）', 'LIN号（从）', '连接器（从）', '针孔号（从）', '端接尺寸（从）', '屏蔽类型（从）', '信号名称（从）', '信号定义（从）',
+    '设备（到）', 'LIN号（到）', '连接器（到）', '针孔号（到）', '端接尺寸（到）', '屏蔽类型（到）', '信号名称（到）', '信号定义（到）',
     '推荐导线线规', '推荐导线线型', '独立电源代码', '敷设代码',
     '电磁兼容代码', '余度代码', '功能代码', '接地代码', '极性',
     '信号ATA', '信号架次有效性', '额定电压', '额定电流', '设备正常工作电压范围',

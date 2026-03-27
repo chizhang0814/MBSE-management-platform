@@ -62,9 +62,61 @@ export async function getProjectRoleMembers(db: Database, projectId: number, rol
 
 // ── 设备校验（审批通过后重跑，同步更新 validation_errors）────────────────────
 
+export const SPECIAL_ERN_LIN = '8800G0000';
+
+/** 级联删除针孔：删除关联的信号端点/信号，记录日志 */
+export async function cascadeDeletePinShared(db: Database, pinId: number, userId: number, parentLog: string[]): Promise<void> {
+  const pin = await db.get('SELECT * FROM pins WHERE id = ?', [pinId]);
+  if (!pin) return;
+
+  const eps = await db.query(
+    `SELECT se.*, s.unique_id, s.id as signal_id,
+            (SELECT COUNT(*) FROM signal_endpoints WHERE signal_id = se.signal_id) as ep_count
+     FROM signal_endpoints se JOIN signals s ON se.signal_id = s.id
+     WHERE se.pin_id = ?`,
+    [pinId]
+  );
+
+  const processedSignals = new Set<number>();
+  for (const ep of eps) {
+    if (processedSignals.has(ep.signal_id)) continue;
+    processedSignals.add(ep.signal_id);
+
+    if (ep.ep_count <= 2) {
+      const signal = await db.get('SELECT * FROM signals WHERE id = ?', [ep.signal_id]);
+      await db.run(
+        `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, old_values, reason, status)
+         VALUES ('signals', ?, ?, 'signals', ?, ?, ?, 'approved')`,
+        [ep.signal_id, ep.signal_id, userId, JSON.stringify(signal), `删除信号（因针孔 ${pin['针孔号']} 被删除）`]
+      );
+      await db.run('DELETE FROM signal_endpoints WHERE signal_id = ?', [ep.signal_id]);
+      await db.run('DELETE FROM signals WHERE id = ?', [ep.signal_id]);
+      parentLog.push(`信号 ${ep.unique_id || ep.signal_id} 被整体删除`);
+    } else {
+      await db.run(
+        `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, old_values, reason, status)
+         VALUES ('signals', ?, ?, 'signals', ?, ?, ?, 'approved')`,
+        [ep.signal_id, ep.signal_id, userId, JSON.stringify(ep), `删除端点（因针孔 ${pin['针孔号']} 被删除）`]
+      );
+      await db.run('DELETE FROM signal_endpoints WHERE signal_id = ? AND pin_id = ?', [ep.signal_id, pinId]);
+      parentLog.push(`信号 ${ep.unique_id || ep.signal_id} 移除了针孔 ${pin['针孔号']} 的端点`);
+    }
+  }
+
+  await db.run(
+    `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, old_values, reason, status)
+     VALUES ('pins', ?, ?, 'pins', ?, ?, '删除针孔', 'approved')`,
+    [pinId, pinId, userId, JSON.stringify(pin)]
+  );
+  await db.run('DELETE FROM pins WHERE id = ?', [pinId]);
+}
+
 async function revalidateDevice(db: Database, deviceId: number, projectId: number): Promise<void> {
   const device = await db.get('SELECT * FROM devices WHERE id = ?', [deviceId]);
   if (!device) return;
+
+  // 固有ERN设备不做校验
+  if (String(device['设备LIN号（DOORS）'] || '').trim() === SPECIAL_ERN_LIN) return;
 
   const veErrors: string[] = [];
 
@@ -271,8 +323,12 @@ export async function checkAndAdvancePhase(db: Database, approvalRequestId: numb
       : null;
 
     if (entityTable && req.entity_id) {
-      if (req.action_type.startsWith('delete_')) {
-        // 删除操作：执行实际删除
+      if (req.action_type === 'delete_pin') {
+        // 针孔删除：级联处理信号端点
+        const log: string[] = [];
+        await cascadeDeletePinShared(db, req.entity_id, req.requester_id, log);
+      } else if (req.action_type.startsWith('delete_')) {
+        // 其他删除操作：直接删除
         await db.run(`DELETE FROM ${entityTable} WHERE id = ?`, [req.entity_id]);
       } else {
         // 创建/编辑操作：将实体状态改为Active

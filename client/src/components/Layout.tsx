@@ -108,8 +108,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const isZonti = myPermissions.some(p => p.project_role === '总体人员');
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <nav className="bg-white shadow-sm">
+    <div className="h-screen bg-gray-50 flex flex-col overflow-hidden">
+      <nav className="bg-white shadow-sm shrink-0">
         <div className="w-full px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16">
             <div className="flex">
@@ -276,7 +276,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         </div>
       </nav>
 
-      <main className="w-full py-6">
+      <main className="w-full flex-1 overflow-hidden">
         {children}
       </main>
 

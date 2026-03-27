@@ -1292,6 +1292,14 @@ export class Database {
       }
     } catch (e: any) { console.log('Migration: devices 设备等级:', e.message); }
 
+    try {
+      const sigColsXy = await this.query('PRAGMA table_info(signals)');
+      if (!sigColsXy.some((c: any) => c.name === '协议标识')) {
+        await this.run(`ALTER TABLE signals ADD COLUMN 协议标识 TEXT`);
+        console.log('Database migration: added 协议标识 column to signals');
+      }
+    } catch (e: any) { console.log('Migration: signals 协议标识:', e.message); }
+
     // 初始化默认用户（不再创建示例数据）
     await this.initDefaultData();
   }

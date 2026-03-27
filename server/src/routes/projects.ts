@@ -13,7 +13,44 @@ import {
   CONNECTORS_EXCEL_TO_DB,
   PINS_EXCEL_TO_DB,
   SIGNALS_EXCEL_TO_DB,
+  validateConnectorCompId,
 } from '../shared/column-schema.js';
+import { SPECIAL_ERN_LIN } from '../shared/approval-helper.js';
+
+/** 为新项目插入固有ERN设备（含连接器和针孔） */
+async function insertSpecialERN(db: Database, projectId: number) {
+  const exists = await db.get(
+    `SELECT id FROM devices WHERE project_id = ? AND "设备LIN号（DOORS）" = ?`,
+    [projectId, SPECIAL_ERN_LIN]
+  );
+  if (exists) return;
+  const devResult = await db.run(
+    `INSERT INTO devices (project_id, "设备编号", "设备中文名称", "设备英文名称", "设备英文缩写", "设备编号（DOORS）", "设备LIN号（DOORS）", status)
+     VALUES (?, '1G-8800', '28V/270V ERN', '28V/270V ERN', 'ERN', '8800G0000', ?, 'normal')`,
+    [projectId, SPECIAL_ERN_LIN]
+  );
+  const devId = devResult.lastID;
+
+  // TB1 连接器（28V ERN）+ 针孔
+  const c1 = await db.run(
+    `INSERT INTO connectors (device_id, "设备端元器件编号", "设备端元器件名称及类型", status) VALUES (?, '8800G0000-TB1', '28V ERN', 'normal')`,
+    [devId]
+  );
+  await db.run(
+    `INSERT INTO pins (connector_id, "针孔号", "端接尺寸", "屏蔽类型", status) VALUES (?, '1', '22AWG', '无屏蔽', 'normal')`,
+    [c1.lastID]
+  );
+
+  // TB2 连接器（270V ERN）+ 针孔
+  const c2 = await db.run(
+    `INSERT INTO connectors (device_id, "设备端元器件编号", "设备端元器件名称及类型", status) VALUES (?, '8800G0000-TB2', '270V ERN', 'normal')`,
+    [devId]
+  );
+  await db.run(
+    `INSERT INTO pins (connector_id, "针孔号", "端接尺寸", "屏蔽类型", status) VALUES (?, '1', '18', '无屏蔽', 'normal')`,
+    [c2.lastID]
+  );
+}
 
 export function projectRoutes(db: Database) {
   const router = express.Router();
@@ -194,6 +231,9 @@ export function projectRoutes(db: Database) {
         [name.trim(), description || null, userId]
       );
 
+      // 自动插入固有ERN设备
+      await insertSpecialERN(db, result.lastID);
+
       res.json({
         success: true,
         message: '项目创建成功',
@@ -264,7 +304,28 @@ export function projectRoutes(db: Database) {
       const existing = await db.get('SELECT * FROM projects WHERE id = ?', [projectId]);
       if (!existing) return res.status(404).json({ error: '项目不存在' });
 
-      // CASCADE 会自动删除 devices→connectors→pins→signals→signal_endpoints
+      // 手动按顺序删除关联数据（部分表未设置 ON DELETE CASCADE）
+      // signal_endpoints → signals
+      await db.run(`DELETE FROM signal_endpoints WHERE signal_id IN (SELECT id FROM signals WHERE project_id = ?)`, [projectId]);
+      await db.run(`DELETE FROM signals WHERE project_id = ?`, [projectId]);
+      // pins → connectors → devices
+      await db.run(`DELETE FROM pins WHERE connector_id IN (SELECT c.id FROM connectors c JOIN devices d ON c.device_id = d.id WHERE d.project_id = ?)`, [projectId]);
+      await db.run(`DELETE FROM connectors WHERE device_id IN (SELECT id FROM devices WHERE project_id = ?)`, [projectId]);
+      await db.run(`DELETE FROM devices WHERE project_id = ?`, [projectId]);
+      // 审批相关
+      await db.run(`DELETE FROM approval_items WHERE approval_request_id IN (SELECT id FROM approval_requests WHERE project_id = ?)`, [projectId]);
+      await db.run(`DELETE FROM approval_requests WHERE project_id = ?`, [projectId]);
+      // 其他关联表
+      await db.run(`DELETE FROM aircraft_device_list WHERE project_id = ?`, [projectId]);
+      await db.run(`DELETE FROM project_configurations WHERE project_id = ?`, [projectId]);
+      // section_connectors 链
+      await db.run(`DELETE FROM sc_pins WHERE sc_connector_id IN (SELECT sc.id FROM sc_connectors sc JOIN section_connectors s ON sc.section_connector_id = s.id WHERE s.project_id = ?)`, [projectId]);
+      await db.run(`DELETE FROM sc_connectors WHERE section_connector_id IN (SELECT id FROM section_connectors WHERE project_id = ?)`, [projectId]);
+      await db.run(`DELETE FROM section_connectors WHERE project_id = ?`, [projectId]);
+      // sysml
+      await db.run(`DELETE FROM sysml_element_map WHERE project_id = ?`, [projectId]);
+      await db.run(`DELETE FROM sysml_sync_status WHERE project_id = ?`, [projectId]);
+      // 最后删除项目本身
       await db.run('DELETE FROM projects WHERE id = ?', [projectId]);
       res.json({ success: true, message: '项目删除成功' });
     } catch (error: any) {
@@ -438,6 +499,9 @@ export function projectRoutes(db: Database) {
           await db.run('UPDATE users SET permissions = ? WHERE id = ?', [JSON.stringify(perms), u.id]);
         }
 
+        // 确保新项目包含固有ERN设备
+        await insertSpecialERN(db, newProjectId);
+
         await db.run('COMMIT');
 
         const stats = {
@@ -559,6 +623,13 @@ export function projectRoutes(db: Database) {
             const linNum = String(insertFields['设备LIN号（DOORS）'] || '').trim();
             if (!linNum) {
               s0Errors.push(`第${rowNum}行: 设备LIN号（DOORS）为空，跳过`);
+              continue;
+            }
+
+            // 固有ERN设备不需要导入
+            if (linNum === SPECIAL_ERN_LIN) {
+              s0Error++;
+              s0Errors.push(`第${rowNum}行: 固有ERN不需要导入`);
               continue;
             }
             insertFields['设备LIN号（DOORS）'] = linNum;
@@ -725,9 +796,16 @@ export function projectRoutes(db: Database) {
                 continue;
               }
 
+              // 固有ERN连接器不需要导入
+              if (colLin === SPECIAL_ERN_LIN) {
+                s1Error++;
+                s1Errors.push(`第${rowNum}行: 固有ERN连接器不需要导入`);
+                continue;
+              }
+
               // ② 查找父设备（通过LIN号匹配）
               const device: any = await db.get(
-                `SELECT id FROM devices WHERE project_id = ? AND "设备LIN号（DOORS）" = ?`,
+                `SELECT id, "设备部件所属系统（4位ATA）" as ata FROM devices WHERE project_id = ? AND "设备LIN号（DOORS）" = ?`,
                 [projectId, colLin]
               );
               if (!device) {
@@ -762,11 +840,19 @@ export function projectRoutes(db: Database) {
                 }
               }
 
-              // ④ 检查 设备端元器件编号 是否存在
+              // ④ 检查 设备端元器件编号 是否存在及格式校验
               const compId = String(connFields['设备端元器件编号'] || '').trim();
               if (!compId) {
                 s1Error++;
                 s1Errors.push(`第${rowNum}行: 设备端元器件编号为空，跳过 [${rowContext}]`);
+                continue;
+              }
+
+              // 连接器编号格式校验
+              const compIdError = validateConnectorCompId(compId, colLin, device.ata || '');
+              if (compIdError) {
+                s1Error++;
+                s1Errors.push(`第${rowNum}行: ${compIdError} [${rowContext}]`);
                 continue;
               }
 
@@ -1014,13 +1100,21 @@ export function projectRoutes(db: Database) {
                 continue;
               }
 
-              // 查找包含这些 pin_id 的已有信号
+              // 检测当前行是否包含ERN端点 → 包含则跳过组网，直接新建
+              const rowHasERN = resolvedEps.some(ep => ep.linNo === SPECIAL_ERN_LIN);
+
+              // 查找包含这些 pin_id 的已有信号（排除包含ERN端点的信号）
               const pinPh = newPinIds.map(() => '?').join(',');
-              const matchedSignals: Array<{ signal_id: number }> = await db.query(
+              const matchedSignals: Array<{ signal_id: number }> = rowHasERN ? [] : await db.query(
                 `SELECT DISTINCT se.signal_id
                  FROM signal_endpoints se
                  JOIN signals s ON se.signal_id = s.id
-                 WHERE s.project_id = ? AND se.pin_id IN (${pinPh})`,
+                 WHERE s.project_id = ? AND se.pin_id IN (${pinPh})
+                 AND NOT EXISTS (
+                   SELECT 1 FROM signal_endpoints se2
+                   JOIN devices d2 ON se2.device_id = d2.id
+                   WHERE se2.signal_id = se.signal_id AND d2."设备LIN号（DOORS）" = '${SPECIAL_ERN_LIN}'
+                 )`,
                 [projectId, ...newPinIds]
               );
 
@@ -1242,16 +1336,29 @@ export function projectRoutes(db: Database) {
       const project = await db.get('SELECT * FROM projects WHERE id = ?', [projectId]);
       if (!project) return res.status(404).json({ error: '项目不存在' });
 
+      // 解析选择的 sheets 和列
+      const sheetsParam = (req.query.sheets as string) || 'devices,connectors,signals,adl';
+      const selectedSheets = new Set(sheetsParam.split(','));
+      const colFilters: Record<string, Set<string> | null> = {};
+      for (const key of ['devices', 'connectors', 'signals']) {
+        const colsParam = req.query[`cols_${key}`] as string;
+        colFilters[key] = colsParam ? new Set(colsParam.split('||')) : null; // null = 全部列
+      }
+
       const tablesData = await loadTableDataFromRelational(db, projectId);
 
       const workbook = xlsx.utils.book_new();
+      const sheetKeys = ['devices', 'connectors', 'signals'];
       const sheetNames = ['ATA章节设备表', '设备端元器件表', '电气接口数据表'];
 
       for (let i = 0; i < tablesData.length; i++) {
+        if (!selectedSheets.has(sheetKeys[i])) continue;
         const td = tablesData[i];
-        const rows: any[][] = [td.originalColumns];
+        const filter = colFilters[sheetKeys[i]];
+        const cols = filter ? td.originalColumns.filter(c => filter.has(c)) : td.originalColumns;
+        const rows: any[][] = [cols];
         for (const row of td.rows) {
-          const dataRow = td.originalColumns.map(col => {
+          const dataRow = cols.map(col => {
             const v = row[col] ?? row[col.replace(/[^\w\u4e00-\u9fa5]/g, '_')] ?? '';
             if (typeof v === 'object' && v !== null) {
               try { return JSON.stringify(v, null, 2); } catch { return String(v); }
@@ -1265,23 +1372,25 @@ export function projectRoutes(db: Database) {
       }
 
       // ── 全机设备清单 Sheet（DOORS 格式，11列）─────────────
-      const adlCols = [
-        'Object Identifier', '系统名称', '电设备编号', '设备编号', 'LIN号',
-        'Object Text', '设备布置区域', '飞机构型', '是否有EICD', '是否是用电设备', '类型',
-      ];
-      const adlDbCols = [
-        'object_identifier', '系统名称', '电设备编号', '设备编号_DOORS', 'LIN号_DOORS',
-        'object_text', '设备布置区域', '飞机构型', '是否有EICD', '是否是用电设备', '类型',
-      ];
-      const adlRows = await db.query(
-        'SELECT * FROM aircraft_device_list WHERE project_id = ? ORDER BY id',
-        [projectId]
-      );
-      const adlSheetData: any[][] = [adlCols];
-      for (const row of adlRows) {
-        adlSheetData.push(adlDbCols.map(col => row[col] ?? ''));
+      if (selectedSheets.has('adl')) {
+        const adlCols = [
+          'Object Identifier', '系统名称', '电设备编号', '设备编号', 'LIN号',
+          'Object Text', '设备布置区域', '飞机构型', '是否有EICD', '是否是用电设备', '类型',
+        ];
+        const adlDbCols = [
+          'object_identifier', '系统名称', '电设备编号', '设备编号_DOORS', 'LIN号_DOORS',
+          'object_text', '设备布置区域', '飞机构型', '是否有EICD', '是否是用电设备', '类型',
+        ];
+        const adlRows = await db.query(
+          'SELECT * FROM aircraft_device_list WHERE project_id = ? ORDER BY id',
+          [projectId]
+        );
+        const adlSheetData: any[][] = [adlCols];
+        for (const row of adlRows) {
+          adlSheetData.push(adlDbCols.map(col => row[col] ?? ''));
+        }
+        xlsx.utils.book_append_sheet(workbook, xlsx.utils.aoa_to_sheet(adlSheetData), '全机设备清单');
       }
-      xlsx.utils.book_append_sheet(workbook, xlsx.utils.aoa_to_sheet(adlSheetData), '全机设备清单');
 
       const buffer = xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' });
       const filename = `${project.name}_${new Date().toISOString().split('T')[0]}.xlsx`;

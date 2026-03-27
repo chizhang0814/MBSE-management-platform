@@ -42,6 +42,47 @@ export default function ProjectManagement() {
 
   const [formData, setFormData] = useState({ name: '', description: '' });
 
+  // 下载配置
+  const [showDownloadModal, setShowDownloadModal] = useState(false);
+  const [downloadProjectId, setDownloadProjectId] = useState<number | null>(null);
+  const [downloadProjectName, setDownloadProjectName] = useState('');
+  const [downloading, setDownloading] = useState(false);
+
+  const DOWNLOAD_SHEETS = [
+    { key: 'devices', name: 'ATA章节设备表', cols: [
+      '设备编号', '设备编号（DOORS）', '设备LIN号（DOORS）', '设备中文名称', '设备英文名称', '设备英文缩写',
+      '设备供应商件号', '设备供应商名称', '设备部件所属系统（4位ATA）',
+      '设备安装位置', '设备DAL', '设备壳体是否金属', '金属壳体表面是否经过特殊处理而不易导电',
+      '设备内共地情况', '设备壳体接地方式', '壳体接地是否故障电流路径',
+      '其他接地特殊要求', '设备端连接器或接线柱数量', '是否为选装设备', '设备装机架次',
+      '设备负责人', '设备正常工作电压范围（V）', '设备物理特性', '备注', '最后修改时间',
+    ]},
+    { key: 'connectors', name: '设备端元器件表', cols: [
+      '设备编号', '设备LIN号（DOORS）', '设备名称', '设备端元器件编号', '设备端元器件名称及类型',
+      '设备端元器件件号类型及件号', '设备端元器件供应商名称', '匹配的线束端元器件件号',
+      '设备端元器件匹配的元器件是否随设备交付', '备注', '最后修改时间',
+    ]},
+    { key: 'signals', name: '电气接口数据表', cols: [
+      'Unique ID', '连接类型',
+      '设备（从）', 'LIN号（从）', '连接器（从）', '针孔号（从）', '端接尺寸（从）', '屏蔽类型（从）', '信号名称（从）', '信号定义（从）',
+      '设备（到）', 'LIN号（到）', '连接器（到）', '针孔号（到）', '端接尺寸（到）', '屏蔽类型（到）', '信号名称（到）', '信号定义（到）',
+      '推荐导线线规', '推荐导线线型', '独立电源代码', '敷设代码',
+      '电磁兼容代码', '余度代码', '功能代码', '接地代码', '极性',
+      '信号ATA', '信号架次有效性', '额定电压', '额定电流', '设备正常工作电压范围',
+      '是否成品线', '成品线件号', '成品线线规', '成品线类型', '成品线长度',
+      '成品线载流量', '成品线线路压降', '成品线标识', '成品线与机上线束对接方式',
+      '成品线安装责任', '备注', '最后修改时间',
+    ]},
+    { key: 'adl', name: '全机设备清单', cols: [] }, // 不允许选择列
+  ];
+
+  const [downloadSheets, setDownloadSheets] = useState<Record<string, boolean>>({ devices: true, connectors: true, signals: true, adl: true });
+  const [downloadCols, setDownloadCols] = useState<Record<string, Set<string>>>(() => {
+    const m: Record<string, Set<string>> = {};
+    DOWNLOAD_SHEETS.forEach(s => { m[s.key] = new Set(s.cols); });
+    return m;
+  });
+
   // 项目复制
   const [showCloneModal, setShowCloneModal] = useState(false);
   const [cloneSourceId, setCloneSourceId] = useState<number | ''>('');
@@ -148,26 +189,48 @@ export default function ProjectManagement() {
     }
   };
 
-  const handleDownload = async (projectId: number, projectName: string) => {
+  const openDownloadModal = (projectId: number, projectName: string) => {
+    setDownloadProjectId(projectId);
+    setDownloadProjectName(projectName);
+    setDownloadSheets({ devices: true, connectors: true, signals: true, adl: true });
+    const m: Record<string, Set<string>> = {};
+    DOWNLOAD_SHEETS.forEach(s => { m[s.key] = new Set(s.cols); });
+    setDownloadCols(m);
+    setShowDownloadModal(true);
+  };
+
+  const executeDownload = async () => {
+    if (!downloadProjectId) return;
+    setDownloading(true);
     try {
-      const response = await fetch(`/api/projects/${projectId}/download`, {
+      const params = new URLSearchParams();
+      // 选中的 sheets
+      const selectedSheets = Object.entries(downloadSheets).filter(([, v]) => v).map(([k]) => k);
+      params.set('sheets', selectedSheets.join(','));
+      // 每个 sheet 选中的列
+      for (const s of DOWNLOAD_SHEETS) {
+        if (s.cols.length > 0 && downloadSheets[s.key]) {
+          const selected = s.cols.filter(c => downloadCols[s.key]?.has(c));
+          if (selected.length < s.cols.length) {
+            params.set(`cols_${s.key}`, selected.join('||'));
+          }
+        }
+      }
+      const response = await fetch(`/api/projects/${downloadProjectId}/download?${params.toString()}`, {
         headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
       });
       if (!response.ok) throw new Error((await response.json()).error || '下载失败');
-      const contentDisposition = response.headers.get('Content-Disposition');
-      let filename = `${projectName}_${new Date().toISOString().split('T')[0]}.xlsx`;
-      if (contentDisposition) {
-        const m = contentDisposition.match(/filename="?(.+?)"?$/);
-        if (m) filename = decodeURIComponent(m[1]);
-      }
       const blob = await response.blob();
+      const filename = `${downloadProjectName}_${new Date().toISOString().split('T')[0]}.xlsx`;
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url; a.download = filename;
       document.body.appendChild(a); a.click();
       document.body.removeChild(a);
       window.URL.revokeObjectURL(url);
+      setShowDownloadModal(false);
     } catch (error: any) { alert(error.message || '下载失败'); }
+    finally { setDownloading(false); }
   };
 
   const handleImportList = async () => {
@@ -429,7 +492,7 @@ export default function ProjectManagement() {
                     <td className="px-6 py-4 whitespace-nowrap text-sm">{project.created_by_name}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm">{new Date(project.created_at).toLocaleDateString()}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm space-x-2">
-                      <button onClick={() => handleDownload(project.id, project.name)} className="text-indigo-600 hover:text-indigo-800">下载</button>
+                      <button onClick={() => openDownloadModal(project.id, project.name)} className="text-indigo-600 hover:text-indigo-800">下载</button>
                       {isAdmin && (
                         <>
                           <button onClick={() => handleExportSysml(project.id, project.name)} className="text-teal-600 hover:text-teal-800">导出SysML</button>
@@ -485,8 +548,19 @@ export default function ProjectManagement() {
         {/* 复制项目对话框 */}
         {showCloneModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg p-6 max-w-lg w-full">
-              <h2 className="text-xl font-bold mb-4">复制项目</h2>
+            <div className="bg-white rounded-lg max-w-lg w-full flex flex-col">
+              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
+                <h2 className="text-xl font-bold">复制项目</h2>
+                <div className="flex gap-2">
+                  <button onClick={() => setShowCloneModal(false)} className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50 text-sm">取消</button>
+                  <button
+                    onClick={handleClone}
+                    disabled={cloning || !cloneSourceId || !cloneNewName.trim() || projects.some(p => p.name === cloneNewName.trim())}
+                    className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-sm"
+                  >{cloning ? '复制中...' : '确认复制'}</button>
+                </div>
+              </div>
+              <div className="px-6 py-4">
               <div className="mb-4">
                 <label className="block text-sm font-medium text-gray-700 mb-1">选择源项目 *</label>
                 <select
@@ -518,15 +592,77 @@ export default function ProjectManagement() {
                   <p className="text-red-500 text-xs mt-1">项目名称已存在，请修改</p>
                 )}
               </div>
-              <div className="flex justify-end gap-2">
-                <button onClick={() => setShowCloneModal(false)} className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50">取消</button>
-                <button
-                  onClick={handleClone}
-                  disabled={cloning || !cloneSourceId || !cloneNewName.trim() || projects.some(p => p.name === cloneNewName.trim())}
-                  className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
-                >
-                  {cloning ? '复制中...' : '确认复制'}
-                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 下载配置弹窗 */}
+        {showDownloadModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg max-w-2xl w-full max-h-[85vh] flex flex-col">
+              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
+                <h2 className="text-xl font-bold">下载项目数据 - {downloadProjectName}</h2>
+                <div className="flex gap-2">
+                  <button onClick={() => setShowDownloadModal(false)} className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 text-sm">取消</button>
+                  <button
+                    onClick={executeDownload}
+                    disabled={downloading || !Object.values(downloadSheets).some(v => v)}
+                    className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-400 text-sm"
+                  >{downloading ? '下载中...' : '下载'}</button>
+                </div>
+              </div>
+              <div className="flex-1 overflow-y-auto px-6 py-4">
+                {DOWNLOAD_SHEETS.map(sheet => (
+                  <div key={sheet.key} className="mb-4 border border-gray-200 rounded-lg overflow-hidden">
+                    <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 border-b border-gray-200">
+                      <input
+                        type="checkbox"
+                        checked={downloadSheets[sheet.key] || false}
+                        onChange={e => setDownloadSheets({ ...downloadSheets, [sheet.key]: e.target.checked })}
+                        className="rounded"
+                      />
+                      <span className="font-medium text-sm">{sheet.name}</span>
+                      {sheet.cols.length > 0 && downloadSheets[sheet.key] && (
+                        <span className="text-xs text-gray-400 ml-auto">
+                          {downloadCols[sheet.key]?.size || 0} / {sheet.cols.length} 列
+                          <button
+                            onClick={() => setDownloadCols(prev => ({ ...prev, [sheet.key]: new Set(sheet.cols) }))}
+                            className="ml-2 text-blue-500 hover:text-blue-700"
+                          >全选</button>
+                          <button
+                            onClick={() => setDownloadCols(prev => ({ ...prev, [sheet.key]: new Set() }))}
+                            className="ml-1 text-blue-500 hover:text-blue-700"
+                          >清空</button>
+                        </span>
+                      )}
+                    </div>
+                    {sheet.cols.length > 0 && downloadSheets[sheet.key] && (
+                      <div className="px-3 py-2 grid grid-cols-3 gap-1">
+                        {sheet.cols.map(col => (
+                          <label key={col} className="flex items-center gap-1 text-xs cursor-pointer hover:bg-gray-50 px-1 py-0.5 rounded">
+                            <input
+                              type="checkbox"
+                              checked={downloadCols[sheet.key]?.has(col) || false}
+                              onChange={e => {
+                                setDownloadCols(prev => {
+                                  const s = new Set(prev[sheet.key]);
+                                  if (e.target.checked) s.add(col); else s.delete(col);
+                                  return { ...prev, [sheet.key]: s };
+                                });
+                              }}
+                              className="rounded"
+                            />
+                            <span className="truncate" title={col}>{col}</span>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                    {sheet.cols.length === 0 && downloadSheets[sheet.key] && (
+                      <div className="px-3 py-2 text-xs text-gray-400">导出全部列（不可选择）</div>
+                    )}
+                  </div>
+                ))}
               </div>
             </div>
           </div>
@@ -535,33 +671,37 @@ export default function ProjectManagement() {
         {/* 创建/编辑项目对话框 */}
         {showCreateModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg p-6 max-w-lg w-full">
-              <h2 className="text-xl font-bold mb-4">{editingProject ? '编辑项目' : '创建项目'}</h2>
-              <form onSubmit={handleSubmit}>
-                <div className="mb-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">项目名称 *</label>
-                  <input
-                    type="text"
-                    value={formData.name}
-                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                    className="w-full border border-gray-300 rounded-md px-3 py-2"
-                    required
-                  />
+            <div className="bg-white rounded-lg max-w-lg w-full flex flex-col">
+              <form onSubmit={handleSubmit} className="flex flex-col">
+                <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
+                  <h2 className="text-xl font-bold">{editingProject ? '编辑项目' : '创建项目'}</h2>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => { setShowCreateModal(false); setEditingProject(null); }} className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50 text-sm">取消</button>
+                    <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-sm">
+                      {editingProject ? '更新' : '创建'}
+                    </button>
+                  </div>
                 </div>
-                <div className="mb-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">描述</label>
-                  <textarea
-                    value={formData.description}
-                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                    className="w-full border border-gray-300 rounded-md px-3 py-2"
-                    rows={3}
-                  />
-                </div>
-                <div className="flex justify-end gap-2">
-                  <button type="button" onClick={() => { setShowCreateModal(false); setEditingProject(null); }} className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50">取消</button>
-                  <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">
-                    {editingProject ? '更新' : '创建'}
-                  </button>
+                <div className="px-6 py-4">
+                  <div className="mb-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">项目名称 *</label>
+                    <input
+                      type="text"
+                      value={formData.name}
+                      onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                      className="w-full border border-gray-300 rounded-md px-3 py-2"
+                      required
+                    />
+                  </div>
+                  <div className="mb-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">描述</label>
+                    <textarea
+                      value={formData.description}
+                      onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                      className="w-full border border-gray-300 rounded-md px-3 py-2"
+                      rows={3}
+                    />
+                  </div>
                 </div>
               </form>
             </div>
