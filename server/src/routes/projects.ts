@@ -1405,6 +1405,296 @@ export function projectRoutes(db: Database) {
 
   // ── 导出 SysML v2 文本 ────────────────────────────────────
 
+  // ── 批量更新设备信息（Excel）──────────────────────────────
+
+  router.post('/:id/update-devices', authenticate, requireAdminOrZonti(db), upload.single('file'), async (req: AuthRequest, res) => {
+    try {
+      const projectId = parseInt(req.params.id);
+      if (!req.file) return res.status(400).json({ error: '未上传文件' });
+
+      const workbook = xlsx.readFile(req.file.path);
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rows: any[] = xlsx.utils.sheet_to_json(sheet, { defval: '' }).map(normalizeRowKeys);
+
+      const KEY_COL = '设备LIN号（DOORS）';
+      const SYS_SKIP = new Set(['id', 'project_id', 'status', 'version', 'import_status', 'import_conflicts', 'validation_errors', 'created_at', 'updated_at', 'created_by']);
+      let updated = 0, notFound = 0, skipped = 0, unchanged = 0;
+      const errors: string[] = [];
+
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const rowNum = i + 2;
+        const linVal = String(row[KEY_COL] || row['设备LIN号(DOORS)'] || row['设备LIN号'] || '').trim();
+        if (!linVal) { errors.push(`第${rowNum}行: 缺少${KEY_COL}`); continue; }
+        if (linVal === SPECIAL_ERN_LIN) { skipped++; continue; }
+
+        const device = await db.get(`SELECT * FROM devices WHERE project_id = ? AND "设备LIN号（DOORS）" = ?`, [projectId, linVal]);
+        if (!device) { notFound++; errors.push(`第${rowNum}行: 未找到LIN号=${linVal}的设备`); continue; }
+
+        const updates: Record<string, any> = {};
+        for (const [excelCol, val] of Object.entries(row)) {
+          const dbCol = resolveColumn(excelCol, DEVICES_EXCEL_TO_DB) || excelCol;
+          if (SYS_SKIP.has(dbCol) || dbCol === KEY_COL) continue;
+          const v = String(val).trim();
+          if (v && v !== String(device[dbCol] || '').trim()) updates[dbCol] = v;
+        }
+
+        if (Object.keys(updates).length === 0) { unchanged++; continue; }
+
+        const setClauses = Object.keys(updates).map(k => `"${k}" = ?`).join(', ');
+        await db.run(
+          `UPDATE devices SET ${setClauses}, import_status = 'updated', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+          [...Object.values(updates), device.id]
+        );
+        await db.run(
+          `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, old_values, new_values, reason, status)
+           VALUES ('devices', ?, ?, 'devices', ?, ?, ?, '批量更新设备', 'approved')`,
+          [device.id, device.id, req.user!.id,
+           JSON.stringify(Object.fromEntries(Object.keys(updates).map(k => [k, device[k]]))),
+           JSON.stringify(updates)]
+        );
+        updated++;
+      }
+
+      fs.unlink(req.file.path, () => {});
+      res.json({ success: true, updated, notFound, skipped, unchanged, errors });
+    } catch (error: any) {
+      if (req.file) fs.unlink(req.file.path, () => {});
+      res.status(500).json({ error: error.message || '更新设备失败' });
+    }
+  });
+
+  // ── 批量更新连接器信息（Excel）──────────────────────────────
+
+  router.post('/:id/update-connectors', authenticate, requireAdminOrZonti(db), upload.single('file'), async (req: AuthRequest, res) => {
+    try {
+      const projectId = parseInt(req.params.id);
+      if (!req.file) return res.status(400).json({ error: '未上传文件' });
+
+      const workbook = xlsx.readFile(req.file.path);
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rows: any[] = xlsx.utils.sheet_to_json(sheet, { defval: '' }).map(normalizeRowKeys);
+
+      const SYS_SKIP = new Set(['id', 'device_id', 'status', 'version', 'import_status', 'import_conflicts', 'validation_errors', 'created_at', 'updated_at', '导入来源']);
+      let updated = 0, notFound = 0, skipped = 0, unchanged = 0;
+      const errors: string[] = [];
+
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const rowNum = i + 2;
+        const linVal = String(row['设备LIN号（DOORS）'] || row['设备LIN号(DOORS)'] || '').trim();
+        const compId = String(row['设备端元器件编号'] || '').trim();
+        if (!linVal || !compId) { errors.push(`第${rowNum}行: 缺少设备LIN号或设备端元器件编号`); continue; }
+        if (linVal === SPECIAL_ERN_LIN) { skipped++; continue; }
+
+        const device = await db.get(`SELECT id FROM devices WHERE project_id = ? AND "设备LIN号（DOORS）" = ?`, [projectId, linVal]);
+        if (!device) { notFound++; errors.push(`第${rowNum}行: 未找到LIN号=${linVal}的设备`); continue; }
+
+        const conn = await db.get(`SELECT * FROM connectors WHERE device_id = ? AND "设备端元器件编号" = ?`, [device.id, compId]);
+        if (!conn) { notFound++; errors.push(`第${rowNum}行: 未找到连接器${compId}`); continue; }
+
+        const updates: Record<string, any> = {};
+        for (const [excelCol, val] of Object.entries(row)) {
+          const dbCol = resolveColumn(excelCol, CONNECTORS_EXCEL_TO_DB) || excelCol;
+          if (SYS_SKIP.has(dbCol) || dbCol === '设备编号' || dbCol === '设备端元器件编号') continue;
+          const v = String(val).trim();
+          if (v && v !== String(conn[dbCol] || '').trim()) updates[dbCol] = v;
+        }
+
+        if (Object.keys(updates).length === 0) { unchanged++; continue; }
+
+        const setClauses = Object.keys(updates).map(k => `"${k}" = ?`).join(', ');
+        await db.run(
+          `UPDATE connectors SET ${setClauses}, import_status = 'updated', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+          [...Object.values(updates), conn.id]
+        );
+        await db.run(
+          `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, old_values, new_values, reason, status)
+           VALUES ('connectors', ?, ?, 'connectors', ?, ?, ?, '批量更新连接器', 'approved')`,
+          [conn.id, conn.id, req.user!.id,
+           JSON.stringify(Object.fromEntries(Object.keys(updates).map(k => [k, conn[k]]))),
+           JSON.stringify(updates)]
+        );
+        updated++;
+      }
+
+      fs.unlink(req.file.path, () => {});
+      res.json({ success: true, updated, notFound, skipped, unchanged, errors });
+    } catch (error: any) {
+      if (req.file) fs.unlink(req.file.path, () => {});
+      res.status(500).json({ error: error.message || '更新连接器失败' });
+    }
+  });
+
+  // ── 批量更新信号+端点信息（Excel）──────────────────────────
+
+  router.post('/:id/update-signals', authenticate, requireAdminOrZonti(db), upload.single('file'), async (req: AuthRequest, res) => {
+    try {
+      const projectId = parseInt(req.params.id);
+      if (!req.file) return res.status(400).json({ error: '未上传文件' });
+
+      const workbook = xlsx.readFile(req.file.path);
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rawRows: any[][] = xlsx.utils.sheet_to_json(sheet, { header: 1, defval: '' }) as any[][];
+
+      if (rawRows.length < 2) { fs.unlink(req.file.path, () => {}); return res.status(400).json({ error: '文件行数不足' }); }
+
+      // 列名映射
+      const normH = (h: any) => String(h).replace(/[\r\n\t]+/g, '').trim();
+      const colIdx: Record<string, number> = {};
+      const colIdx2: Record<string, number> = {};
+      for (let ci = 0; ci < rawRows[0].length; ci++) {
+        const h = normH(rawRows[0][ci]);
+        if (h) {
+          if (!(h in colIdx)) colIdx[h] = ci;
+          else if (!(h in colIdx2)) colIdx2[h] = ci;
+        }
+      }
+      const getV = (row: any[], h: string) => String(row[colIdx[h] ?? -1] ?? '').trim();
+
+      const SIG_SKIP = new Set(['id', 'project_id', 'status', 'version', 'import_status', 'import_conflicts', 'created_at', 'updated_at', 'created_by']);
+      const SIG_FIELD_MAP: Record<string, string> = {
+        '信号编号': 'unique_id', 'Unique ID': 'unique_id',
+        '连接类型': '连接类型', '推荐导线线规': '推荐导线线规', '推荐导线线型': '推荐导线线型',
+        '独立电源代码': '独立电源代码', '敷设代码': '敷设代码', '电磁兼容代码': '电磁兼容代码',
+        '余度代码': '余度代码', '功能代码': '功能代码', '接地代码': '接地代码', '极性': '极性',
+        '信号ATA': '信号ATA', '信号架次有效性': '信号架次有效性',
+        '额定电压（V）': '额定电压', '额定电压': '额定电压',
+        '设备正常工作电压范围（V）': '设备正常工作电压范围', '设备正常工作电压范围': '设备正常工作电压范围',
+        '额定电流（A）': '额定电流', '额定电流': '额定电流',
+        '是否为成品线': '是否成品线', '是否成品线': '是否成品线',
+        '成品线件号': '成品线件号', '成品线线规': '成品线线规', '成品线类型': '成品线类型',
+        '成品线长度（MM）': '成品线长度', '成品线长度': '成品线长度',
+        '成品线载流量（A）': '成品线载流量', '成品线载流量': '成品线载流量',
+        '成品线线路压降（V）': '成品线线路压降', '成品线线路压降': '成品线线路压降',
+        '成品线标识': '成品线标识', '成品线与机上线束对接方式': '成品线与机上线束对接方式',
+        '成品线安装责任': '成品线安装责任', '备注': '备注',
+        '协议标识': '协议标识', '线类型': '线类型',
+      };
+
+      let updated = 0, notFound = 0, unchanged = 0;
+      const errors: string[] = [];
+
+      for (let i = 1; i < rawRows.length; i++) {
+        const row = rawRows[i];
+        const rowNum = i + 1;
+        const firstCell = String(row[0] ?? '').trim();
+        if (firstCell.includes('填写说明') || firstCell.includes('示例')) continue;
+
+        // 读取端点对
+        const fromConn = getV(row, '连接器（从）');
+        const fromPin  = getV(row, '针孔号（从）');
+        const toConn   = getV(row, '连接器（到）');
+        const toPin    = getV(row, '针孔号（到）');
+
+        if (!fromConn || !fromPin || !toConn || !toPin) {
+          errors.push(`第${rowNum}行: 缺少连接器/针孔号（从/到），无法定位信号`);
+          continue;
+        }
+
+        // 查找 pin_id_A 和 pin_id_B
+        const pinA = await db.get(
+          `SELECT p.id FROM pins p JOIN connectors c ON p.connector_id = c.id JOIN devices d ON c.device_id = d.id
+           WHERE d.project_id = ? AND c."设备端元器件编号" = ? AND p."针孔号" = ?`,
+          [projectId, fromConn, fromPin]
+        );
+        const pinB = await db.get(
+          `SELECT p.id FROM pins p JOIN connectors c ON p.connector_id = c.id JOIN devices d ON c.device_id = d.id
+           WHERE d.project_id = ? AND c."设备端元器件编号" = ? AND p."针孔号" = ?`,
+          [projectId, toConn, toPin]
+        );
+
+        if (!pinA || !pinB) {
+          notFound++;
+          errors.push(`第${rowNum}行: 端点未找到（${!pinA ? fromConn + '-' + fromPin : ''} ${!pinB ? toConn + '-' + toPin : ''}）`);
+          continue;
+        }
+
+        // 查找同时包含两个端点的信号
+        const signal = await db.get(
+          `SELECT s.* FROM signals s
+           WHERE s.project_id = ?
+           AND EXISTS (SELECT 1 FROM signal_endpoints se WHERE se.signal_id = s.id AND se.pin_id = ?)
+           AND EXISTS (SELECT 1 FROM signal_endpoints se WHERE se.signal_id = s.id AND se.pin_id = ?)
+           LIMIT 1`,
+          [projectId, pinA.id, pinB.id]
+        );
+
+        if (!signal) {
+          notFound++;
+          errors.push(`第${rowNum}行: 未找到同时包含 ${fromConn}-${fromPin} 和 ${toConn}-${toPin} 的信号`);
+          continue;
+        }
+
+        // 更新信号属性
+        let rowChanged = false;
+        const sigUpdates: Record<string, any> = {};
+        for (const [excelH, dbCol] of Object.entries(SIG_FIELD_MAP)) {
+          if (SIG_SKIP.has(dbCol)) continue;
+          const ci = colIdx[excelH];
+          if (ci === undefined) continue;
+          const v = String(row[ci] ?? '').trim();
+          if (v && v !== String(signal[dbCol] || '').trim()) sigUpdates[dbCol] = v;
+        }
+
+        if (Object.keys(sigUpdates).length > 0) {
+          rowChanged = true;
+          const setClauses = Object.keys(sigUpdates).map(k => `"${k}" = ?`).join(', ');
+          await db.run(
+            `UPDATE signals SET ${setClauses}, import_status = 'updated', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+            [...Object.values(sigUpdates), signal.id]
+          );
+          await db.run(
+            `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, old_values, new_values, reason, status)
+             VALUES ('signals', ?, ?, 'signals', ?, ?, ?, '批量更新信号', 'approved')`,
+            [signal.id, signal.id, req.user!.id,
+             JSON.stringify(Object.fromEntries(Object.keys(sigUpdates).map(k => [k, signal[k]]))),
+             JSON.stringify(sigUpdates)]
+          );
+        }
+
+        // 更新端点属性（端接尺寸、屏蔽类型、信号名称、信号定义）
+        const epFields = [
+          { suffix: '（从）', pinId: pinA.id },
+          { suffix: '（到）', pinId: pinB.id },
+        ];
+        for (const { suffix, pinId } of epFields) {
+          const epSize = getV(row, `端接尺寸${suffix}`);
+          const epShield = getV(row, `屏蔽类型${suffix}`);
+          const epSigName = getV(row, `信号名称${suffix}`);
+          const epSigDef = getV(row, `信号定义${suffix}`);
+
+          const seUpdates: string[] = [];
+          const seVals: any[] = [];
+          if (epSize) { seUpdates.push('"端接尺寸" = ?'); seVals.push(epSize); }
+          if (epSigName) { seUpdates.push('"信号名称" = ?'); seVals.push(epSigName); }
+          if (epSigDef) { seUpdates.push('"信号定义" = ?'); seVals.push(epSigDef); }
+          if (seUpdates.length > 0) {
+            rowChanged = true;
+            await db.run(`UPDATE signal_endpoints SET ${seUpdates.join(', ')} WHERE signal_id = ? AND pin_id = ?`, [...seVals, signal.id, pinId]);
+          }
+
+          const pinUpdates: string[] = [];
+          const pinVals: any[] = [];
+          if (epSize) { pinUpdates.push('"端接尺寸" = ?'); pinVals.push(epSize); }
+          if (epShield) { pinUpdates.push('"屏蔽类型" = ?'); pinVals.push(epShield); }
+          if (pinUpdates.length > 0) {
+            rowChanged = true;
+            await db.run(`UPDATE pins SET ${pinUpdates.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [...pinVals, pinId]);
+          }
+        }
+
+        if (rowChanged) updated++; else unchanged++;
+      }
+
+      fs.unlink(req.file.path, () => {});
+      res.json({ success: true, updated, notFound, unchanged, errors });
+    } catch (error: any) {
+      if (req.file) fs.unlink(req.file.path, () => {});
+      res.status(500).json({ error: error.message || '更新信号失败' });
+    }
+  });
+
   router.get('/:id/export-sysml', authenticate, async (req: AuthRequest, res) => {
     try {
       const projectId = parseInt(req.params.id);

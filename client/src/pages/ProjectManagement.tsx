@@ -42,6 +42,14 @@ export default function ProjectManagement() {
 
   const [formData, setFormData] = useState({ name: '', description: '' });
 
+  // 批量更新
+  const [showUpdateModal, setShowUpdateModal] = useState(false);
+  const [updateProjectId, setUpdateProjectId] = useState<number | null>(null);
+  const [updateType, setUpdateType] = useState<'devices' | 'connectors' | 'signals'>('devices');
+  const [updateFile, setUpdateFile] = useState<File | null>(null);
+  const [updating, setUpdating] = useState(false);
+  const [updateResult, setUpdateResult] = useState<any>(null);
+
   // 下载配置
   const [showDownloadModal, setShowDownloadModal] = useState(false);
   const [downloadProjectId, setDownloadProjectId] = useState<number | null>(null);
@@ -186,6 +194,29 @@ export default function ProjectManagement() {
       alert('项目删除成功');
     } catch (error: any) {
       alert(error.message || '删除失败');
+    }
+  };
+
+  const handleUpdate = async () => {
+    if (!updateProjectId || !updateFile) return;
+    setUpdating(true);
+    setUpdateResult(null);
+    try {
+      const formData = new FormData();
+      formData.append('file', updateFile);
+      const endpoint = updateType === 'devices' ? 'update-devices' : updateType === 'connectors' ? 'update-connectors' : 'update-signals';
+      const res = await fetch(`/api/projects/${updateProjectId}/${endpoint}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+        body: formData,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '更新失败');
+      setUpdateResult(data);
+    } catch (err: any) {
+      setUpdateResult({ error: err.message });
+    } finally {
+      setUpdating(false);
     }
   };
 
@@ -524,6 +555,12 @@ export default function ProjectManagement() {
                             onClick={() => { setImportListProjectId(project.id); setImportListResult(null); setImportListFile(null); setShowImportListModal(true); }}
                             className="text-purple-600 hover:text-purple-800"
                           >导入全机设备清单</button>
+                          <button onClick={() => { setUpdateProjectId(project.id); setUpdateType('devices'); setUpdateFile(null); setUpdateResult(null); setShowUpdateModal(true); }}
+                            className="text-orange-600 hover:text-orange-800">更新设备信息</button>
+                          <button onClick={() => { setUpdateProjectId(project.id); setUpdateType('connectors'); setUpdateFile(null); setUpdateResult(null); setShowUpdateModal(true); }}
+                            className="text-orange-600 hover:text-orange-800">更新连接器信息</button>
+                          <button onClick={() => { setUpdateProjectId(project.id); setUpdateType('signals'); setUpdateFile(null); setUpdateResult(null); setShowUpdateModal(true); }}
+                            className="text-orange-600 hover:text-orange-800">更新信号信息</button>
                         </>
                       )}
                       <button
@@ -592,6 +629,62 @@ export default function ProjectManagement() {
                   <p className="text-red-500 text-xs mt-1">项目名称已存在，请修改</p>
                 )}
               </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 批量更新弹窗 */}
+        {showUpdateModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg max-w-lg w-full max-h-[80vh] flex flex-col">
+              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
+                <h2 className="text-xl font-bold">
+                  {updateType === 'devices' ? '更新设备信息' : updateType === 'connectors' ? '更新连接器信息' : '更新信号信息'}
+                </h2>
+                <div className="flex gap-2">
+                  <button onClick={() => setShowUpdateModal(false)} className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 text-sm">关闭</button>
+                  {!updateResult && (
+                    <button onClick={handleUpdate} disabled={updating || !updateFile}
+                      className="px-4 py-2 bg-orange-600 text-white rounded hover:bg-orange-700 disabled:bg-gray-400 text-sm">
+                      {updating ? '更新中...' : '开始更新'}
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div className="flex-1 overflow-y-auto px-6 py-4">
+                {!updateResult ? (
+                  <>
+                    <div className="mb-4 text-sm text-gray-600">
+                      {updateType === 'devices' && <p>上传 Excel 文件，通过 <b>设备LIN号（DOORS）</b> 匹配设备并更新对应列。Excel 中有值的列才会被更新，空列保持原值。</p>}
+                      {updateType === 'connectors' && <p>上传 Excel 文件，通过 <b>设备LIN号（DOORS）</b> + <b>设备端元器件编号</b> 匹配连接器并更新对应列。</p>}
+                      {updateType === 'signals' && <p>上传 Excel 文件，通过 <b>连接器（从）+ 针孔号（从）</b> 和 <b>连接器（到）+ 针孔号（到）</b> 定位信号并更新属性。</p>}
+                    </div>
+                    <input type="file" accept=".xlsx,.xls"
+                      onChange={e => setUpdateFile(e.target.files?.[0] || null)}
+                      className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                    />
+                  </>
+                ) : updateResult.error ? (
+                  <div className="text-red-600">{updateResult.error}</div>
+                ) : (
+                  <div>
+                    <div className="mb-3 space-y-1">
+                      <p className="text-green-700 font-medium">更新成功 {updateResult.updated} 条</p>
+                      {updateResult.unchanged > 0 && <p className="text-gray-500">数据无变化 {updateResult.unchanged} 条</p>}
+                      {updateResult.notFound > 0 && <p className="text-yellow-700">未匹配（跳过）{updateResult.notFound} 条</p>}
+                      {updateResult.skipped > 0 && <p className="text-gray-500">ERN跳过 {updateResult.skipped} 条</p>}
+                    </div>
+                    {updateResult.errors?.length > 0 && (
+                      <div className="border border-gray-200 rounded p-2 max-h-60 overflow-y-auto">
+                        <p className="text-sm font-medium text-gray-600 mb-1">详细信息：</p>
+                        {updateResult.errors.map((e: string, i: number) => (
+                          <p key={i} className="text-xs text-gray-500">{e}</p>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           </div>
