@@ -522,51 +522,53 @@ export default function ProjectManagement() {
                     <td className="px-6 py-4 whitespace-nowrap">{project.device_count ?? '-'}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm">{project.created_by_name}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm">{new Date(project.created_at).toLocaleDateString()}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm space-x-2">
+                    <td className="px-6 py-4 text-sm space-x-2">
                       <button onClick={() => openDownloadModal(project.id, project.name)} className="text-indigo-600 hover:text-indigo-800">下载</button>
                       {isAdmin && (
-                        <>
+                        <span className="inline-flex flex-col">
                           <button onClick={() => handleExportSysml(project.id, project.name)} className="text-teal-600 hover:text-teal-800">导出SysML</button>
                           <button
                             onClick={() => handleSyncSysml(project.id)}
                             disabled={!sysmlApiAvailable || syncingProjects.has(project.id)}
-                            className={`${sysmlApiAvailable && !syncingProjects.has(project.id) ? 'text-orange-600 hover:text-orange-800' : 'text-gray-400 cursor-not-allowed'}`}
+                            className={`${sysmlApiAvailable && !syncingProjects.has(project.id) ? 'text-teal-600 hover:text-teal-800' : 'text-gray-400 cursor-not-allowed'}`}
                             title={!sysmlApiAvailable ? 'SysML v2 API 不可用' : '同步到SysML v2仓库'}
                           >
                             {syncingProjects.has(project.id) ? '同步中...' : '同步SysML'}
                           </button>
-                        </>
+                        </span>
                       )}
                       {(isAdmin || isZonti) && (
                         <>
-                          <button
-                            onClick={() => { setImportPhase('devices'); setShowImportModal(project.id); setImportFiles([]); setImportResults([]); }}
-                            className="text-blue-600 hover:text-blue-800"
-                          >导入电设备清单</button>
-                          <button
-                            onClick={() => { setImportPhase('connectors'); setShowImportModal(project.id); setImportFiles([]); setImportResults([]); }}
-                            className="text-blue-600 hover:text-blue-800"
-                          >导入设备端元器件清单</button>
-                          <button
-                            onClick={() => { setImportPhase('signals'); setShowImportModal(project.id); setImportFiles([]); setImportResults([]); }}
-                            className="text-blue-600 hover:text-blue-800"
-                          >导入电气接口清单</button>
-                          <button
-                            onClick={() => { setImportListProjectId(project.id); setImportListResult(null); setImportListFile(null); setShowImportListModal(true); }}
-                            className="text-purple-600 hover:text-purple-800"
-                          >导入全机设备清单</button>
-                          <button onClick={() => { setUpdateProjectId(project.id); setUpdateType('devices'); setUpdateFile(null); setUpdateResult(null); setShowUpdateModal(true); }}
-                            className="text-orange-600 hover:text-orange-800">更新设备信息</button>
-                          <button onClick={() => { setUpdateProjectId(project.id); setUpdateType('connectors'); setUpdateFile(null); setUpdateResult(null); setShowUpdateModal(true); }}
-                            className="text-orange-600 hover:text-orange-800">更新连接器信息</button>
-                          <button onClick={() => { setUpdateProjectId(project.id); setUpdateType('signals'); setUpdateFile(null); setUpdateResult(null); setShowUpdateModal(true); }}
-                            className="text-orange-600 hover:text-orange-800">更新信号信息</button>
+                          <span className="inline-flex flex-col">
+                            <button onClick={() => { setImportPhase('devices'); setShowImportModal(project.id); setImportFiles([]); setImportResults([]); }}
+                              className="text-blue-600 hover:text-blue-800">导入电设备清单</button>
+                            <button onClick={() => { setUpdateProjectId(project.id); setUpdateType('devices'); setUpdateFile(null); setUpdateResult(null); setShowUpdateModal(true); }}
+                              className="text-orange-600 hover:text-orange-800">更新电设备清单</button>
+                          </span>
+                          <span className="inline-flex flex-col">
+                            <button onClick={() => { setImportPhase('connectors'); setShowImportModal(project.id); setImportFiles([]); setImportResults([]); }}
+                              className="text-blue-600 hover:text-blue-800">导入设备端元器件清单</button>
+                            <button onClick={() => { setUpdateProjectId(project.id); setUpdateType('connectors'); setUpdateFile(null); setUpdateResult(null); setShowUpdateModal(true); }}
+                              className="text-orange-600 hover:text-orange-800">更新设备端元器件清单</button>
+                          </span>
+                          <span className="inline-flex flex-col">
+                            <button onClick={() => { setImportPhase('signals'); setShowImportModal(project.id); setImportFiles([]); setImportResults([]); }}
+                              className="text-blue-600 hover:text-blue-800">导入电气接口清单</button>
+                            <button onClick={() => { setUpdateProjectId(project.id); setUpdateType('signals'); setUpdateFile(null); setUpdateResult(null); setShowUpdateModal(true); }}
+                              className="text-orange-600 hover:text-orange-800">更新电气接口清单</button>
+                          </span>
+                          <span className="inline-flex flex-col">
+                            <button
+                              onClick={() => { setImportListProjectId(project.id); setImportListResult(null); setImportListFile(null); setShowImportListModal(true); }}
+                              className="text-purple-600 hover:text-purple-800"
+                            >导入全机设备清单</button>
+                            <button
+                              onClick={() => { setListSearch(''); openViewList(project.id); }}
+                              className="text-cyan-600 hover:text-cyan-800"
+                            >查看全机设备清单</button>
+                          </span>
                         </>
                       )}
-                      <button
-                        onClick={() => { setListSearch(''); openViewList(project.id); }}
-                        className="text-cyan-600 hover:text-cyan-800"
-                      >查看全机设备清单</button>
                       <button onClick={() => openConfigModal(project.id)} className="text-violet-600 hover:text-violet-800">添加构型</button>
                       {(isAdmin || isZonti) && (
                         <button onClick={() => handleEdit(project)} className="text-green-600 hover:text-green-800">编辑</button>
@@ -640,7 +642,7 @@ export default function ProjectManagement() {
             <div className="bg-white rounded-lg max-w-lg w-full max-h-[80vh] flex flex-col">
               <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
                 <h2 className="text-xl font-bold">
-                  {updateType === 'devices' ? '更新设备信息' : updateType === 'connectors' ? '更新连接器信息' : '更新信号信息'}
+                  {updateType === 'devices' ? '更新电设备清单' : updateType === 'connectors' ? '更新设备端元器件清单' : '更新电气接口清单'}
                 </h2>
                 <div className="flex gap-2">
                   <button onClick={() => setShowUpdateModal(false)} className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 text-sm">关闭</button>
