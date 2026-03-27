@@ -291,6 +291,13 @@ export default function ProjectDataView() {
   const [editingConnector, setEditingConnector] = useState<ConnectorRow | null>(null);
   const [connectorForm, setConnectorForm] = useState<Partial<ConnectorRow>>({});
 
+  // ── 连接器合并弹窗 ──
+  const [showMergeConnModal, setShowMergeConnModal] = useState(false);
+  const [mergeConnDeviceId, setMergeConnDeviceId] = useState<number | null>(null);
+  const [mergeConnTarget, setMergeConnTarget] = useState<number | ''>('');
+  const [mergeConnSources, setMergeConnSources] = useState<Set<number>>(new Set());
+  const [merging, setMerging] = useState(false);
+
   // ── 针孔添加/编辑弹窗 ──
   const [showPinModal, setShowPinModal] = useState(false);
   const [pinTargetConnectorId, setPinTargetConnectorId] = useState<number | null>(null);
@@ -408,13 +415,9 @@ export default function ProjectDataView() {
           if (devRes.ok) { const d = await devRes.json(); setLockMap(d.locks || {}); }
           if (connRes.ok) { const d = await connRes.json(); setConnectorLockMap(d.locks || {}); }
         } else {
-          const myQ = filterMode === 'my' ? '&myDevices=true' : filterMode === 'related' ? '&relatedDevices=true' : '';
-          const [lockRes, sigRes] = await Promise.all([
-            fetch(`/api/data/locks?table_name=signals`, { headers: API_HEADERS() }),
-            fetch(`/api/signals?projectId=${selectedProjectId}${myQ}&sortBy=updated_at&sortOrder=${signalSortOrder}`, { headers: API_HEADERS() }),
-          ]);
+          // 锁轮询只刷新锁状态，不重新加载信号数据（避免与分页加载竞争）
+          const lockRes = await fetch(`/api/data/locks?table_name=signals`, { headers: API_HEADERS() });
           if (lockRes.ok) { const d = await lockRes.json(); setSignalLockMap(d.locks || {}); }
-          if (sigRes.ok) { const d = await sigRes.json(); setSignals(d.signals || []); }
         }
       } catch { /* 静默 */ }
     };
@@ -869,6 +872,31 @@ export default function ProjectDataView() {
       ));
       await loadConnectors(deviceId, true);
     } catch (e: any) { alert(e.message || '删除失败'); }
+  };
+
+  const openMergeConnModal = (deviceId: number) => {
+    setMergeConnDeviceId(deviceId);
+    setMergeConnTarget('');
+    setMergeConnSources(new Set());
+    setShowMergeConnModal(true);
+  };
+
+  const executeMergeConnectors = async () => {
+    if (!mergeConnDeviceId || !mergeConnTarget || mergeConnSources.size === 0) return;
+    setMerging(true);
+    try {
+      const res = await fetch(`/api/devices/${mergeConnDeviceId}/connectors/merge`, {
+        method: 'POST',
+        headers: API_JSON_HEADERS(),
+        body: JSON.stringify({ targetConnectorId: mergeConnTarget, sourceConnectorIds: [...mergeConnSources] }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '合并失败');
+      alert(`合并成功！迁移了 ${data.movedPins} 个针孔`);
+      setShowMergeConnModal(false);
+      await loadConnectors(mergeConnDeviceId, true);
+    } catch (e: any) { alert(e.message || '合并失败'); }
+    finally { setMerging(false); }
   };
 
   // ── 断面连接器CRUD ────────────────────────────────────────
@@ -1986,7 +2014,12 @@ export default function ProjectDataView() {
                             <div className="flex justify-between items-center mb-1">
                               <span className="text-xs font-semibold text-blue-700">连接器列表</span>
                               {canEditDevice(device) && device.status !== 'Pending' && (device as any)['设备LIN号（DOORS）'] !== SPECIAL_ERN_LIN && (
-                                <button onClick={() => openAddConnector(device.id)} className="text-xs text-blue-600 hover:text-blue-800">+ 添加连接器</button>
+                                <div className="flex gap-2">
+                                  <button onClick={() => openAddConnector(device.id)} className="text-xs text-blue-600 hover:text-blue-800">+ 添加连接器</button>
+                                  {(connectors[device.id]?.length ?? 0) >= 2 && (
+                                    <button onClick={() => openMergeConnModal(device.id)} className="text-xs text-purple-600 hover:text-purple-800">合并连接器</button>
+                                  )}
+                                </div>
                               )}
                             </div>
                             {!connectors[device.id] ? (
@@ -3859,6 +3892,105 @@ export default function ProjectDataView() {
             </div>
           </div>
         )}
+
+        {/* ── 合并连接器弹窗 ── */}
+        {showMergeConnModal && mergeConnDeviceId && (() => {
+          const deviceConns = connectors[mergeConnDeviceId] || [];
+          const targetConn = deviceConns.find(c => c.id === mergeConnTarget);
+          const sourceConns = deviceConns.filter(c => mergeConnSources.has(c.id));
+          return (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg max-w-xl w-full max-h-[85vh] flex flex-col">
+              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
+                <h2 className="text-xl font-bold">合并连接器</h2>
+                <div className="flex gap-2">
+                  <button onClick={() => setShowMergeConnModal(false)} className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 text-sm">取消</button>
+                  <button
+                    onClick={executeMergeConnectors}
+                    disabled={merging || !mergeConnTarget || mergeConnSources.size === 0}
+                    className="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 disabled:bg-gray-400 text-sm"
+                  >{merging ? '合并中...' : '确认合并'}</button>
+                </div>
+              </div>
+              <div className="flex-1 overflow-y-auto px-6 py-4">
+                {/* 选择目标连接器 */}
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">目标连接器（合并到）</label>
+                  <select
+                    value={mergeConnTarget}
+                    onChange={e => {
+                      const id = Number(e.target.value);
+                      setMergeConnTarget(id || '');
+                      setMergeConnSources(prev => { const n = new Set(prev); n.delete(id); return n; });
+                    }}
+                    className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                  >
+                    <option value="">请选择目标连接器</option>
+                    {deviceConns.map(c => (
+                      <option key={c.id} value={c.id}>{c.设备端元器件编号}（{c.pin_count ?? 0} 个针孔）</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* 选择源连接器 */}
+                {mergeConnTarget && (
+                  <div className="mb-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">要合并的连接器（多选）</label>
+                    <div className="border border-gray-200 rounded max-h-48 overflow-y-auto">
+                      {deviceConns.filter(c => c.id !== mergeConnTarget).map(c => (
+                        <label key={c.id} className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 cursor-pointer text-sm">
+                          <input
+                            type="checkbox"
+                            checked={mergeConnSources.has(c.id)}
+                            onChange={e => {
+                              setMergeConnSources(prev => {
+                                const n = new Set(prev);
+                                if (e.target.checked) n.add(c.id); else n.delete(c.id);
+                                return n;
+                              });
+                            }}
+                            className="rounded"
+                          />
+                          <span>{c.设备端元器件编号}</span>
+                          <span className="text-gray-400 text-xs">（{c.pin_count ?? 0} 个针孔）</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* 预览 */}
+                {mergeConnTarget && mergeConnSources.size > 0 && (
+                  <div className="bg-gray-50 border border-gray-200 rounded p-3 text-xs">
+                    <p className="font-medium text-gray-700 mb-2">合并预览</p>
+                    <p className="text-gray-600 mb-1">
+                      目标 <span className="font-mono font-medium">{targetConn?.设备端元器件编号}</span> 合并后将包含：
+                    </p>
+                    <ul className="ml-4 text-gray-600 space-y-0.5">
+                      <li>原有针孔：{targetConn?.pin_count ?? 0} 个（编号不变）</li>
+                      {sourceConns.map(sc => (
+                        <li key={sc.id}>
+                          来自 <span className="font-mono">{sc.设备端元器件编号}</span>：{sc.pin_count ?? 0} 个针孔
+                          {(() => {
+                            const dev = devices.find(d => d.id === mergeConnDeviceId);
+                            const lin = (dev as any)?.['设备LIN号（DOORS）'] || '';
+                            const short = sc.设备端元器件编号.startsWith(lin + '-') ? sc.设备端元器件编号.slice(lin.length + 1) : sc.设备端元器件编号;
+                            return <>（针孔号变为 <span className="font-mono">{short}-原针孔号</span>）</>;
+                          })()}
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="mt-2 text-red-600">
+                      将删除 {mergeConnSources.size} 个连接器：{sourceConns.map(c => c.设备端元器件编号).join('、')}
+                    </p>
+                    <p className="text-gray-500 mt-1">信号端点不受影响（pin_id 不变）</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+          );
+        })()}
 
         {/* ── 信号弹窗 ── */}
         {showSignalModal && (
