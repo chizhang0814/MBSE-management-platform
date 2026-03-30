@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useTheme, type ThemeMode } from '../context/ThemeContext';
 
 interface Permission {
   project_name: string;
@@ -29,6 +30,7 @@ const PROJECT_ROLES = ['总体人员', 'EWIS管理员', '设备管理员', '一�
 
 export default function ProfileModal({ onClose }: Props) {
   const { user: currentUser, token, updateUser } = useAuth();
+  const { mode: themeMode, setMode: setThemeMode } = useTheme();
   const isAdmin = currentUser?.role === 'admin';
   const [profile, setProfile] = useState<ProfileData>({
     username: '',
@@ -238,6 +240,32 @@ export default function ProfileModal({ onClose }: Props) {
                     {saveMsg}
                   </span>
                 )}
+              </div>
+            </section>
+
+            {/* UI 主题 */}
+            <section>
+              <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">界面主题</h3>
+              <div className="grid grid-cols-3 gap-2">
+                {([
+                  { value: 'light', label: '浅色', icon: '☀️', desc: '始终使用白色主题' },
+                  { value: 'dark',  label: '深色', icon: '🌙', desc: '始终使用暗色主题' },
+                  { value: 'auto',  label: '自动', icon: '🔄', desc: '6:00–18:00 浅色，其余深色' },
+                ] as { value: ThemeMode; label: string; icon: string; desc: string }[]).map(opt => (
+                  <button
+                    key={opt.value}
+                    onClick={() => setThemeMode(opt.value)}
+                    className={`flex flex-col items-center gap-1 px-3 py-3 rounded-lg border-2 transition-colors text-center ${
+                      themeMode === opt.value
+                        ? 'border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300'
+                        : 'border-gray-200 hover:border-gray-300 text-gray-600 dark:border-gray-700 dark:text-gray-400 dark:hover:border-gray-500'
+                    }`}
+                  >
+                    <span className="text-xl">{opt.icon}</span>
+                    <span className="text-sm font-medium">{opt.label}</span>
+                    <span className="text-xs text-gray-400 leading-tight">{opt.desc}</span>
+                  </button>
+                ))}
               </div>
             </section>
 

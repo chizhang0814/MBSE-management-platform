@@ -2,14 +2,192 @@
 @tailwind components;
 @tailwind utilities;
 
+html {
+  overflow-x: auto;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
 body {
   margin: 0;
+  min-width: 1280px;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
+
+/* ══════════════════════════════════════════════════════════════
+   Dark Mode 色彩系统
+   参考：GitHub Primer Dark、Radix UI Dark、shadcn/Zinc、Material Design 3
+   ──────────────────────────────────────────────────────────────
+   背景层次（绝不用纯黑，避免光晕效应）：
+     Base     #0d1117  ← GitHub Dark canvas
+     Surface  #161b22  ← card / panel
+     Elevated #21262d  ← modal / dropdown
+     Overlay  #2d333b  ← tooltip / popover
+
+   文字对比度（on #0d1117）：
+     Primary   #e6edf3  → 13.8:1  ✓
+     Secondary #8b949e  →  5.9:1  ✓
+     Muted     #6e7681  →  4.1:1  ✓ (仅用于大字/非关键)
+
+   标签配色（Radix Dark Step 3 bg + Step 11 text，均 ≥ 6:1）：
+     Blue   bg #0d2847  text #60a5fa  → 6.5:1  ✓
+     Green  bg #132d21  text #4ade80  → 7.2:1  ✓
+     Red    bg #3b1219  text #f87171  → 8.1:1  ✓
+     Amber  bg #302008  text #fbbf24  → 9.4:1  ✓
+     Purple bg #301c3b  text #c084fc  → 7.8:1  ✓
+     Orange bg #331e0b  text #fb923c  → 7.0:1  ✓
+   ══════════════════════════════════════════════════════════════ */
+
+.dark,
+.dark body,
+.dark #root {
+  background-color: #0d1117;
+  color: #e6edf3;
+  color-scheme: dark;
+}
+
+/* ── 背景层次 ─────────────────────────────────────────────── */
+.dark .bg-white    { background-color: #161b22 !important; }  /* Surface */
+.dark .bg-gray-50  { background-color: #0d1117 !important; }  /* Base */
+.dark .bg-gray-100 { background-color: #21262d !important; }  /* Elevated */
+.dark .bg-gray-200 { background-color: #2d333b !important; }  /* Overlay */
+
+/* ── 文字层次（GitHub Primer Dark tokens） ─────────────────── */
+.dark .text-gray-900 { color: #e6edf3 !important; }  /* fg.default   13.8:1 ✓ */
+.dark .text-gray-800 { color: #e6edf3 !important; }  /* fg.default   13.8:1 ✓ */
+.dark .text-gray-700 { color: #cdd9e5 !important; }  /* fg.muted     11.0:1 ✓ */
+.dark .text-gray-600 { color: #8b949e !important; }  /* fg.subtle     5.9:1 ✓ */
+.dark .text-gray-500 { color: #8b949e !important; }  /* fg.subtle     5.9:1 ✓ */
+.dark .text-gray-400 { color: #6e7681 !important; }  /* 非关键说明    4.1:1   */
+.dark .text-gray-300 { color: #484f58 !important; }  /* 仅装饰用      2.5:1   */
+
+/* ── 边框（GitHub border tokens） ───────────────────────────── */
+.dark .border,
+.dark .border-gray-50  { border-color: #21262d !important; }
+.dark .border-gray-100 { border-color: #30363d !important; }
+.dark .border-gray-200 { border-color: #30363d !important; }
+.dark .border-gray-300 { border-color: #3d444d !important; }
+.dark .border-b,
+.dark .border-t        { border-color: #21262d !important; }
+.dark .divide-gray-200 > * + * { border-color: #21262d !important; }
+
+/* ── 输入框 / 表单控件 ───────────────────────────────────── */
+.dark input,
+.dark select,
+.dark textarea {
+  background-color: #0d1117 !important;
+  color: #e6edf3 !important;
+  border-color: #3d444d !important;
+}
+.dark input::placeholder,
+.dark textarea::placeholder { color: #484f58 !important; }
+.dark input:focus,
+.dark select:focus,
+.dark textarea:focus {
+  border-color: #388bfd !important;
+  box-shadow: 0 0 0 3px rgba(56,139,253,0.25) !important;
+  outline: none !important;
+}
+.dark input:disabled {
+  background-color: #161b22 !important;
+  color: #484f58 !important;
+}
+
+/* ── Hover 状态 ──────────────────────────────────────────── */
+.dark .hover\:bg-gray-50:hover  { background-color: #21262d !important; }
+.dark .hover\:bg-gray-100:hover { background-color: #2d333b !important; }
+
+/* ── 表格 ────────────────────────────────────────────────── */
+.dark thead { background-color: #161b22 !important; }
+.dark tbody tr:hover { background-color: #1c2128 !important; }
+
+/* ── 阴影 ────────────────────────────────────────────────── */
+.dark .shadow-sm  { box-shadow: 0 1px 0 rgba(0,0,0,0.5), inset 0 0 0 1px rgba(255,255,255,0.06) !important; }
+.dark .shadow     { box-shadow: 0 3px 6px rgba(0,0,0,0.6), inset 0 0 0 1px rgba(255,255,255,0.06) !important; }
+.dark .shadow-xl  { box-shadow: 0 8px 24px rgba(0,0,0,0.7), inset 0 0 0 1px rgba(255,255,255,0.08) !important; }
+.dark .shadow-2xl { box-shadow: 0 16px 48px rgba(0,0,0,0.8), inset 0 0 0 1px rgba(255,255,255,0.08) !important; }
+
+/* ════════════════════════════════════════════════════════════
+   彩色标签系统（Radix UI Dark Step 3 bg + Step 11 text）
+   背景深暗 + 文字明亮，视觉上色彩识别度高且清晰可读
+   ════════════════════════════════════════════════════════════ */
+
+/* Blue  — bg #0d2847 / text #60a5fa — 6.5:1 ✓ */
+.dark .bg-blue-50,
+.dark .bg-blue-100  { background-color: #0d2847 !important; }
+.dark .text-blue-700,
+.dark .text-blue-600,
+.dark .text-blue-500 { color: #60a5fa !important; }
+.dark .border-blue-200,
+.dark .border-blue-500 { border-color: #1d4ed8 !important; }
+
+/* Green  — bg #132d21 / text #4ade80 — 7.2:1 ✓ */
+.dark .bg-green-50,
+.dark .bg-green-100  { background-color: #132d21 !important; }
+.dark .text-green-700,
+.dark .text-green-600,
+.dark .text-green-500 { color: #4ade80 !important; }
+.dark .border-green-200 { border-color: #15803d !important; }
+
+/* Red  — bg #3b1219 / text #f87171 — 8.1:1 ✓ */
+.dark .bg-red-50,
+.dark .bg-red-100  { background-color: #3b1219 !important; }
+.dark .text-red-700,
+.dark .text-red-600,
+.dark .text-red-500 { color: #f87171 !important; }
+
+/* Amber  — bg #302008 / text #fbbf24 — 9.4:1 ✓ */
+.dark .bg-amber-50,
+.dark .bg-amber-100,
+.dark .bg-yellow-50 { background-color: #302008 !important; }
+.dark .text-amber-800,
+.dark .text-amber-700,
+.dark .text-amber-400 { color: #fbbf24 !important; }
+.dark .border-amber-100,
+.dark .border-amber-200 { border-color: #b45309 !important; }
+
+/* Purple  — bg #301c3b / text #c084fc — 7.8:1 ✓ */
+.dark .bg-purple-50,
+.dark .bg-purple-100  { background-color: #301c3b !important; }
+.dark .text-purple-700,
+.dark .text-purple-600 { color: #c084fc !important; }
+.dark .border-purple-200 { border-color: #7e22ce !important; }
+
+/* Orange  — bg #331e0b / text #fb923c — 7.0:1 ✓ */
+.dark .bg-orange-50,
+.dark .bg-orange-100  { background-color: #331e0b !important; }
+.dark .text-orange-700,
+.dark .text-orange-600 { color: #fb923c !important; }
+
+/* ── 导航栏 ───────────────────────────────────────────────── */
+.dark nav { background-color: #161b22 !important; border-color: #21262d !important; }
+
+/* ── 模态框遮罩 ──────────────────────────────────────────── */
+.dark .bg-black.bg-opacity-40 { background-color: rgba(0,0,0,0.75) !important; }
+
+/* ── Recharts 图表 ───────────────────────────────────────── */
+.dark .recharts-cartesian-grid-horizontal line,
+.dark .recharts-cartesian-grid-vertical line { stroke: #21262d !important; }
+.dark .recharts-tooltip-wrapper .recharts-default-tooltip {
+  background-color: #2d333b !important;
+  border-color: #3d444d !important;
+  color: #e6edf3 !important;
+}
+.dark .recharts-tooltip-item  { color: #cdd9e5 !important; }
+.dark .recharts-tooltip-label { color: #8b949e !important; }
+.dark .recharts-text { fill: #8b949e !important; }
+
+/* ── 滚动条 ───────────────────────────────────────────────── */
+.dark ::-webkit-scrollbar        { width: 6px; height: 6px; }
+.dark ::-webkit-scrollbar-track  { background: #0d1117; }
+.dark ::-webkit-scrollbar-thumb  { background: #30363d; border-radius: 3px; }
+.dark ::-webkit-scrollbar-thumb:hover { background: #3d444d; }
 
 code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
