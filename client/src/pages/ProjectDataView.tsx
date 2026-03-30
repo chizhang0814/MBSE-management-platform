@@ -259,6 +259,7 @@ export default function ProjectDataView() {
   const [signals, setSignals] = useState<SignalRow[]>([]);
   const [signalTotal, setSignalTotal] = useState(0);
   const [expandedSignalId, setExpandedSignalId] = useState<number | null>(null);
+  const [expandedEdgeEpIds, setExpandedEdgeEpIds] = useState<Set<number>>(new Set());
   const [signalDetails, setSignalDetails] = useState<Record<number, SignalDetail>>({});
   const [signalDisplayCount, setSignalDisplayCount] = useState(50);
   const signalSentinelRef = useRef<HTMLDivElement | null>(null);
@@ -3053,16 +3054,20 @@ export default function ProjectDataView() {
                                       <th className="px-2 py-1 text-left">屏蔽类型</th>
                                       <th className="px-2 py-1 text-left">端点信号名称</th>
                                       <th className="px-2 py-1 text-left">信号定义</th>
-                                      <th className="px-2 py-1 text-left">信号方向</th>
+                                      <th className="px-2 py-1 text-left">连接</th>
                                       <th className="px-2 py-1 text-left">备注</th>
                                       <th className="px-2 py-1 text-left">状态</th>
                                     </tr>
                                   </thead>
                                   <tbody>
                                     {detail.endpoints.map((ep, i) => {
-                                      const direction = ep.input && ep.output ? 'BI' : ep.input ? 'IN' : ep.output ? 'OUT' : '-';
+                                      const epId = (ep as any).id;
+                                      const edges = ((detail as any).edges || []) as Array<{ id: number; from_endpoint_id: number; to_endpoint_id: number; direction: string; source_info?: string }>;
+                                      const myEdges = edges.filter(e => e.from_endpoint_id === epId || e.to_endpoint_id === epId);
+                                      const isEdgeExpanded = expandedEdgeEpIds.has(epId);
                                       return (
-                                      <tr key={i} className={`border-b border-green-100 ${!ep.pin_id ? 'bg-orange-50' : ''}`}>
+                                      <React.Fragment key={i}>
+                                      <tr className={`border-b border-green-100 ${!ep.pin_id ? 'bg-orange-50' : ''}`}>
                                         <td className="px-2 py-1 text-gray-500">端点{i + 1}</td>
                                         <td className="px-2 py-1">{ep.设备编号}</td>
                                         <td className="px-2 py-1 font-mono">
@@ -3078,7 +3083,19 @@ export default function ProjectDataView() {
                                         <td className="px-2 py-1">{(ep as any).pin_屏蔽类型 || '-'}</td>
                                         <td className="px-2 py-1">{ep.信号名称 || '-'}</td>
                                         <td className="px-2 py-1 text-gray-600">{ep.信号定义 || '-'}</td>
-                                        <td className="px-2 py-1 text-center font-medium">{direction}</td>
+                                        <td className="px-2 py-1 text-center">
+                                          {myEdges.length > 0 ? (
+                                            <button
+                                              onClick={() => setExpandedEdgeEpIds(prev => {
+                                                const n = new Set(prev);
+                                                if (n.has(epId)) n.delete(epId); else n.add(epId);
+                                                return n;
+                                              })}
+                                              className="text-blue-500 hover:text-blue-700 font-mono text-xs"
+                                              title={`${myEdges.length} 条连接`}
+                                            >{isEdgeExpanded ? '▼' : '▶'} {myEdges.length}</button>
+                                          ) : <span className="text-gray-300">-</span>}
+                                        </td>
                                         <td className="px-2 py-1 text-gray-600">{(ep as any).备注 || '-'}</td>
                                         <td className="px-2 py-1">
                                           {!ep.pin_id
@@ -3095,6 +3112,33 @@ export default function ProjectDataView() {
                                           }
                                         </td>
                                       </tr>
+                                      {isEdgeExpanded && myEdges.length > 0 && (
+                                        <tr>
+                                          <td colSpan={11} className="px-0 py-0">
+                                            <div className="ml-8 mr-4 my-1 bg-blue-50 border border-blue-200 rounded p-2">
+                                              {myEdges.map(edge => {
+                                                const isFrom = edge.from_endpoint_id === epId;
+                                                const otherEpId = isFrom ? edge.to_endpoint_id : edge.from_endpoint_id;
+                                                const otherEp = detail.endpoints.find((e: any) => e.id === otherEpId);
+                                                const arrow = edge.direction === 'bidirectional' ? '↔' : isFrom ? '→' : '←';
+                                                const dirLabel = edge.direction === 'bidirectional' ? '双向' : '单向';
+                                                const otherLabel = otherEp
+                                                  ? `${(otherEp as any).设备端元器件编号 || (otherEp as any).设备编号}-${(otherEp as any).针孔号 || '?'} (${(otherEp as any).设备编号})`
+                                                  : `endpoint#${otherEpId}`;
+                                                return (
+                                                  <div key={edge.id} className="flex items-center gap-2 text-xs py-0.5">
+                                                    <span className={`font-bold text-sm ${edge.direction === 'bidirectional' ? 'text-purple-600' : 'text-blue-600'}`}>{arrow}</span>
+                                                    <span className="font-mono text-gray-800">{otherLabel}</span>
+                                                    <span className="text-gray-400">{dirLabel}</span>
+                                                    {edge.source_info && <span className="text-gray-300 ml-auto">{edge.source_info}</span>}
+                                                  </div>
+                                                );
+                                              })}
+                                            </div>
+                                          </td>
+                                        </tr>
+                                      )}
+                                      </React.Fragment>
                                       );
                                     })}
                                   </tbody>

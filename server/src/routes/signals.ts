@@ -299,7 +299,13 @@ export function signalRoutes(db: Database) {
         }
       }
 
-      res.json({ signal: { ...signal, endpoints, 导线等级 } });
+      // 查询 edges
+      const edges = await db.query(
+        `SELECT * FROM signal_edges WHERE signal_id = ?`,
+        [signal.id]
+      );
+
+      res.json({ signal: { ...signal, endpoints, edges, 导线等级 } });
     } catch (error: any) {
       res.status(500).json({ error: error.message || '获取信号失败' });
     }

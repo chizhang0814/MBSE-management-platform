@@ -1300,6 +1300,28 @@ export class Database {
       }
     } catch (e: any) { console.log('Migration: signals 协议标识:', e.message); }
 
+    // signal_edges 表（信号端点间的有向连接关系）
+    try {
+      const edgeTable = await this.query("SELECT name FROM sqlite_master WHERE type='table' AND name='signal_edges'");
+      if (edgeTable.length === 0) {
+        await this.run(`
+          CREATE TABLE signal_edges (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            signal_id INTEGER NOT NULL,
+            from_endpoint_id INTEGER NOT NULL,
+            to_endpoint_id INTEGER NOT NULL,
+            direction TEXT NOT NULL DEFAULT 'directed',
+            source_info TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (signal_id) REFERENCES signals(id) ON DELETE CASCADE,
+            FOREIGN KEY (from_endpoint_id) REFERENCES signal_endpoints(id) ON DELETE CASCADE,
+            FOREIGN KEY (to_endpoint_id) REFERENCES signal_endpoints(id) ON DELETE CASCADE
+          )
+        `);
+        console.log('Database migration: created signal_edges table');
+      }
+    } catch (e: any) { console.log('Migration: signal_edges:', e.message); }
+
     // 初始化默认用户（不再创建示例数据）
     await this.initDefaultData();
   }
