@@ -336,7 +336,7 @@ export async function loadTableDataFromRelational(db: Database, projectId: numbe
   const ifaceRowsRaw: Record<string, any>[] = [];
   for (const sig of signalRows) {
     const endpoints = await db.query(
-      `SELECT se.endpoint_index, se.端接尺寸 as 端接尺寸_ep, se.信号名称 as 信号名称_ep, se.信号定义 as 信号定义_ep,
+      `SELECT se.id as ep_id, se.endpoint_index, se.端接尺寸 as 端接尺寸_ep, se.信号名称 as 信号名称_ep, se.信号定义 as 信号定义_ep,
               p.针孔号, p.屏蔽类型, c.设备端元器件编号 as 连接器号, d.设备编号, d."设备LIN号（DOORS）" as lin号
        FROM signal_endpoints se
        JOIN pins p ON se.pin_id = p.id
@@ -344,6 +344,11 @@ export async function loadTableDataFromRelational(db: Database, projectId: numbe
        JOIN devices d ON c.device_id = d.id
        WHERE se.signal_id = ?
        ORDER BY se.endpoint_index`,
+      [sig.id]
+    );
+
+    const edges = await db.query(
+      'SELECT * FROM signal_edges WHERE signal_id = ? ORDER BY id',
       [sig.id]
     );
 
@@ -379,14 +384,27 @@ export async function loadTableDataFromRelational(db: Database, projectId: numbe
       '最后修改时间': sig['updated_at'],
     };
 
-    if (endpoints.length === 0) {
-      // 无端点：导出一行空端点
+    const epMap = new Map(endpoints.map((e: any) => [e.ep_id, e]));
+
+    if (edges.length > 0) {
+      // 按 edge 展开：每条 edge 一行
+      for (const edge of edges) {
+        const from = epMap.get(edge.from_endpoint_id) as any;
+        const to = epMap.get(edge.to_endpoint_id) as any;
+        if (!from || !to) continue;
+        ifaceRowsRaw.push({ ...base,
+          '设备（从）': from.设备编号, 'LIN号（从）': from.lin号, '连接器（从）': from.连接器号, '针孔号（从）': from.针孔号, '端接尺寸（从）': from.端接尺寸_ep, '屏蔽类型（从）': from.屏蔽类型, '信号名称（从）': from.信号名称_ep, '信号定义（从）': from.信号定义_ep,
+          '设备（到）': to.设备编号,   'LIN号（到）': to.lin号,   '连接器（到）': to.连接器号,   '针孔号（到）': to.针孔号,   '端接尺寸（到）': to.端接尺寸_ep,   '屏蔽类型（到）': to.屏蔽类型,   '信号名称（到）': to.信号名称_ep,   '信号定义（到）': to.信号定义_ep,
+        });
+      }
+    } else if (endpoints.length === 0) {
+      // 无端点也无 edge：导出一行空端点
       ifaceRowsRaw.push({ ...base,
         '设备（从）': '', 'LIN号（从）': '', '连接器（从）': '', '针孔号（从）': '', '端接尺寸（从）': '', '屏蔽类型（从）': '', '信号名称（从）': '', '信号定义（从）': '',
         '设备（到）': '', 'LIN号（到）': '', '连接器（到）': '', '针孔号（到）': '', '端接尺寸（到）': '', '屏蔽类型（到）': '', '信号名称（到）': '', '信号定义（到）': '',
       });
     } else {
-      // 以第0个端点为 from，其余每个端点各生成一行
+      // 有端点但无 edge（旧数据兜底）：按原逻辑 ep0 → 其余
       const from = endpoints[0] as any;
       const toList = endpoints.length >= 2 ? endpoints.slice(1) : [endpoints[0]];
       for (const to of toList as any[]) {

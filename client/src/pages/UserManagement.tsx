@@ -34,6 +34,10 @@ interface PermissionRequest {
 
 export default function UserManagement() {
   const { user: currentUser } = useAuth();
+  const isAdmin = currentUser?.role === 'admin';
+  const [myPerms, setMyPerms] = useState<Permission[]>([]);
+  const isPMO = myPerms.some(p => p.project_role === '总体PMO组');
+  const canManageUsers = isAdmin || isPMO;
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -54,6 +58,13 @@ export default function UserManagement() {
     fetchUsers();
     fetchProjects();
     fetchPermRequests();
+    // 加载当前用户权限
+    if (!isAdmin) {
+      fetch('/api/users/me/permissions', { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
+        .then(r => r.ok ? r.json() : null)
+        .then(data => { if (data?.permissions) setMyPerms(data.permissions); })
+        .catch(() => {});
+    }
   }, []);
 
   const fetchPermRequests = async () => {
@@ -290,7 +301,7 @@ export default function UserManagement() {
       <div className="px-4 sm:px-0">
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-3xl font-bold text-gray-900">用户管理</h1>
-          {currentUser?.role === 'admin' && (
+          {canManageUsers && (
             <button
               onClick={() => handleOpenModal()}
               className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600"
@@ -341,7 +352,7 @@ export default function UserManagement() {
                               <span className="font-medium">{perm.project_name}</span>
                               {' → '}
                               <span>{perm.project_role}</span>
-                              {perm.project_role === '总体人员' && perm.can_approve && (
+                              {perm.project_role === '总体组' && perm.can_approve && (
                                 <span className="ml-1 text-blue-600 font-medium">（审批）</span>
                               )}
                             </div>
@@ -356,7 +367,7 @@ export default function UserManagement() {
                     {new Date(user.created_at).toLocaleString()}
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap text-sm font-medium space-x-2">
-                    {currentUser?.role === 'admin' && (
+                    {canManageUsers && (
                       <>
                         <button
                           onClick={() => handleOpenModal(user)}
@@ -579,16 +590,16 @@ export default function UserManagement() {
                                   const newRole = e.target.value;
                                   const newPerms = [...formData.permissions];
                                   let can_approve: boolean | undefined = undefined;
-                                  if (newRole === '总体人员') {
-                                    if (newPerms[idx].project_role === '总体人员') {
+                                  if (newRole === '总体组') {
+                                    if (newPerms[idx].project_role === '总体组') {
                                       // 角色未变，保留原值
                                       can_approve = newPerms[idx].can_approve ?? false;
                                     } else {
-                                      // 刚切换为总体人员：若该项目无其他审批人则默认勾选
+                                      // 刚切换为总体组：若该项目无其他审批人则默认勾选
                                       const projectName = newPerms[idx].project_name;
                                       const hasOtherApprover = users.some(u =>
                                         u.id !== editingUser?.id &&
-                                        (u.permissions || []).some(p => p.project_name === projectName && p.project_role === '总体人员' && p.can_approve === true)
+                                        (u.permissions || []).some(p => p.project_name === projectName && p.project_role === '总体组' && p.can_approve === true)
                                       );
                                       can_approve = !hasOtherApprover;
                                     }
@@ -599,18 +610,17 @@ export default function UserManagement() {
                                 className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
                               >
                                 <option value="">选择角色</option>
-                                <option value="总体人员">总体人员</option>
-                                <option value="EWIS管理员">EWIS管理员</option>
-                                <option value="设备管理员">设备管理员</option>
-                                <option value="一级包长">一级包长</option>
-                                <option value="二级包长">二级包长</option>
-                                <option value="只读">只读</option>
+                                <option value="总体组">总体组</option>
+                                <option value="系统组">系统组</option>
+                                <option value="总体PMO组">总体PMO组</option>
+                                <option value="供应商组">供应商组</option>
+                                <option value="其他组">其他组</option>
                               </select>
                             </div>
-                            {perm.project_role === '总体人员' && (() => {
+                            {perm.project_role === '总体组' && (() => {
                               const otherApproversCount = users.filter(u =>
                                 u.id !== editingUser?.id &&
-                                (u.permissions || []).some(p => p.project_name === perm.project_name && p.project_role === '总体人员' && p.can_approve === true)
+                                (u.permissions || []).some(p => p.project_name === perm.project_name && p.project_role === '总体组' && p.can_approve === true)
                               ).length;
                               const isLastApprover = !!perm.can_approve && otherApproversCount === 0;
                               return (

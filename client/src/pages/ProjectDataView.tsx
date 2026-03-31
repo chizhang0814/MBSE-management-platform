@@ -257,6 +257,43 @@ export default function ProjectDataView() {
 
   // ── 信号视图状态 ──
   const [signals, setSignals] = useState<SignalRow[]>([]);
+  // ── 下载配置 ──
+  const [showDownloadModal, setShowDownloadModal] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const DOWNLOAD_SHEETS = [
+    { key: 'devices', name: 'ATA章节设备表', cols: [
+      '设备编号', '设备编号（DOORS）', '设备LIN号（DOORS）', '设备中文名称', '设备英文名称', '设备英文缩写',
+      '设备供应商件号', '设备供应商名称', '设备部件所属系统（4位ATA）',
+      '设备安装位置', '设备DAL', '设备壳体是否金属', '金属壳体表面是否经过特殊处理而不易导电',
+      '设备内共地情况', '设备壳体接地方式', '壳体接地是否故障电流路径',
+      '其他接地特殊要求', '设备端连接器或接线柱数量', '是否为选装设备', '设备装机架次',
+      '设备负责人', '设备正常工作电压范围（V）', '设备物理特性', '备注', '最后修改时间',
+    ]},
+    { key: 'connectors', name: '设备端元器件表', cols: [
+      '设备编号', '设备LIN号（DOORS）', '设备名称', '设备端元器件编号', '设备端元器件名称及类型',
+      '设备端元器件件号类型及件号', '设备端元器件供应商名称', '匹配的线束端元器件件号',
+      '设备端元器件匹配的元器件是否随设备交付', '备注', '最后修改时间',
+    ]},
+    { key: 'signals', name: '电气接口数据表', cols: [
+      'Unique ID', '连接类型',
+      '设备（从）', 'LIN号（从）', '连接器（从）', '针孔号（从）', '端接尺寸（从）', '屏蔽类型（从）', '信号名称（从）', '信号定义（从）',
+      '设备（到）', 'LIN号（到）', '连接器（到）', '针孔号（到）', '端接尺寸（到）', '屏蔽类型（到）', '信号名称（到）', '信号定义（到）',
+      '推荐导线线规', '推荐导线线型', '独立电源代码', '敷设代码',
+      '电磁兼容代码', '余度代码', '功能代码', '接地代码', '极性',
+      '信号ATA', '信号架次有效性', '额定电压', '额定电流', '设备正常工作电压范围',
+      '是否成品线', '成品线件号', '成品线线规', '成品线类型', '成品线长度',
+      '成品线载流量', '成品线线路压降', '成品线标识', '成品线与机上线束对接方式',
+      '成品线安装责任', '备注', '最后修改时间',
+    ]},
+    { key: 'adl', name: '全机设备清单', cols: [] },
+  ];
+  const [downloadSheets, setDownloadSheets] = useState<Record<string, boolean>>({ devices: true, connectors: true, signals: true, adl: true });
+  const [downloadCols, setDownloadCols] = useState<Record<string, Set<string>>>(() => {
+    const m: Record<string, Set<string>> = {};
+    DOWNLOAD_SHEETS.forEach(s => { m[s.key] = new Set(s.cols); });
+    return m;
+  });
+
   const [signalTotal, setSignalTotal] = useState(0);
   const [expandedSignalId, setExpandedSignalId] = useState<number | null>(null);
   const [expandedEdgeEpIds, setExpandedEdgeEpIds] = useState<Set<number>>(new Set());
@@ -663,8 +700,8 @@ export default function ProjectDataView() {
 
   const openAddDevice = () => {
     setEditingDevice(null);
-    // 设备管理员：默认负责人为自己；总体人员/admin：不预设
-    const defaultOwner = myProjectRole === '设备管理员' ? (user?.username || '') : '';
+    // 系统组：默认负责人为自己；总体组/admin：不预设
+    const defaultOwner = myProjectRole === '系统组' ? (user?.username || '') : '';
     // 默认选中所有构型
     const defaultConfigs = projectConfigurations.map(c => c.name).join(',');
     setDeviceForm({ '设备负责人': defaultOwner, '设备装机构型': defaultConfigs });
@@ -768,14 +805,14 @@ export default function ProjectDataView() {
   };
 
   const handleClaimManagement = async (device: DeviceRow) => {
-    if (!confirm(`确认申请管理设备「${device.设备编号}」的权限？申请将发送给所有总体人员审批。`)) return;
+    if (!confirm(`确认申请管理设备「${device.设备编号}」的权限？申请将发送给所有总体组审批。`)) return;
     try {
       const res = await fetch(`/api/devices/${device.id}/claim-management`, {
         method: 'POST',
         headers: API_HEADERS(),
       });
       if (!res.ok) throw new Error((await res.json()).error || '申请失败');
-      alert('申请已提交，等待总体人员审批。');
+      alert('申请已提交，等待总体组审批。');
       await loadDevices();
     } catch (e: any) { alert(e.message || '申请失败'); }
   };
@@ -1417,13 +1454,14 @@ export default function ProjectDataView() {
   const isAdmin = user?.role === 'admin';
   const selectedProjectName = projects.find(p => p.id === selectedProjectId)?.name;
   const myProjectRole = myPermissions.find(p => p.project_name === selectedProjectName)?.project_role;
-  const isReadOnly = myProjectRole === '只读';
-  const canManageDevices = isAdmin || myProjectRole === '总体人员' || myProjectRole === '设备管理员';
-  const canManageSignals = isAdmin || myProjectRole === '总体人员' || myProjectRole === 'EWIS管理员' || myProjectRole === '设备管理员';
-  // 总体人员可编辑任意设备（通过审批）；设备管理员/负责人仅自己的设备
+  const isReadOnly = myProjectRole === '其他组';
+  const canExport = isAdmin || myProjectRole === '总体组' || myProjectRole === '系统组' || myProjectRole === '供应商组';
+  const canManageDevices = isAdmin || myProjectRole === '总体组' || myProjectRole === '系统组';
+  const canManageSignals = isAdmin || myProjectRole === '总体组' || myProjectRole === 'EWIS管理员' || myProjectRole === '系统组';
+  // 总体组可编辑任意设备（通过审批）；系统组/负责人仅自己的设备
   const canEditDevice = (device: DeviceRow) => {
     if (isReadOnly) return false;
-    if (isAdmin || myProjectRole === '总体人员') return true;
+    if (isAdmin || myProjectRole === '总体组') return true;
     if (device.设备负责人 === user?.username) return true;
     return false;
   };
@@ -1805,7 +1843,7 @@ export default function ProjectDataView() {
                               <button onClick={() => deleteDevice(device)} className="text-red-600 hover:text-red-800 text-xs">删除</button>
                             </>
                           ))}
-                          {myProjectRole === '设备管理员' && !device.设备负责人 && !device.management_claim_requester && (
+                          {myProjectRole === '系统组' && !device.设备负责人 && !device.management_claim_requester && (
                             <button onClick={() => handleClaimManagement(device)} className="text-purple-600 hover:text-purple-800 text-xs">申请管理权限</button>
                           )}
                           <button onClick={() => setHistoryTarget({ entityTable: 'devices', entityId: device.id, entityLabel: `设备 ${device.设备编号}` })} className="text-gray-500 hover:text-gray-700 text-xs">历史</button>
@@ -2350,9 +2388,9 @@ export default function ProjectDataView() {
   // ── 渲染：断面连接器视图 ─────────────────────────────────
 
 
-  const canManageSC = isAdmin || myProjectRole === '总体人员' || myProjectRole === '设备管理员';
+  const canManageSC = isAdmin || myProjectRole === '总体组' || myProjectRole === '系统组';
   const canEditSC = (sc: SectionConnectorRow) =>
-    isAdmin || myProjectRole === '总体人员' || sc.负责人 === user?.username;
+    isAdmin || myProjectRole === '总体组' || sc.负责人 === user?.username;
 
   const renderSectionConnectorView = () => (
     <div>
@@ -2598,6 +2636,7 @@ export default function ProjectDataView() {
               className="bg-red-500 text-white px-3 py-1.5 rounded text-sm hover:bg-red-600"
             >清空信号视图数据</button>
           )}
+          {canExport && (
           <button
             onClick={async () => {
               if (!selectedProjectId) return;
@@ -2610,6 +2649,7 @@ export default function ProjectDataView() {
             }}
             className="bg-teal-600 text-white px-3 py-1.5 rounded text-sm hover:bg-teal-700"
           >WB导出</button>
+          )}
           {canManageSignals && (
             <button onClick={openAddSignal} className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700">
               + 添加信号
@@ -3183,6 +3223,20 @@ export default function ProjectDataView() {
           >
             切换项目
           </button>
+          {selectedProjectId && canExport && (
+            <button
+              onClick={() => {
+                setDownloadSheets({ devices: true, connectors: true, signals: true, adl: true });
+                const m: Record<string, Set<string>> = {};
+                DOWNLOAD_SHEETS.forEach(s => { m[s.key] = new Set(s.cols); });
+                setDownloadCols(m);
+                setShowDownloadModal(true);
+              }}
+              className="ml-2 px-2 py-1 text-xs border border-gray-300 rounded hover:bg-gray-50 text-indigo-600"
+            >
+              下载项目数据
+            </button>
+          )}
         </div>
 
         {/* 视图切换 */}
@@ -3354,6 +3408,90 @@ export default function ProjectDataView() {
           : renderSignalView()}
         </div>
 
+        {/* ── 下载配置弹窗 ── */}
+        {showDownloadModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg max-w-2xl w-full max-h-[85vh] flex flex-col">
+              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
+                <h2 className="text-xl font-bold">下载项目数据</h2>
+                <div className="flex gap-2">
+                  <button onClick={() => setShowDownloadModal(false)} className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 text-sm">取消</button>
+                  <button
+                    onClick={async () => {
+                      if (!selectedProjectId) return;
+                      setDownloading(true);
+                      try {
+                        const params = new URLSearchParams();
+                        const selectedS = Object.entries(downloadSheets).filter(([, v]) => v).map(([k]) => k);
+                        params.set('sheets', selectedS.join(','));
+                        for (const s of DOWNLOAD_SHEETS) {
+                          if (s.cols.length > 0 && downloadSheets[s.key]) {
+                            const selected = s.cols.filter(c => downloadCols[s.key]?.has(c));
+                            if (selected.length < s.cols.length) params.set(`cols_${s.key}`, selected.join('||'));
+                          }
+                        }
+                        const res = await fetch(`/api/projects/${selectedProjectId}/download?${params.toString()}`, { headers: API_HEADERS() });
+                        if (!res.ok) throw new Error((await res.json()).error || '下载失败');
+                        const blob = await res.blob();
+                        const projectName = projects.find(p => p.id === selectedProjectId)?.name || '项目';
+                        const filename = `${projectName}_${new Date().toISOString().split('T')[0]}.xlsx`;
+                        const url = window.URL.createObjectURL(blob);
+                        const a = document.createElement('a'); a.href = url; a.download = filename;
+                        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+                        window.URL.revokeObjectURL(url);
+                        setShowDownloadModal(false);
+                      } catch (e: any) { alert(e.message || '下载失败'); }
+                      finally { setDownloading(false); }
+                    }}
+                    disabled={downloading || !Object.values(downloadSheets).some(v => v)}
+                    className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-400 text-sm"
+                  >{downloading ? '下载中...' : '下载'}</button>
+                </div>
+              </div>
+              <div className="flex-1 overflow-y-auto px-6 py-4">
+                {DOWNLOAD_SHEETS.map(sheet => (
+                  <div key={sheet.key} className="mb-4 border border-gray-200 rounded-lg overflow-hidden">
+                    <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 border-b border-gray-200">
+                      <input type="checkbox" checked={downloadSheets[sheet.key] || false}
+                        onChange={e => setDownloadSheets({ ...downloadSheets, [sheet.key]: e.target.checked })} className="rounded" />
+                      <span className="font-medium text-sm">{sheet.name}</span>
+                      {sheet.cols.length > 0 && downloadSheets[sheet.key] && (
+                        <span className="text-xs text-gray-400 ml-auto">
+                          {downloadCols[sheet.key]?.size || 0} / {sheet.cols.length} 列
+                          <button onClick={() => setDownloadCols(prev => ({ ...prev, [sheet.key]: new Set(sheet.cols) }))}
+                            className="ml-2 text-blue-500 hover:text-blue-700">全选</button>
+                          <button onClick={() => setDownloadCols(prev => ({ ...prev, [sheet.key]: new Set() }))}
+                            className="ml-1 text-blue-500 hover:text-blue-700">清空</button>
+                        </span>
+                      )}
+                    </div>
+                    {sheet.cols.length > 0 && downloadSheets[sheet.key] && (
+                      <div className="px-3 py-2 grid grid-cols-3 gap-1">
+                        {sheet.cols.map(col => (
+                          <label key={col} className="flex items-center gap-1 text-xs cursor-pointer hover:bg-gray-50 px-1 py-0.5 rounded">
+                            <input type="checkbox" checked={downloadCols[sheet.key]?.has(col) || false}
+                              onChange={e => {
+                                setDownloadCols(prev => {
+                                  const s = new Set(prev[sheet.key]);
+                                  if (e.target.checked) s.add(col); else s.delete(col);
+                                  return { ...prev, [sheet.key]: s };
+                                });
+                              }} className="rounded" />
+                            <span className="truncate" title={col}>{col}</span>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                    {sheet.cols.length === 0 && downloadSheets[sheet.key] && (
+                      <div className="px-3 py-2 text-xs text-gray-400">导出全部列（不可选择）</div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* ── 切换项目弹窗 ── */}
         {showSwitchProjectModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
@@ -3430,30 +3568,30 @@ export default function ProjectDataView() {
                         {(deviceForm as any)[f.key] || '-'}
                       </div>
                     ) : f.key === '设备负责人' ? (
-                      myProjectRole === '设备管理员' && !isAdmin ? (
-                        /* 设备管理员：只读，固定为自己 */
+                      myProjectRole === '系统组' && !isAdmin ? (
+                        /* 系统组：其他组，固定为自己 */
                         <div className="w-full border border-gray-200 bg-gray-50 rounded px-2 py-1 text-sm text-gray-700">
                           {(deviceForm as any)[f.key] || '-'}
                           {(deviceForm as any)[f.key] && employeeNameMap[(deviceForm as any)[f.key]] && <span className="text-gray-400 ml-1">({employeeNameMap[(deviceForm as any)[f.key]]})</span>}
                         </div>
                       ) : (
-                        /* admin / 总体人员：可选择设备管理员 */
+                        /* admin / 总体组：可选择系统组 */
                         <select
                           value={(deviceForm as any)[f.key] || ''}
                           onChange={e => setDeviceForm({ ...deviceForm, [f.key]: e.target.value })}
                           className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
                         >
                           <option value="">请选择</option>
-                          {myProjectRole === '总体人员' && !isAdmin
-                            ? /* 总体人员：只能选设备管理员 */
+                          {myProjectRole === '总体组' && !isAdmin
+                            ? /* 总体组：只能选系统组 */
                               memberRoles
-                                .filter(r => r.project_role === '设备管理员')
+                                .filter(r => r.project_role === '系统组')
                                 .map(r => (
                                   <option key={r.username} value={r.username}>{r.username}{employeeNameMap[r.username] ? ` (${employeeNameMap[r.username]})` : ''}</option>
                                 ))
-                            : /* admin：可选除总体人员之外的所有成员 */
+                            : /* admin：可选除总体组之外的所有成员 */
                               projectMembers
-                                .filter(m => !memberRoles.some(r => r.username === m && r.project_role === '总体人员'))
+                                .filter(m => !memberRoles.some(r => r.username === m && r.project_role === '总体组'))
                                 .map(m => (
                                   <option key={m} value={m}>{m}{employeeNameMap[m] ? ` (${employeeNameMap[m]})` : ''}</option>
                                 ))
@@ -4358,7 +4496,7 @@ export default function ProjectDataView() {
                           )}
                         </>
                       </div>
-                      {/* 设备负责人（只读） */}
+                      {/* 设备负责人（其他组） */}
                       <div>
                         <label className="block text-xs text-gray-500 mb-0.5">设备负责人</label>
                         <div className="w-full border border-gray-200 bg-gray-50 rounded px-2 py-1 text-xs text-gray-600 min-h-[26px]">

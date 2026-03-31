@@ -1,7 +1,7 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import { Database } from '../database.js';
-import { authenticate, requireRole, requireAdminOrZonti } from '../middleware/auth.js';
+import { authenticate, requireRole, requireAdminOrZonti, requireAdminOrPMO } from '../middleware/auth.js';
 
 export function usersRoutes(db: Database) {
   const router = express.Router();
@@ -72,7 +72,7 @@ export function usersRoutes(db: Database) {
   });
 
   // 获取所有用户
-  router.get('/', authenticate, requireAdminOrZonti(db), async (req, res) => {
+  router.get('/', authenticate, requireAdminOrPMO(db), async (req, res) => {
     try {
       const users = await db.query('SELECT id, username, name, department, remarks, role, permissions, created_at FROM users ORDER BY id DESC');
       // 解析 permissions JSON
@@ -87,7 +87,7 @@ export function usersRoutes(db: Database) {
     }
   });
 
-  // 获取待审批的权限申请（admin 看全部，总体人员看自己项目的）
+  // 获取待审批的权限申请（admin 看全部，总体组看自己项目的）
   // 注意：必须在 /:id 路由之前，否则会被 /:id 拦截
   router.get('/permission-requests', authenticate, async (req: any, res) => {
     try {
@@ -103,21 +103,20 @@ export function usersRoutes(db: Database) {
         return res.json({ requests });
       }
 
-      // 普通用户：只返回自己是总体人员的项目的 pending 申请
+      // 普通用户：总体PMO组可看全部 pending 申请
       const userRow = await db.get('SELECT permissions FROM users WHERE id = ?', [req.user.id]);
       const perms: Array<{ project_name: string; project_role: string; can_approve?: boolean }> = userRow?.permissions ? JSON.parse(userRow.permissions) : [];
-      const zontiProjects = perms.filter(p => p.project_role === '总体人员' && p.can_approve === true).map(p => p.project_name);
-      if (zontiProjects.length === 0) return res.json({ requests: [] });
+      const isPMO = perms.some(p => p.project_role === '总体PMO组');
+      if (!isPMO) return res.json({ requests: [] });
 
-      const ph = zontiProjects.map(() => '?').join(',');
       const requests = await db.query(`
         SELECT pr.id, pr.user_id, u.username, u.display_name, pr.project_name, pr.project_role,
                pr.status, pr.created_at, pr.reviewed_at
         FROM permission_requests pr
         JOIN users u ON pr.user_id = u.id
-        WHERE pr.project_name IN (${ph}) AND pr.status = 'pending'
+        WHERE pr.status = 'pending'
         ORDER BY pr.created_at DESC
-      `, zontiProjects);
+      `);
       res.json({ requests });
     } catch (error) {
       console.error(error);
@@ -125,7 +124,7 @@ export function usersRoutes(db: Database) {
     }
   });
 
-  // 审批权限申请（admin 或该项目的总体人员）
+  // 审批权限申请（admin 或该项目的总体组）
   router.put('/permission-requests/:id', authenticate, async (req: any, res) => {
     try {
       const { action } = req.body; // 'approve' | 'reject'
@@ -143,13 +142,13 @@ export function usersRoutes(db: Database) {
         return res.status(404).json({ error: '申请不存在或已处理' });
       }
 
-      // 权限检查：admin 或该项目的总体人员
+      // 权限检查：admin 或总体PMO组
       const isAdmin = req.user.role === 'admin';
       if (!isAdmin) {
         const userRow = await db.get('SELECT permissions FROM users WHERE id = ?', [req.user.id]);
-        const perms: Array<{ project_name: string; project_role: string; can_approve?: boolean }> = userRow?.permissions ? JSON.parse(userRow.permissions) : [];
-        const isZonti = perms.some(p => p.project_name === request.project_name && p.project_role === '总体人员' && p.can_approve === true);
-        if (!isZonti) return res.status(403).json({ error: '无权审批此申请' });
+        const perms: Array<{ project_name: string; project_role: string }> = userRow?.permissions ? JSON.parse(userRow.permissions) : [];
+        const isPMO = perms.some(p => p.project_role === '总体PMO组');
+        if (!isPMO) return res.status(403).json({ error: '无权审批此申请' });
       }
 
       const newStatus = action === 'approve' ? 'approved' : 'rejected';
@@ -171,7 +170,7 @@ export function usersRoutes(db: Database) {
         }
       }
 
-      // 将所有总体人员收到的该申请通知标记为已处理（按钮消失）
+      // 将所有总体组收到的该申请通知标记为已处理（按钮消失）
       await db.run(
         `UPDATE notifications SET type = 'permission_processed' WHERE type = 'permission_request' AND reference_id = ?`,
         [requestId]
@@ -199,7 +198,7 @@ export function usersRoutes(db: Database) {
   });
 
   // 获取单个用户
-  router.get('/:id', authenticate, requireRole('admin'), async (req, res) => {
+  router.get('/:id', authenticate, requireAdminOrPMO(db), async (req, res) => {
     try {
       const user = await db.get('SELECT id, username, role, permissions, created_at FROM users WHERE id = ?', [req.params.id]);
       if (!user) {
@@ -218,7 +217,7 @@ export function usersRoutes(db: Database) {
   });
 
   // 创建用户
-  router.post('/', authenticate, requireRole('admin'), async (req, res) => {
+  router.post('/', authenticate, requireAdminOrPMO(db), async (req, res) => {
     try {
       const username = (req.body.username || '').trim();
       const password = (req.body.password || '').trim();
@@ -266,7 +265,7 @@ export function usersRoutes(db: Database) {
   });
 
   // 更新用户
-  router.put('/:id', authenticate, requireRole('admin'), async (req, res) => {
+  router.put('/:id', authenticate, requireAdminOrPMO(db), async (req, res) => {
     try {
       const username = req.body.username ? req.body.username.trim() : undefined;
       const password = req.body.password ? req.body.password.trim() : undefined;
@@ -343,7 +342,7 @@ export function usersRoutes(db: Database) {
   });
 
   // 删除用户
-  router.delete('/:id', authenticate, requireRole('admin'), async (req, res) => {
+  router.delete('/:id', authenticate, requireAdminOrPMO(db), async (req, res) => {
     try {
       const userId = req.params.id;
 
@@ -380,7 +379,7 @@ export function usersRoutes(db: Database) {
   });
 
   // 重置用户密码
-  router.post('/:id/reset-password', authenticate, requireRole('admin'), async (req, res) => {
+  router.post('/:id/reset-password', authenticate, requireAdminOrPMO(db), async (req, res) => {
     try {
       const { password } = req.body;
       const userId = req.params.id;

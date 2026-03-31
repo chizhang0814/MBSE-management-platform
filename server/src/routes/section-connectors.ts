@@ -21,7 +21,7 @@ async function canWrite(db: Database, username: string, projectId: number): Prom
   if (!projectRow) return false;
   return perms.some(p =>
     p.project_name === projectRow.name &&
-    (p.project_role === '项目管理员' || p.project_role === '设备管理员')
+    (p.project_role === '项目管理员' || p.project_role === '系统组')
   );
 }
 

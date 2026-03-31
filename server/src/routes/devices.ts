@@ -557,7 +557,7 @@ export function deviceRoutes(db: Database) {
       const isZonti = !isAdmin && await isZontiRenyuan(db, username, project_id);
 
       if (!isAdmin && !isZonti) {
-        return res.status(403).json({ error: '无权限，需要总体人员角色' });
+        return res.status(403).json({ error: '无权限，需要总体组角色' });
       }
 
       // 校验 设备LIN号（DOORS）不能为空
@@ -574,7 +574,7 @@ export function deviceRoutes(db: Database) {
         return res.status(409).json({ error: `设备LIN号（DOORS）"${linNum}"在本项目中已存在` });
       }
 
-      // admin / 总体人员 → 直接写入
+      // admin / 总体组 → 直接写入
       const insertStatus = forceDraft ? 'Draft' : 'normal';
       const cols = Object.keys(fields).map(k => `"${k}"`).join(', ');
       const placeholders = Object.keys(fields).map(() => '?').join(', ');
@@ -597,7 +597,7 @@ export function deviceRoutes(db: Database) {
     }
   });
 
-  // POST /api/devices/:id/claim-management — 设备管理员申请设备管理权（直接生效）
+  // POST /api/devices/:id/claim-management — 系统组申请设备管理权（直接生效）
   router.post('/:id/claim-management', authenticate, async (req: AuthRequest, res) => {
     try {
       const deviceId = parseInt(req.params.id);
@@ -610,7 +610,7 @@ export function deviceRoutes(db: Database) {
       if (role === 'admin') return res.status(403).json({ error: '管理员可直接分配设备负责人，无需申请' });
 
       const devMgr = await isDeviceManager(db, username, device.project_id);
-      if (!devMgr) return res.status(403).json({ error: '仅设备管理员可申请管理权限' });
+      if (!devMgr) return res.status(403).json({ error: '仅系统组可申请管理权限' });
 
       if (device.设备负责人) return res.status(400).json({ error: '该设备已有负责人' });
 
@@ -684,7 +684,7 @@ export function deviceRoutes(db: Database) {
           .trim();
       }
 
-      // admin / 总体人员 → 直接更新（带校验）
+      // admin / 总体组 → 直接更新（带校验）
       const setClauses = Object.keys(fields).map(k => `"${k}" = ?`).join(', ');
       const values = [...Object.values(fields), deviceId, version ?? 1];
       const result = await db.run(
@@ -812,7 +812,7 @@ export function deviceRoutes(db: Database) {
       const isZonti = !isAdmin && await isZontiRenyuan(db, username, devRow.project_id);
 
       if (!isAdmin && !isZonti) {
-        return res.status(403).json({ error: '无权限，需要总体人员角色' });
+        return res.status(403).json({ error: '无权限，需要总体组角色' });
       }
 
       // 连接器编号格式校验
@@ -827,7 +827,7 @@ export function deviceRoutes(db: Database) {
       );
       if (dup) return res.status(409).json({ error: `设备端元器件编号"${compId}"在该设备中已存在` });
 
-      // admin / 总体人员 → 直接写入
+      // admin / 总体组 → 直接写入
       const insertStatus = forceDraft ? 'Draft' : 'normal';
       const cols = Object.keys(fields).map(k => `"${k}"`).join(', ');
       const placeholders = Object.keys(fields).map(() => '?').join(', ');
@@ -890,7 +890,7 @@ export function deviceRoutes(db: Database) {
 
       const oldConnector = await db.get('SELECT * FROM connectors WHERE id = ?', [connectorId]);
 
-      // admin / 总体人员 → 直接更新
+      // admin / 总体组 → 直接更新
       const setClauses = Object.keys(fields).map(k => `"${k}" = ?`).join(', ');
       const updateStatus = forceDraft ? 'Draft' : 'normal';
       const result = await db.run(
@@ -970,7 +970,7 @@ export function deviceRoutes(db: Database) {
 
       const isAdmin = role === 'admin';
       const isZonti = !isAdmin && await isZontiRenyuan(db, username, devRow.project_id);
-      if (!isAdmin && !isZonti) return res.status(403).json({ error: '无权限，需要总体人员角色' });
+      if (!isAdmin && !isZonti) return res.status(403).json({ error: '无权限，需要总体组角色' });
 
       // 校验目标连接器属于该设备
       const targetConn = await db.get('SELECT * FROM connectors WHERE id = ? AND device_id = ?', [targetConnectorId, deviceId]);
@@ -1068,10 +1068,10 @@ export function deviceRoutes(db: Database) {
       const isZonti = !isAdmin && !isDevMgr && await isZontiRenyuan(db, username, devRow.project_id);
 
       if (!isAdmin && !isDevMgr && !isZonti) {
-        return res.status(403).json({ error: '无权限，需要设备管理员或总体人员角色' });
+        return res.status(403).json({ error: '无权限，需要系统组或总体组角色' });
       }
 
-      // 设备管理员只能操作自己负责的设备
+      // 系统组只能操作自己负责的设备
       if (isDevMgr && devRow.设备负责人 !== username) {
         return res.status(403).json({ error: '只能操作自己负责的设备的针孔' });
       }
@@ -1080,7 +1080,7 @@ export function deviceRoutes(db: Database) {
       const cols = Object.keys(fields).map(k => `"${k}"`).join(', ');
       const placeholders = Object.keys(fields).map(() => '?').join(', ');
 
-      // admin / 总体人员 / 设备管理员 → 直接写入
+      // admin / 总体组 / 系统组 → 直接写入
       const insertStatus = forceDraft ? 'Draft' : 'normal';
       const result = await db.run(
         `INSERT INTO pins (connector_id, status, ${cols}) VALUES (?, ?, ${placeholders})`,
@@ -1124,7 +1124,7 @@ export function deviceRoutes(db: Database) {
         return res.status(403).json({ error: '无权限修改针孔' });
       }
 
-      // 设备管理员只能操作自己负责的设备
+      // 系统组只能操作自己负责的设备
       if (isDevMgr && devRow.设备负责人 !== username) {
         return res.status(403).json({ error: '只能操作自己负责的设备的针孔' });
       }
@@ -1134,7 +1134,7 @@ export function deviceRoutes(db: Database) {
 
       const oldPin = await db.get('SELECT * FROM pins WHERE id = ?', [pinId]);
 
-      // admin / 总体人员 / 设备管理员 → 直接更新
+      // admin / 总体组 / 系统组 → 直接更新
       const setClauses = Object.keys(fields).map(k => `"${k}" = ?`).join(', ');
       const updateStatus = forceDraft ? 'Draft' : 'normal';
       const result = await db.run(
@@ -1196,7 +1196,7 @@ export function deviceRoutes(db: Database) {
       const pinToDelete = await db.get('SELECT * FROM pins WHERE id = ? AND connector_id = ?', [pinId, req.params.connId]);
       if (!pinToDelete) return res.status(404).json({ error: '针孔不存在' });
 
-      // admin / 总体人员 / 设备管理员 → 级联删除
+      // admin / 总体组 / 系统组 → 级联删除
       const log: string[] = [];
       await cascadeDeletePin(db, pinId, req.user!.id, log);
       return res.json({ success: true });

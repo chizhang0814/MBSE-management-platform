@@ -181,11 +181,11 @@ export function authRoutes(db: Database) {
         [req.user.id, project_name, project_role]
       );
 
-      // 通知该项目所有总体人员
+      // 通知该项目所有总体组
       try {
         const project = await db.get('SELECT id FROM projects WHERE name = ?', [project_name]);
         if (project) {
-          const zontiList = await getProjectRoleMembers(db, project.id, '总体人员');
+          const zontiList = await getProjectRoleMembers(db, project.id, '总体组');
           const displayName = req.user.display_name || req.user.username;
           for (const u of zontiList) {
             await db.run(

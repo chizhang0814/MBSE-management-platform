@@ -1071,24 +1071,51 @@ export class Database {
     // 旧的"取消pending审批请求"和"重置Pending实体为Draft"的迁移代码
     // 已在2026-03-03完成，不再需要每次重启都执行
 
-    // ── 迁移：将所有用户permissions中的"项目管理员"改为"总体人员" ────────────────
+    // ── 迁移：将所有用户permissions中的"项目管理员"改为"总体组" ────────────────
     try {
       const allUsers = await this.query(`SELECT id, permissions FROM users WHERE permissions IS NOT NULL AND permissions != '[]'`);
       for (const u of allUsers) {
         try {
           const perms = JSON.parse(u.permissions || '[]');
           const updated = perms.map((p: any) =>
-            p.project_role === '项目管理员' ? { ...p, project_role: '总体人员' } : p
+            p.project_role === '项目管理员' ? { ...p, project_role: '总体组' } : p
           );
           if (JSON.stringify(updated) !== JSON.stringify(perms)) {
             await this.run('UPDATE users SET permissions = ? WHERE id = ?', [JSON.stringify(updated), u.id]);
           }
         } catch {}
       }
-      console.log('Database migration: renamed 项目管理员 to 总体人员 in permissions');
+      console.log('Database migration: renamed 项目管理员 to 总体组 in permissions');
     } catch (e: any) {
       console.log('Migration: rename role:', e.message);
     }
+
+    // ── 迁移：批量重命名角色 ────────────────
+    try {
+      const roleMap: Record<string, string> = {
+        '总体人员': '总体组',
+        '设备管理员': '系统组',
+        '一级包长': '总体PMO组',
+        '二级包长': '供应商组',
+        '只读': '其他组',
+      };
+      const allUsers2 = await this.query(`SELECT id, permissions FROM users WHERE permissions IS NOT NULL AND permissions != '[]'`);
+      for (const u of allUsers2) {
+        try {
+          const perms = JSON.parse(u.permissions || '[]');
+          let changed = false;
+          const updated = perms.map((p: any) => {
+            const newRole = roleMap[p.project_role];
+            if (newRole) { changed = true; return { ...p, project_role: newRole }; }
+            return p;
+          });
+          if (changed) {
+            await this.run('UPDATE users SET permissions = ? WHERE id = ?', [JSON.stringify(updated), u.id]);
+          }
+        } catch {}
+      }
+      console.log('Database migration: renamed roles (总体人员→总体组, 设备管理员→系统组, etc.)');
+    } catch (e: any) { console.log('Migration: rename roles:', e.message); }
 
     // 为 connectors 表添加 尾附件件号、触件型号 列
     try {

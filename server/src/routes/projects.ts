@@ -448,6 +448,7 @@ export function projectRoutes(db: Database) {
         }
 
         // ⑦ 复制 signal_endpoints（重映射 signal_id, device_id, pin_id）
+        const endpointMap: Record<number, number> = {};
         const oldSignalIds = Object.keys(signalMap).map(Number);
         if (oldSignalIds.length > 0) {
           const ph = oldSignalIds.map(() => '?').join(',');
@@ -463,10 +464,27 @@ export function projectRoutes(db: Database) {
             const allCols = ['signal_id', 'device_id', 'pin_id', ...cols];
             const placeholders = allCols.map(() => '?').join(', ');
             const values = [newSignalId, newDevId, newPinId, ...cols.map(k => ep[k])];
-            await db.run(
+            const r = await db.run(
               `INSERT INTO signal_endpoints (${allCols.map(c => `"${c}"`).join(', ')}) VALUES (${placeholders})`,
               values
             );
+            endpointMap[ep.id] = r.lastID;
+          }
+
+          // ⑦b 复制 signal_edges（重映射 signal_id, from_endpoint_id, to_endpoint_id）
+          const edges = await db.query(
+            `SELECT * FROM signal_edges WHERE signal_id IN (${ph})`, oldSignalIds
+          );
+          for (const edge of edges) {
+            const newSigId = signalMap[edge.signal_id];
+            const newFromId = endpointMap[edge.from_endpoint_id];
+            const newToId = endpointMap[edge.to_endpoint_id];
+            if (newSigId && newFromId && newToId) {
+              await db.run(
+                `INSERT INTO signal_edges (signal_id, from_endpoint_id, to_endpoint_id, direction, source_info) VALUES (?, ?, ?, ?, ?)`,
+                [newSigId, newFromId, newToId, edge.direction, edge.source_info]
+              );
+            }
           }
         }
 
@@ -1131,17 +1149,30 @@ export function projectRoutes(db: Database) {
                 );
                 const signalId = sigResult.lastID;
 
+                const importEpIds: number[] = [];
                 for (const ep of resolvedEps) {
                   if (!ep.pinId) continue;
                   const epInput  = ep.epIndex === 0 ? fromInput  : toInput;
                   const epOutput = ep.epIndex === 0 ? fromOutput : toOutput;
                   const epRemark = ep.epIndex === 0 ? fromRemark : toRemark;
-                  await db.run(
+                  const epRes = await db.run(
                     `INSERT INTO signal_endpoints
                        (signal_id, device_id, pin_id, endpoint_index, "端接尺寸", "信号名称", "信号定义", "input", "output", "备注")
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                     [signalId, ep.deviceId, ep.pinId, ep.epIndex,
                      ep.termSize || null, ep.sigName || null, ep.sigDef || null, epInput, epOutput, epRemark]
+                  );
+                  importEpIds.push(epRes.lastID);
+                }
+
+                // 创建 edge（从端 → 到端）
+                if (importEpIds.length >= 2) {
+                  const dirRaw = getV(row, '信号方向（从）').toUpperCase();
+                  const direction = (dirRaw.includes('BI')) ? 'bidirectional' : 'directed';
+                  await db.run(
+                    `INSERT INTO signal_edges (signal_id, from_endpoint_id, to_endpoint_id, direction, source_info)
+                     VALUES (?, ?, ?, ?, ?)`,
+                    [signalId, importEpIds[0], importEpIds[1], direction, `${originalName} / ${sigSheetName} / 第${rowNum}行`]
                   );
                 }
 
@@ -1190,15 +1221,30 @@ export function projectRoutes(db: Database) {
                   );
                   let nextIdx: number = (maxIdxRow?.m ?? -1) + 1;
 
+                  const secEpIdMap: Record<number, number> = {}; // old ep id → new ep id
                   for (const sep of secEndpoints) {
                     if (sep.pin_id && primaryPinSet.has(sep.pin_id)) continue; // 去重
-                    await db.run(
+                    const newEpRes = await db.run(
                       `INSERT INTO signal_endpoints (signal_id, device_id, pin_id, endpoint_index, "端接尺寸", "信号名称", "信号定义", "input", "output", "备注")
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                       [primaryId, sep.device_id, sep.pin_id, nextIdx++,
                        sep['端接尺寸'] || null, sep['信号名称'] || null, sep['信号定义'] || null, sep.input || 0, sep.output || 0, sep['备注'] || null]
                     );
+                    secEpIdMap[sep.id] = newEpRes.lastID;
                     if (sep.pin_id) primaryPinSet.add(sep.pin_id);
+                  }
+
+                  // 迁移次信号的 edges 到主信号（重映射 endpoint_id）
+                  const secEdges = await db.query('SELECT * FROM signal_edges WHERE signal_id = ?', [secId]);
+                  for (const edge of secEdges) {
+                    const newFrom = secEpIdMap[edge.from_endpoint_id];
+                    const newTo = secEpIdMap[edge.to_endpoint_id];
+                    if (newFrom && newTo) {
+                      await db.run(
+                        `INSERT INTO signal_edges (signal_id, from_endpoint_id, to_endpoint_id, direction, source_info) VALUES (?, ?, ?, ?, ?)`,
+                        [primaryId, newFrom, newTo, edge.direction, edge.source_info]
+                      );
+                    }
                   }
 
                   // 拼接 unique_id
@@ -1207,7 +1253,7 @@ export function projectRoutes(db: Database) {
                   // 记录信号合并事件
                   mergeNotes.push(`[${originalName}/${sigSheetName}/第${rowNum}行] 信号合并：将信号 ${secUniqueId}(id=${secId}) 合并入主信号 ${primarySignal.unique_id}(id=${primaryId})`);
 
-                  // 删除被合并的旧信号（CASCADE 会删除其 signal_endpoints）
+                  // 删除被合并的旧信号（CASCADE 删除其 signal_endpoints 和 signal_edges）
                   await db.run('DELETE FROM signals WHERE id = ?', [secId]);
                 }
 
@@ -1218,14 +1264,23 @@ export function projectRoutes(db: Database) {
                 );
                 let nextIdx2: number = (maxIdxRow2?.m ?? -1) + 1;
                 const addedEps: string[] = [];
+                const mergeNewEpIds: number[] = [];
 
                 for (const ep of resolvedEps) {
                   if (!ep.pinId) continue;
-                  if (primaryPinSet.has(ep.pinId)) continue; // 去重
+                  if (primaryPinSet.has(ep.pinId)) {
+                    // 端点已存在，找到已有的 endpoint id 用于 edge
+                    const existingEp = await db.get(
+                      'SELECT id FROM signal_endpoints WHERE signal_id = ? AND pin_id = ?',
+                      [primaryId, ep.pinId]
+                    );
+                    if (existingEp) mergeNewEpIds.push(existingEp.id);
+                    continue;
+                  }
                   const epInput  = ep.epIndex === 0 ? fromInput  : toInput;
                   const epOutput = ep.epIndex === 0 ? fromOutput : toOutput;
                   const epRemark = ep.epIndex === 0 ? fromRemark : toRemark;
-                  await db.run(
+                  const newEpRes = await db.run(
                     `INSERT INTO signal_endpoints
                        (signal_id, device_id, pin_id, endpoint_index, "端接尺寸", "信号名称", "信号定义", "input", "output", "备注")
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -1233,7 +1288,18 @@ export function projectRoutes(db: Database) {
                      ep.termSize || null, ep.sigName || null, ep.sigDef || null, epInput, epOutput, epRemark]
                   );
                   primaryPinSet.add(ep.pinId);
+                  mergeNewEpIds.push(newEpRes.lastID);
                   addedEps.push(`${ep.devNum}/${ep.compId}/${ep.pinNum}`);
+                }
+
+                // 为本行导入的端点对创建 edge（from → to）
+                if (mergeNewEpIds.length >= 2) {
+                  const dirRaw = getV(row, '信号方向（从）').toUpperCase();
+                  const direction = dirRaw.includes('BI') ? 'bidirectional' : 'directed';
+                  await db.run(
+                    `INSERT INTO signal_edges (signal_id, from_endpoint_id, to_endpoint_id, direction, source_info) VALUES (?, ?, ?, ?, ?)`,
+                    [primaryId, mergeNewEpIds[0], mergeNewEpIds[1], direction, `${originalName} / ${sigSheetName} / 第${rowNum}行`]
+                  );
                 }
 
                 // 拼接新记录的 unique_id
@@ -1748,7 +1814,7 @@ export function projectRoutes(db: Database) {
 
   // ── 全机设备清单 ───────────────────────────────────────────
 
-  // 查看清单（管理员或总体人员）
+  // 查看清单（管理员或总体组）
   router.get('/:id/aircraft-devices', authenticate, requireAdminOrZonti(db), async (req: AuthRequest, res) => {
     try {
       const projectId = Number(req.params.id);
@@ -1800,7 +1866,7 @@ export function projectRoutes(db: Database) {
     }
   });
 
-  // 导入清单（管理员或总体人员）
+  // 导入清单（管理员或总体组）
   router.post('/:id/aircraft-devices/import', authenticate, requireAdminOrZonti(db), upload.single('file'), async (req: AuthRequest, res) => {
     if (!req.file) return res.status(400).json({ error: '未上传文件' });
     try {
