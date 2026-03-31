@@ -6,9 +6,9 @@ interface TourGuideProps {
   user: { id: number; username: string; role: string } | null;
 }
 
-type ProjectRole = '总体人员' | 'EWIS管理员' | '设备管理员' | '一级包长' | '二级包长' | '只读' | '';
+type ProjectRole = '总体组' | 'EWIS管理员' | '系统组' | '总体PMO组' | '供应商组' | '其他组' | '';
 
-const ROLE_PRIORITY: ProjectRole[] = ['总体人员', 'EWIS管理员', '设备管理员', '一级包长', '二级包长', '只读'];
+const ROLE_PRIORITY: ProjectRole[] = ['总体组', 'EWIS管理员', '系统组', '总体PMO组', '供应商组', '其他组'];
 
 function getPrimaryRole(roles: string[]): ProjectRole {
   for (const r of ROLE_PRIORITY) {
@@ -33,25 +33,25 @@ export default function TourGuide({ user }: TourGuideProps) {
       .then(data => {
         const roles: string[] = (data.permissions || []).map((p: { project_role: string }) => p.project_role);
         const primaryRole = getPrimaryRole(roles);
-        const canManage = primaryRole === '总体人员' || primaryRole === '设备管理员';
+        const canManage = primaryRole === '总体组' || primaryRole === '系统组';
 
         // 步骤 1：筛选栏
         const filterDesc = (() => {
           const base = '这里可以切换设备列表的显示范围：\n• 全部：显示该项目下所有设备\n• 我的：只显示您负责的设备';
-          if (primaryRole === '总体人员') return base + '\n• 待我审批：等待您审批通过的变更申请';
-          if (primaryRole === '设备管理员') return base + '\n• 待我完善：审批流程中需要您补充信息的设备';
+          if (primaryRole === '总体组') return base + '\n• 待我审批：等待您审批通过的变更申请';
+          if (primaryRole === '系统组') return base + '\n• 待我完善：审批流程中需要您补充信息的设备';
           return base;
         })();
 
         // 步骤 3：编辑设备
-        const editDesc = primaryRole === '总体人员'
+        const editDesc = primaryRole === '总体组'
           ? '点击编辑可修改设备信息，您也可以在此审批他人提交的变更。'
           : '点击编辑可修改您负责的设备信息，保存后自动提交审批流程。';
 
         // 步骤 5：通知中心
-        const notifDesc = primaryRole === '总体人员'
+        const notifDesc = primaryRole === '总体组'
           ? '变更审批请求和权限申请会在这里提醒，红点表示有待处理事项，请及时审批。'
-          : primaryRole === '设备管理员'
+          : primaryRole === '系统组'
           ? '当您提交的变更需要补充信息时，会在这里收到通知。'
           : '系统消息和通知在这里显示，红点表示有未读消息。';
 

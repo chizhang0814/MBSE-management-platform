@@ -88,7 +88,7 @@ export function signalRoutes(db: Database) {
     operatorUsername: string,
     resolvedEndpoints: Array<{ deviceId: number; pinId: number | null }>
   ): Promise<ApprovalItemSpec[]> {
-    const zontiList = await getProjectRoleMembers(db, projectId, '总体人员');
+    const zontiList = await getProjectRoleMembers(db, projectId, '总体组');
     const items: ApprovalItemSpec[] = [];
 
     zontiList.filter(u => u !== operatorUsername).forEach(u =>
@@ -327,12 +327,12 @@ export function signalRoutes(db: Database) {
       const role = req.user!.role;
 
       if (!await canOperateSignals(db, username, role, project_id)) {
-        return res.status(403).json({ error: '无权限，需要设备管理员、总体人员或EWIS管理员角色' });
+        return res.status(403).json({ error: '无权限，需要系统组、总体组或EWIS管理员角色' });
       }
 
       signalFields.created_by = username;
 
-      // 设备管理员：至少一个端点属于当前用户负责的设备
+      // 系统组：至少一个端点属于当前用户负责的设备
       const isDevMgr = role !== 'admin' && await isDeviceManager(db, username, project_id);
       if (isDevMgr && Array.isArray(endpoints) && endpoints.length > 0) {
         const hasOwnEndpoint = await Promise.any(
@@ -462,12 +462,24 @@ export function signalRoutes(db: Database) {
           );
           let nextIdx: number = (maxIdxRow?.m ?? -1) + 1;
 
+          const mergedNewEpIds: number[] = [];
           for (const { ep, deviceId, pinId } of resolved) {
             if ((pinId && !existingPinSet.has(pinId)) || !pinId) {
-              await db.run(
+              const epRes = await db.run(
                 `INSERT INTO signal_endpoints (signal_id, device_id, pin_id, endpoint_index, 信号名称, 信号定义)
                  VALUES (?, ?, ?, ?, ?, ?)`,
                 [top.signal_id, deviceId, pinId, nextIdx++, ep.信号名称 || null, ep.信号定义 || null]
+              );
+              mergedNewEpIds.push(epRes.lastID);
+            }
+          }
+
+          // 为合并的新端点创建 edges（新端点之间互相连接）
+          if (mergedNewEpIds.length >= 2) {
+            for (let mi = 1; mi < mergedNewEpIds.length; mi++) {
+              await db.run(
+                `INSERT INTO signal_edges (signal_id, from_endpoint_id, to_endpoint_id, direction) VALUES (?, ?, ?, 'directed')`,
+                [top.signal_id, mergedNewEpIds[0], mergedNewEpIds[mi]]
               );
             }
           }
@@ -528,13 +540,29 @@ export function signalRoutes(db: Database) {
       );
       const signalId = sigResult.lastID;
 
+      const insertedEpIds: number[] = [];
       for (let i = 0; i < resolved.length; i++) {
         const { ep, deviceId, pinId } = resolved[i];
-        await db.run(
+        const epResult = await db.run(
           `INSERT INTO signal_endpoints (signal_id, device_id, pin_id, endpoint_index, 信号名称, 信号定义, input, output)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           [signalId, deviceId, pinId, i, ep.信号名称 || null, ep.信号定义 || null, ep.input ?? 0, ep.output ?? 0]
         );
+        insertedEpIds.push(epResult.lastID);
+      }
+
+      // 创建 edges：2端点→1条边(ep0→ep1)，>2端点→ep0连接每个后续端点
+      if (insertedEpIds.length >= 2) {
+        for (let i = 1; i < insertedEpIds.length; i++) {
+          const fromEp = resolved[0].ep;
+          const toEp = resolved[i].ep;
+          const bothBi = (fromEp.input && fromEp.output) || (toEp.input && toEp.output);
+          const direction = bothBi ? 'bidirectional' : 'directed';
+          await db.run(
+            `INSERT INTO signal_edges (signal_id, from_endpoint_id, to_endpoint_id, direction) VALUES (?, ?, ?, ?)`,
+            [signalId, insertedEpIds[0], insertedEpIds[i], direction]
+          );
+        }
       }
 
       // admin → 直接写入 Active（非草稿）
@@ -618,7 +646,7 @@ export function signalRoutes(db: Database) {
         }
       }
 
-      // 临时策略：总体人员/设备管理员/EWIS管理员 → 与 admin 相同，直接更新不走审批
+      // 临时策略：总体组/系统组/EWIS管理员 → 与 admin 相同，直接更新不走审批
       const isPrivilegedRole = role === 'admin'
         || await isZontiRenyuan(db, username, signal.project_id)
         || await isDeviceManager(db, username, signal.project_id)
@@ -637,8 +665,23 @@ export function signalRoutes(db: Database) {
         }
 
         if (Array.isArray(endpoints)) {
+          // 保存旧 edges（用 pin_id 作为键，删除后重建）
+          const oldEdges = await db.query(
+            `SELECT e.direction, e.source_info,
+                    se_from.pin_id as from_pin_id, se_to.pin_id as to_pin_id
+             FROM signal_edges e
+             JOIN signal_endpoints se_from ON e.from_endpoint_id = se_from.id
+             JOIN signal_endpoints se_to ON e.to_endpoint_id = se_to.id
+             WHERE e.signal_id = ?`,
+            [signalId]
+          );
+
           await db.run('DELETE FROM signal_endpoints WHERE signal_id = ?', [signalId]);
+          // edges 被 CASCADE 删除
+
           const endpointErrors: string[] = [];
+          const newEpByPin: Record<number, number> = {}; // pin_id → new endpoint id
+
           for (let i = 0; i < endpoints.length; i++) {
             const ep = endpoints[i];
             if (!ep.设备编号) { endpointErrors.push(`端点${i + 1}: 必须选择设备`); continue; }
@@ -657,11 +700,13 @@ export function signalRoutes(db: Database) {
               if (!pin) { endpointErrors.push(`端点${i + 1}: 找不到 ${ep.设备端元器件编号}.${ep.针孔号}`); continue; }
               pinId = pin.id;
             }
-            await db.run(
+            const epRes = await db.run(
               `INSERT INTO signal_endpoints (signal_id, device_id, pin_id, endpoint_index, "端接尺寸", "信号名称", "信号定义", input, output)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
               [signalId, device.id, pinId, i, ep.端接尺寸 || null, ep.信号名称 || null, ep.信号定义 || null, ep.input ?? 0, ep.output ?? 0]
             );
+            if (pinId) newEpByPin[pinId] = epRes.lastID;
+
             // 更新针孔的端接尺寸和屏蔽类型
             if (pinId && (ep.端接尺寸 !== undefined || ep.屏蔽类型 !== undefined)) {
               const pinUpdates: string[] = [];
@@ -671,6 +716,32 @@ export function signalRoutes(db: Database) {
               if (pinUpdates.length > 0) {
                 await db.run(`UPDATE pins SET ${pinUpdates.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [...pinVals, pinId]);
               }
+            }
+          }
+
+          // 重建 edges：用 pin_id 映射到新 endpoint id
+          for (const oe of oldEdges) {
+            const newFromId = oe.from_pin_id ? newEpByPin[oe.from_pin_id] : null;
+            const newToId = oe.to_pin_id ? newEpByPin[oe.to_pin_id] : null;
+            if (newFromId && newToId) {
+              await db.run(
+                `INSERT INTO signal_edges (signal_id, from_endpoint_id, to_endpoint_id, direction, source_info) VALUES (?, ?, ?, ?, ?)`,
+                [signalId, newFromId, newToId, oe.direction, oe.source_info]
+              );
+            }
+          }
+
+          // 新增的端点（oldEdges 里没有的）：如果有新端点未在任何 edge 中出现，创建 edge 连接到第一个端点
+          const edgePinIds = new Set<number>();
+          for (const oe of oldEdges) { if (oe.from_pin_id) edgePinIds.add(oe.from_pin_id); if (oe.to_pin_id) edgePinIds.add(oe.to_pin_id); }
+          const allNewPinIds = Object.keys(newEpByPin).map(Number);
+          const firstEpId = allNewPinIds.length > 0 ? newEpByPin[allNewPinIds[0]] : null;
+          for (const pinId of allNewPinIds) {
+            if (!edgePinIds.has(pinId) && newEpByPin[pinId] !== firstEpId && firstEpId) {
+              await db.run(
+                `INSERT INTO signal_edges (signal_id, from_endpoint_id, to_endpoint_id, direction) VALUES (?, ?, ?, 'directed')`,
+                [signalId, firstEpId, newEpByPin[pinId]]
+              );
             }
           }
 
@@ -921,7 +992,7 @@ export function signalRoutes(db: Database) {
         return res.status(403).json({ error: '无权限删除信号' });
       }
 
-      // 设备管理员：只能删除有自己端点的信号
+      // 系统组：只能删除有自己端点的信号
       const isDevMgr = await isDeviceManager(db, username, signal.project_id);
       if (isDevMgr) {
         const ownEndpoint = await db.get(

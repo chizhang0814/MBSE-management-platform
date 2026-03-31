@@ -25,7 +25,7 @@ interface Props {
   onClose: () => void;
 }
 
-const PROJECT_ROLES = ['总体人员', 'EWIS管理员', '设备管理员', '一级包长', '二级包长'];
+const PROJECT_ROLES = ['总体组', '系统组', '总体PMO组', '供应商组'];
 
 export default function ProfileModal({ onClose }: Props) {
   const { user: currentUser, token, updateUser } = useAuth();

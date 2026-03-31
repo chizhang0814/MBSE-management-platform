@@ -110,7 +110,7 @@ export default function ProjectManagement() {
 
   const isAdmin = user?.role === 'admin';
   const [myPermissions, setMyPermissions] = useState<{ project_name: string; project_role: string }[]>([]);
-  const isZonti = myPermissions.some(p => p.project_role === '总体人员');
+  const isZonti = myPermissions.some(p => p.project_role === '总体组');
 
   useEffect(() => {
     loadProjects();

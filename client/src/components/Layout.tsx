@@ -105,7 +105,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
   const isActive = (path: string) => location.pathname === path;
   const isAdmin = user?.role === 'admin';
-  const isZonti = myPermissions.some(p => p.project_role === '总体人员');
+  const isZonti = myPermissions.some(p => p.project_role === '总体组');
+  const isPMO = myPermissions.some(p => p.project_role === '总体PMO组');
 
   return (
     <div className="h-screen bg-gray-50 flex flex-col overflow-hidden">
@@ -173,6 +174,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                     >
                       文件管理
                     </Link>
+                  </>
+                )}
+                {(isAdmin || isPMO) && (
                     <Link
                       to="/users"
                       className={`${
@@ -181,7 +185,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                     >
                       用户管理
                     </Link>
-                  </>
                 )}
               </div>
             </div>
