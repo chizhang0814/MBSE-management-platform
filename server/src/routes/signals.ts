@@ -316,7 +316,7 @@ export function signalRoutes(db: Database) {
   router.post('/', authenticate, async (req: AuthRequest, res) => {
     try {
       const { project_id, endpoints, draft: isDraft, ...signalFields } = req.body;
-      delete signalFields['导线等级'];
+      delete signalFields['导线等级']; delete signalFields.edges;
       // 连接类型非ARINC 429/CAN Bus时清空协议标识
       if (signalFields['连接类型'] !== 'ARINC 429' && signalFields['连接类型'] !== 'CAN Bus') {
         signalFields['协议标识'] = null;
@@ -630,7 +630,7 @@ export function signalRoutes(db: Database) {
 
       const { endpoints, version, submit: shouldSubmit, forceDraft, draft: _draft, ...fields } = req.body;
       delete fields.id; delete fields.project_id; delete fields.created_at; delete fields.status;
-      delete fields.pending_item_type; delete fields['导线等级'];
+      delete fields.pending_item_type; delete fields['导线等级']; delete fields.edges;
       if (fields['连接类型'] !== 'ARINC 429' && fields['连接类型'] !== 'CAN Bus') {
         fields['协议标识'] = null;
       }
