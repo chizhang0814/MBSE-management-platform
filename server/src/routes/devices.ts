@@ -3,7 +3,7 @@ import { Database } from '../database.js';
 import { authenticate, requireRole, AuthRequest } from '../middleware/auth.js';
 import {
   isZontiRenyuan, isDeviceManager, getProjectRoleMembers,
-  submitChangeRequest, ApprovalItemSpec, SPECIAL_ERN_LIN, cascadeDeletePinShared,
+  submitChangeRequest, ApprovalItemSpec, SPECIAL_ERN_LIN, cascadeDeletePinShared, isPinFrozen,
 } from '../shared/approval-helper.js';
 import { validateConnectorCompId } from '../shared/column-schema.js';
 
@@ -736,41 +736,81 @@ export function deviceRoutes(db: Database) {
           .trim();
       }
 
-      // admin / 总体组 → 直接更新（带校验）
-      const setClauses = Object.keys(fields).map(k => `"${k}" = ?`).join(', ');
-      const values = [...Object.values(fields), deviceId, version ?? 1];
-      const result = await db.run(
-        `UPDATE devices SET ${setClauses}, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND version = ?`,
-        values
-      );
-      if (result.changes === 0) {
-        return res.status(409).json({ error: '记录已被他人修改，请刷新后重试' });
+      // admin → 直接更新
+      if (isAdmin) {
+        const setClauses = Object.keys(fields).map(k => `"${k}" = ?`).join(', ');
+        const result = await db.run(
+          `UPDATE devices SET ${setClauses}, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND version = ?`,
+          [...Object.values(fields), deviceId, version ?? 1]
+        );
+        if (result.changes === 0) return res.status(409).json({ error: '记录已被他人修改，请刷新后重试' });
+        await db.run(
+          `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, old_values, new_values, reason, status)
+           VALUES ('devices', ?, ?, 'devices', ?, ?, ?, ?, ?)`,
+          [deviceId, deviceId, req.user!.id, JSON.stringify(device), JSON.stringify(fields),
+           forceDraft ? '修改设备(Draft)' : '修改设备', forceDraft ? 'draft' : 'approved']
+        );
+        const merged = { ...device, ...fields };
+        if (forceDraft) {
+          const ve = await validateDevice(merged, device.project_id);
+          await db.run(`UPDATE devices SET status = 'Draft', import_status = NULL, validation_errors = ? WHERE id = ?`, [JSON.stringify(ve), deviceId]);
+        } else {
+          const ve = await validateDevice(merged, device.project_id);
+          await db.run(`UPDATE devices SET status = ?, import_status = NULL, validation_errors = ? WHERE id = ?`,
+            [ve.messages.length > 0 ? 'Draft' : 'normal', JSON.stringify(ve), deviceId]);
+        }
+        return res.json({ success: true });
       }
-      await db.run(
-        `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, old_values, new_values, reason, status)
-         VALUES ('devices', ?, ?, 'devices', ?, ?, ?, ?, ?)`,
-        [deviceId, deviceId, req.user!.id, JSON.stringify(device), JSON.stringify(fields),
-         forceDraft ? '修改设备(Draft)' : '修改设备', forceDraft ? 'draft' : 'approved']
-      );
 
-      const merged = { ...device, ...fields };
-      const projectId = device.project_id;
-
+      // 总体组 → Draft 直接更新，提交走审批
       if (forceDraft) {
-        const ve = await validateDevice(merged, projectId);
-        await db.run(
-          `UPDATE devices SET status = 'Draft', import_status = NULL, validation_errors = ? WHERE id = ?`,
-          [JSON.stringify(ve), deviceId]
+        const setClauses = Object.keys(fields).map(k => `"${k}" = ?`).join(', ');
+        const result = await db.run(
+          `UPDATE devices SET ${setClauses}, status = 'Draft', version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND version = ?`,
+          [...Object.values(fields), deviceId, version ?? 1]
         );
-      } else {
-        const ve = await validateDevice(merged, projectId);
+        if (result.changes === 0) return res.status(409).json({ error: '记录已被他人修改，请刷新后重试' });
         await db.run(
-          `UPDATE devices SET status = ?, import_status = NULL, validation_errors = ? WHERE id = ?`,
-          [ve.messages.length > 0 ? 'Draft' : 'normal', JSON.stringify(ve), deviceId]
+          `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, old_values, new_values, reason, status)
+           VALUES ('devices', ?, ?, 'devices', ?, ?, ?, '修改设备(Draft)', 'draft')`,
+          [deviceId, deviceId, req.user!.id, JSON.stringify(device), JSON.stringify(fields)]
         );
+        return res.json({ success: true });
       }
 
-      return res.json({ success: true });
+      // 总体组提交审批：不直接修改设备数据，存入审批请求
+      await db.run(`UPDATE devices SET status = 'Pending' WHERE id = ?`, [deviceId]);
+
+      const zontiList = await getProjectRoleMembers(db, device.project_id, '总体组');
+      const otherZonti = zontiList.filter(u => u !== username);
+      if (otherZonti.length === 0) {
+        // 没有其他总体组成员，直接生效
+        const setClauses = Object.keys(fields).map(k => `"${k}" = ?`).join(', ');
+        await db.run(
+          `UPDATE devices SET ${setClauses}, status = 'normal', version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+          [...Object.values(fields), deviceId]
+        );
+        await db.run(
+          `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, old_values, new_values, reason, status)
+           VALUES ('devices', ?, ?, 'devices', ?, ?, ?, '修改设备（无需审批）', 'approved')`,
+          [deviceId, deviceId, req.user!.id, JSON.stringify(device), JSON.stringify(fields)]
+        );
+        return res.json({ success: true });
+      }
+
+      const items: ApprovalItemSpec[] = otherZonti.map(u => ({ recipient_username: u, item_type: 'approval' as const }));
+      await submitChangeRequest(db, {
+        projectId: device.project_id,
+        requesterId: req.user!.id,
+        requesterUsername: username,
+        actionType: 'edit_device',
+        entityType: 'device',
+        entityId: deviceId,
+        oldPayload: device,
+        newPayload: fields,
+        items,
+      });
+      return res.status(202).json({ pending: true, message: '已提交审批，等待其他总体组成员审批' });
     } catch (error: any) {
       if (error.message?.includes('UNIQUE')) {
         return res.status(409).json({ error: '该项目中设备LIN号（DOORS）已存在' });
@@ -820,8 +860,35 @@ export function deviceRoutes(db: Database) {
       const isZonti = !isAdmin && await isZontiRenyuan(db, username, device.project_id);
       if (!isAdmin && !isZonti) return res.status(403).json({ error: '无权限删除此设备' });
 
-      await cascadeDeleteDevice(db, deviceId, req.user!.id);
-      return res.json({ success: true });
+      // admin → 直接级联删除
+      if (isAdmin) {
+        await cascadeDeleteDevice(db, deviceId, req.user!.id);
+        return res.json({ success: true });
+      }
+
+      // 总体组 → 提交删除审批
+      await db.run(`UPDATE devices SET status = 'Pending' WHERE id = ?`, [deviceId]);
+
+      const zontiList = await getProjectRoleMembers(db, device.project_id, '总体组');
+      const otherZonti = zontiList.filter(u => u !== username);
+      if (otherZonti.length === 0) {
+        await cascadeDeleteDevice(db, deviceId, req.user!.id);
+        return res.json({ success: true });
+      }
+
+      const items: ApprovalItemSpec[] = otherZonti.map(u => ({ recipient_username: u, item_type: 'approval' as const }));
+      await submitChangeRequest(db, {
+        projectId: device.project_id,
+        requesterId: req.user!.id,
+        requesterUsername: username,
+        actionType: 'delete_device',
+        entityType: 'device',
+        entityId: deviceId,
+        oldPayload: device,
+        newPayload: {},
+        items,
+      });
+      return res.status(202).json({ pending: true, message: '删除请求已提交审批' });
     } catch (error: any) {
       res.status(500).json({ error: error.message || '删除设备失败' });
     }
@@ -991,23 +1058,73 @@ export function deviceRoutes(db: Database) {
 
       const oldConnector = await db.get('SELECT * FROM connectors WHERE id = ?', [connectorId]);
 
-      // admin / 总体组 → 直接更新
-      const setClauses = Object.keys(fields).map(k => `"${k}" = ?`).join(', ');
-      const updateStatus = forceDraft ? 'Draft' : 'normal';
-      const result = await db.run(
-        `UPDATE connectors SET ${setClauses}, status = ?, import_status = NULL, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND version = ?`,
-        [...Object.values(fields), updateStatus, connectorId, version ?? 1]
-      );
-      if (result.changes === 0) {
-        return res.status(409).json({ error: '记录已被他人修改，请刷新后重试' });
+      // admin → 直接更新
+      if (isAdmin) {
+        const setClauses = Object.keys(fields).map(k => `"${k}" = ?`).join(', ');
+        const updateStatus = forceDraft ? 'Draft' : 'normal';
+        const result = await db.run(
+          `UPDATE connectors SET ${setClauses}, status = ?, import_status = NULL, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND version = ?`,
+          [...Object.values(fields), updateStatus, connectorId, version ?? 1]
+        );
+        if (result.changes === 0) return res.status(409).json({ error: '记录已被他人修改，请刷新后重试' });
+        await db.run(
+          `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, old_values, new_values, reason, status)
+           VALUES ('connectors', ?, ?, 'connectors', ?, ?, ?, ?, ?)`,
+          [connectorId, connectorId, req.user!.id, JSON.stringify(oldConnector), JSON.stringify(fields),
+           forceDraft ? '修改连接器(Draft)' : '修改连接器', forceDraft ? 'draft' : 'approved']
+        );
+        return res.json({ success: true });
       }
-      await db.run(
-        `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, old_values, new_values, reason, status)
-         VALUES ('connectors', ?, ?, 'connectors', ?, ?, ?, ?, ?)`,
-        [connectorId, connectorId, req.user!.id, JSON.stringify(oldConnector), JSON.stringify(fields),
-         forceDraft ? '修改连接器(Draft)' : '修改连接器', forceDraft ? 'draft' : 'approved']
-      );
-      return res.json({ success: true });
+
+      // 总体组 → Draft 直接更新，提交走审批
+      if (forceDraft) {
+        const setClauses = Object.keys(fields).map(k => `"${k}" = ?`).join(', ');
+        const result = await db.run(
+          `UPDATE connectors SET ${setClauses}, status = 'Draft', import_status = NULL, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND version = ?`,
+          [...Object.values(fields), connectorId, version ?? 1]
+        );
+        if (result.changes === 0) return res.status(409).json({ error: '记录已被他人修改，请刷新后重试' });
+        await db.run(
+          `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, old_values, new_values, reason, status)
+           VALUES ('connectors', ?, ?, 'connectors', ?, ?, ?, '修改连接器(Draft)', 'draft')`,
+          [connectorId, connectorId, req.user!.id, JSON.stringify(oldConnector), JSON.stringify(fields)]
+        );
+        return res.json({ success: true });
+      }
+
+      // 总体组提交审批
+      await db.run(`UPDATE connectors SET status = 'Pending' WHERE id = ?`, [connectorId]);
+
+      const zontiList = await getProjectRoleMembers(db, devRow.project_id, '总体组');
+      const otherZonti = zontiList.filter(u => u !== username);
+      if (otherZonti.length === 0) {
+        const setClauses = Object.keys(fields).map(k => `"${k}" = ?`).join(', ');
+        await db.run(
+          `UPDATE connectors SET ${setClauses}, status = 'normal', import_status = NULL, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+          [...Object.values(fields), connectorId]
+        );
+        await db.run(
+          `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, old_values, new_values, reason, status)
+           VALUES ('connectors', ?, ?, 'connectors', ?, ?, ?, '修改连接器（无需审批）', 'approved')`,
+          [connectorId, connectorId, req.user!.id, JSON.stringify(oldConnector), JSON.stringify(fields)]
+        );
+        return res.json({ success: true });
+      }
+
+      const items: ApprovalItemSpec[] = otherZonti.map(u => ({ recipient_username: u, item_type: 'approval' as const }));
+      await submitChangeRequest(db, {
+        projectId: devRow.project_id,
+        requesterId: req.user!.id,
+        requesterUsername: username,
+        actionType: 'edit_connector',
+        entityType: 'connector',
+        entityId: connectorId,
+        deviceId: parseInt(req.params.devId),
+        oldPayload: oldConnector,
+        newPayload: fields,
+        items,
+      });
+      return res.status(202).json({ pending: true, message: '已提交审批，等待其他总体组成员审批' });
     } catch (error: any) {
       if (error.message?.includes('UNIQUE')) {
         return res.status(409).json({ error: '该设备中设备端元器件编号已存在' });
@@ -1044,9 +1161,38 @@ export function deviceRoutes(db: Database) {
       const connToDelete = await db.get('SELECT * FROM connectors WHERE id = ? AND device_id = ?', [connectorId, req.params.devId]);
       if (!connToDelete) return res.status(404).json({ error: '连接器不存在' });
 
-      const log: string[] = [];
-      await cascadeDeleteConnector(db, connectorId, req.user!.id, log);
-      return res.json({ success: true });
+      // admin → 直接级联删除
+      if (isAdmin) {
+        const log: string[] = [];
+        await cascadeDeleteConnector(db, connectorId, req.user!.id, log);
+        return res.json({ success: true });
+      }
+
+      // 总体组 → 提交删除审批
+      await db.run(`UPDATE connectors SET status = 'Pending' WHERE id = ?`, [connectorId]);
+
+      const zontiList = await getProjectRoleMembers(db, devRow.project_id, '总体组');
+      const otherZonti = zontiList.filter(u => u !== username);
+      if (otherZonti.length === 0) {
+        const log: string[] = [];
+        await cascadeDeleteConnector(db, connectorId, req.user!.id, log);
+        return res.json({ success: true });
+      }
+
+      const items: ApprovalItemSpec[] = otherZonti.map(u => ({ recipient_username: u, item_type: 'approval' as const }));
+      await submitChangeRequest(db, {
+        projectId: devRow.project_id,
+        requesterId: req.user!.id,
+        requesterUsername: username,
+        actionType: 'delete_connector',
+        entityType: 'connector',
+        entityId: connectorId,
+        deviceId: parseInt(req.params.devId),
+        oldPayload: connToDelete,
+        newPayload: {},
+        items,
+      });
+      return res.status(202).json({ pending: true, message: '删除请求已提交审批' });
     } catch (error: any) {
       res.status(500).json({ error: error.message || '删除连接器失败' });
     }
@@ -1165,6 +1311,12 @@ export function deviceRoutes(db: Database) {
       if (String(devRow.lin || '').trim() === SPECIAL_ERN_LIN && !isAdmin) {
         return res.status(403).json({ error: '固有ERN针孔不可添加' });
       }
+      // 检查设备/连接器是否待删除审批中
+      const delDevReq = await db.get(`SELECT id FROM approval_requests WHERE entity_type = 'device' AND entity_id = ? AND action_type = 'delete_device' AND status = 'pending'`, [req.params.devId]);
+      if (delDevReq) return res.status(403).json({ error: '设备待删除审批中，不可操作针孔' });
+      const delConnReq = await db.get(`SELECT id FROM approval_requests WHERE entity_type = 'connector' AND entity_id = ? AND action_type = 'delete_connector' AND status = 'pending'`, [connectorId]);
+      if (delConnReq) return res.status(403).json({ error: '连接器待删除审批中，不可操作针孔' });
+
       const isDevMgr = !isAdmin && await isDeviceManager(db, username, devRow.project_id);
 
       if (!isAdmin && !isDevMgr) {

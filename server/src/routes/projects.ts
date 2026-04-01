@@ -15,7 +15,7 @@ import {
   SIGNALS_EXCEL_TO_DB,
   validateConnectorCompId,
 } from '../shared/column-schema.js';
-import { SPECIAL_ERN_LIN } from '../shared/approval-helper.js';
+import { SPECIAL_ERN_LIN, isPinFrozen } from '../shared/approval-helper.js';
 
 /** 为新项目插入固有ERN设备（含连接器和针孔） */
 async function insertSpecialERN(db: Database, projectId: number) {
@@ -1107,6 +1107,20 @@ export function projectRoutes(db: Database) {
                   ep.pinId = pinRow.id;
                 }
               }
+
+              // ── 检查端点是否被冻结 ─────────────────────
+              let rowFrozen = false;
+              for (const ep of resolvedEps) {
+                if (ep.pinId) {
+                  const frozenMsg = await isPinFrozen(db, ep.pinId);
+                  if (frozenMsg) {
+                    sheetE2++;
+                    sheetErrors2.push(`第${rowNum}行: ${frozenMsg}`);
+                    rowFrozen = true; break;
+                  }
+                }
+              }
+              if (rowFrozen) continue;
 
               // ── 步骤5/6：按 pin_id 重叠检测合并 ─────────────────────
               const newPinIds = resolvedEps.filter(ep => ep.pinId !== null).map(ep => ep.pinId!);

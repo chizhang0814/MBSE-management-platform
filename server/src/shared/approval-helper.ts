@@ -64,6 +64,31 @@ export async function getProjectRoleMembers(db: Database, projectId: number, rol
 
 export const SPECIAL_ERN_LIN = '8800G0000';
 
+/** 检查 pin 是否属于待删除审批中的设备或连接器 */
+export async function isPinFrozen(db: Database, pinId: number): Promise<string | null> {
+  // 检查连接器是否 Pending 删除
+  const conn = await db.get(
+    `SELECT c.status, c."设备端元器件编号", ar.action_type
+     FROM pins p JOIN connectors c ON p.connector_id = c.id
+     LEFT JOIN approval_requests ar ON ar.entity_type = 'connector' AND ar.entity_id = c.id AND ar.status = 'pending' AND ar.action_type = 'delete_connector'
+     WHERE p.id = ?`,
+    [pinId]
+  );
+  if (conn?.action_type === 'delete_connector') return `连接器 ${conn['设备端元器件编号']} 待删除审批中，不可操作`;
+
+  // 检查设备是否 Pending 删除
+  const dev = await db.get(
+    `SELECT d.status, d."设备编号", ar.action_type
+     FROM pins p JOIN connectors c ON p.connector_id = c.id JOIN devices d ON c.device_id = d.id
+     LEFT JOIN approval_requests ar ON ar.entity_type = 'device' AND ar.entity_id = d.id AND ar.status = 'pending' AND ar.action_type = 'delete_device'
+     WHERE p.id = ?`,
+    [pinId]
+  );
+  if (dev?.action_type === 'delete_device') return `设备 ${dev['设备编号']} 待删除审批中，不可操作`;
+
+  return null;
+}
+
 /** 级联删除针孔：删除关联的信号端点/信号，记录日志 */
 export async function cascadeDeletePinShared(db: Database, pinId: number, userId: number, parentLog: string[]): Promise<void> {
   const pin = await db.get('SELECT * FROM pins WHERE id = ?', [pinId]);
@@ -330,17 +355,68 @@ export async function checkAndAdvancePhase(db: Database, approvalRequestId: numb
 
     if (entityTable && req.entity_id) {
       if (req.action_type === 'delete_pin') {
-        // 针孔删除：级联处理信号端点
         const log: string[] = [];
         await cascadeDeletePinShared(db, req.entity_id, req.requester_id, log);
+      } else if (req.action_type === 'delete_connector') {
+        // 连接器级联删除：先删所有针孔（含信号端点处理），再删连接器
+        const pins = await db.query('SELECT id FROM pins WHERE connector_id = ?', [req.entity_id]);
+        const connLog: string[] = [];
+        for (const p of pins) { await cascadeDeletePinShared(db, p.id, req.requester_id, connLog); }
+        await db.run('DELETE FROM connectors WHERE id = ?', [req.entity_id]);
+      } else if (req.action_type === 'delete_device') {
+        // 设备级联删除：先删所有连接器（含针孔和信号端点），再删设备
+        const connectors = await db.query('SELECT id FROM connectors WHERE device_id = ?', [req.entity_id]);
+        for (const c of connectors) {
+          const pins = await db.query('SELECT id FROM pins WHERE connector_id = ?', [c.id]);
+          const cLog: string[] = [];
+          for (const p of pins) { await cascadeDeletePinShared(db, p.id, req.requester_id, cLog); }
+          await db.run('DELETE FROM connectors WHERE id = ?', [c.id]);
+        }
+        await db.run('DELETE FROM devices WHERE id = ?', [req.entity_id]);
       } else if (req.action_type.startsWith('delete_')) {
-        // 其他删除操作：直接删除
         await db.run(`DELETE FROM ${entityTable} WHERE id = ?`, [req.entity_id]);
+      } else if (req.action_type === 'edit_device' || req.action_type === 'edit_connector') {
+        // 编辑操作：将 payload 中的新值应用到实体
+        const newFields = (() => { try { return JSON.parse(req.payload); } catch { return {}; } })();
+        const oldFields = (() => { try { return JSON.parse(req.old_payload); } catch { return {}; } })();
+        if (Object.keys(newFields).length > 0) {
+          const setClauses = Object.keys(newFields).map(k => `"${k}" = ?`).join(', ');
+          await db.run(
+            `UPDATE ${entityTable} SET ${setClauses}, status = 'normal', version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+            [...Object.values(newFields), req.entity_id]
+          );
+        } else {
+          await db.run(`UPDATE ${entityTable} SET status = 'normal' WHERE id = ?`, [req.entity_id]);
+        }
+        // 设备审批通过后重新校验
+        if (req.entity_type === 'device') {
+          await revalidateDevice(db, req.entity_id, req.project_id);
+          // 设备负责人变更通知
+          const oldOwner = oldFields['设备负责人'] || null;
+          const newOwner = newFields['设备负责人'] || null;
+          if (newOwner && oldOwner !== newOwner) {
+            const deviceRow = await db.get('SELECT "设备编号" FROM devices WHERE id = ?', [req.entity_id]);
+            const devLabel = deviceRow?.['设备编号'] || `设备#${req.entity_id}`;
+            const proj = await db.get('SELECT name FROM projects WHERE id = ?', [req.project_id]);
+            const projName = proj?.name || '';
+            if (oldOwner) {
+              await db.run(
+                `INSERT INTO notifications (recipient_username, type, title, message) VALUES (?, 'device_owner_changed', ?, ?)`,
+                [oldOwner, `[${projName}] 设备负责人变更`,
+                 `设备「${devLabel}」不再由您负责，已被 ${req.requester_username} 变更为 ${newOwner} 负责。`]
+              );
+            }
+            await db.run(
+              `INSERT INTO notifications (recipient_username, type, title, message) VALUES (?, 'device_owner_changed', ?, ?)`,
+              [newOwner, `[${projName}] 设备负责人变更`,
+               `设备「${devLabel}」已被 ${req.requester_username} 指定由您负责${oldOwner ? `（原负责人为 ${oldOwner}）` : ''}。`]
+            );
+          }
+        }
       } else {
-        // 创建/编辑操作：将实体状态改为Active
+        // 创建操作：将实体状态改为Active/normal
         const activeStatus = req.entity_type === 'signal' ? 'Active' : 'normal';
         await db.run(`UPDATE ${entityTable} SET status = ? WHERE id = ?`, [activeStatus, req.entity_id]);
-        // 设备审批通过后重新校验，清除已修正字段的 validation_errors
         if (req.entity_type === 'device') {
           await revalidateDevice(db, req.entity_id, req.project_id);
         }

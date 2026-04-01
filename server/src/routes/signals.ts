@@ -3,7 +3,7 @@ import { Database } from '../database.js';
 import { authenticate, AuthRequest } from '../middleware/auth.js';
 import {
   isZontiRenyuan, isDeviceManager, isEwisAdmin, getProjectRoleMembers,
-  submitChangeRequest, checkAndAdvancePhase, ApprovalItemSpec, SPECIAL_ERN_LIN,
+  submitChangeRequest, checkAndAdvancePhase, ApprovalItemSpec, SPECIAL_ERN_LIN, isPinFrozen,
 } from '../shared/approval-helper.js';
 
 export function signalRoutes(db: Database) {
@@ -400,6 +400,14 @@ export function signalRoutes(db: Database) {
       }
 
       const newPinIds = resolved.filter(r => r.pinId !== null).map(r => r.pinId!);
+
+      // ── 检查是否有端点被冻结（待删除审批中）─────────
+      for (const { pinId } of resolved) {
+        if (pinId) {
+          const frozenMsg = await isPinFrozen(db, pinId);
+          if (frozenMsg) return res.status(403).json({ error: frozenMsg });
+        }
+      }
 
       // ── 检测新信号是否包含ERN端点 → 跳过组网 ─────────
       const newDeviceIds = [...new Set(resolved.map(r => r.deviceId))];
