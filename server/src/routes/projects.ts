@@ -3,7 +3,7 @@ import multer from 'multer';
 import xlsx from 'xlsx';
 import fs from 'fs';
 import { Database } from '../database.js';
-import { authenticate, requireRole, requireAdminOrZonti, AuthRequest } from '../middleware/auth.js';
+import { authenticate, requireRole, requireAdminOrZonti, requireAdminOrZontiOrSystem, AuthRequest } from '../middleware/auth.js';
 import { generateSysml, TableData } from '../services/sysml-generator.js';
 import { SysmlApiClient } from '../services/sysml-api-client.js';
 import { syncToSysmlApi } from '../services/sysml-sync.js';
@@ -551,7 +551,7 @@ export function projectRoutes(db: Database) {
   router.post(
     '/:id/import-data',
     authenticate,
-    requireAdminOrZonti(db),
+    requireAdminOrZontiOrSystem(db),
     upload.single('file'),
     async (req: AuthRequest, res) => {
       try {
@@ -1594,7 +1594,7 @@ export function projectRoutes(db: Database) {
 
   // ── 批量更新信号+端点信息（Excel）──────────────────────────
 
-  router.post('/:id/update-signals', authenticate, requireAdminOrZonti(db), upload.single('file'), async (req: AuthRequest, res) => {
+  router.post('/:id/update-signals', authenticate, requireAdminOrZontiOrSystem(db), upload.single('file'), async (req: AuthRequest, res) => {
     try {
       const projectId = parseInt(req.params.id);
       if (!req.file) return res.status(400).json({ error: '未上传文件' });

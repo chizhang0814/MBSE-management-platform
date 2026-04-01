@@ -301,14 +301,20 @@ export async function checkAndAdvancePhase(db: Database, approvalRequestId: numb
     // 继续检查approval阶段
   }
 
-  // 检查approval阶段
-  const pendingApproval = await db.get(
-    `SELECT COUNT(*) as cnt FROM approval_items WHERE approval_request_id = ? AND item_type = 'approval' AND status = 'pending'`,
+  // 检查approval阶段：一人通过即生效
+  const doneApproval = await db.get(
+    `SELECT COUNT(*) as cnt FROM approval_items WHERE approval_request_id = ? AND item_type = 'approval' AND status = 'done' AND rejection_reason IS NULL`,
     [approvalRequestId]
   );
-  if ((pendingApproval?.cnt ?? 1) > 0) return;
+  if ((doneApproval?.cnt ?? 0) === 0) return; // 还没有人通过
 
-  // 所有approval通过 → 将实体改为Active
+  // 取消其他未处理的审批项
+  await db.run(
+    `UPDATE approval_items SET status = 'cancelled' WHERE approval_request_id = ? AND item_type = 'approval' AND status = 'pending'`,
+    [approvalRequestId]
+  );
+
+  // 一人通过 → 将实体改为Active
   await db.run(`UPDATE approval_requests SET status = 'approved' WHERE id = ?`, [approvalRequestId]);
 
   if (req.action_type === 'request_device_management') {

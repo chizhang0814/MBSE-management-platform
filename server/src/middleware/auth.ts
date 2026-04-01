@@ -66,6 +66,19 @@ export const requireAdminOrZonti = (db: Database) =>
     res.status(403).json({ error: '权限不足，需要管理员或总体组角色' });
   };
 
+/** 允许 admin 或任意项目中角色为"总体组"或"系统组"的用户通过 */
+export const requireAdminOrZontiOrSystem = (db: Database) =>
+  async (req: AuthRequest, res: Response, next: NextFunction) => {
+    if (!req.user) return res.status(401).json({ error: '未授权访问' });
+    if (req.user.role === 'admin') { next(); return; }
+    try {
+      const user = await db.get('SELECT permissions FROM users WHERE id = ?', [req.user.id]);
+      const perms: any[] = JSON.parse(user?.permissions || '[]');
+      if (perms.some((p: any) => p.project_role === '总体组' || p.project_role === '系统组')) { next(); return; }
+    } catch {}
+    res.status(403).json({ error: '权限不足，需要管理员、总体组或系统组角色' });
+  };
+
 /** 允许 admin 或任意项目中角色为"总体PMO组"的用户通过 */
 export const requireAdminOrPMO = (db: Database) =>
   async (req: AuthRequest, res: Response, next: NextFunction) => {

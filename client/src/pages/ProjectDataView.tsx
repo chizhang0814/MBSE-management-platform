@@ -259,6 +259,19 @@ export default function ProjectDataView() {
   const [signals, setSignals] = useState<SignalRow[]>([]);
   // ── 下载配置 ──
   const [showDownloadModal, setShowDownloadModal] = useState(false);
+  // ── 导入/更新设备数据弹窗 ──
+  const [showImportDevDataModal, setShowImportDevDataModal] = useState(false);
+  const [importDevFile, setImportDevFile] = useState<File | null>(null);
+  const [importDevPhase, setImportDevPhase] = useState<'devices' | 'connectors'>('devices');
+  const [importDevType, setImportDevType] = useState<'import' | 'update'>('import');
+  const [importDevLoading, setImportDevLoading] = useState(false);
+  const [importDevResult, setImportDevResult] = useState<any>(null);
+  // ── 导入/更新信号数据弹窗 ──
+  const [showImportSigModal, setShowImportSigModal] = useState(false);
+  const [importSigType, setImportSigType] = useState<'import' | 'update'>('import');
+  const [importSigFile, setImportSigFile] = useState<File | null>(null);
+  const [importSigLoading, setImportSigLoading] = useState(false);
+  const [importSigResult, setImportSigResult] = useState<any>(null);
   const [downloading, setDownloading] = useState(false);
   const DOWNLOAD_SHEETS = [
     { key: 'devices', name: 'ATA章节设备表', cols: [
@@ -759,8 +772,9 @@ export default function ProjectDataView() {
     const ata = (deviceForm as any)['设备部件所属系统（4位ATA）'] || '';
     if (!ata) { alert('设备部件所属系统（4位ATA） 不能为空'); return; }
     if (ata !== 'N/A' && !/^\d{2}-(\d{2}|XX)$/.test(ata)) { alert('设备部件所属系统（4位ATA） 格式不正确，应为 XX-XX 或 N/A'); return; }
-    // 非 Draft 保存时，检查是否有硬性校验错误
+    // 非 Draft 保存时，检查设备负责人和硬性校验错误
     if (!forceDraft) {
+      if (!(deviceForm as any)['设备负责人']) { alert('设备负责人不能为空'); return; }
       const hasHardError = Object.values(fieldWarnings).some(w => w.type === 'error');
       if (hasHardError) { alert('存在校验错误（红色标记），请先修正或保存为Draft'); return; }
     }
@@ -1317,8 +1331,6 @@ export default function ProjectDataView() {
     // 草稿允许跳过必填校验
     if (!isDraft) {
       if (!editingSignal && !sf.unique_id?.trim()) { alert('Unique ID 不能为空'); return; }
-      if (!sf['连接类型']) { alert('连接类型不能为空'); return; }
-      if ((sf['连接类型'] === 'ARINC 429' || sf['连接类型'] === 'CAN Bus') && !sf['协议标识']) { alert('协议标识不能为空'); return; }
       if (!sf['是否成品线']) { alert('是否成品线不能为空'); return; }
     } else {
       if (!sf.unique_id?.trim()) { alert('草稿也需要填写 Unique ID'); return; }
@@ -1456,13 +1468,18 @@ export default function ProjectDataView() {
   const myProjectRole = myPermissions.find(p => p.project_name === selectedProjectName)?.project_role;
   const isReadOnly = myProjectRole === '其他组';
   const canExport = isAdmin || myProjectRole === '总体组' || myProjectRole === '系统组' || myProjectRole === '供应商组';
-  const canManageDevices = isAdmin || myProjectRole === '总体组' || myProjectRole === '系统组';
-  const canManageSignals = isAdmin || myProjectRole === '总体组' || myProjectRole === 'EWIS管理员' || myProjectRole === '系统组';
-  // 总体组可编辑任意设备（通过审批）；系统组/负责人仅自己的设备
+  const canManageDevices = isAdmin || myProjectRole === '总体组';
+  const canManageSignals = isAdmin || myProjectRole === 'EWIS管理员' || myProjectRole === '系统组';
+  // 总体组可编辑任意设备/连接器；系统组不可编辑设备/连接器
   const canEditDevice = (device: DeviceRow) => {
     if (isReadOnly) return false;
     if (isAdmin || myProjectRole === '总体组') return true;
-    if (device.设备负责人 === user?.username) return true;
+    return false;
+  };
+  // 针孔操作：仅 admin 和系统组（自己负责的设备），总体组不可操作针孔
+  const canEditPin = (device: DeviceRow) => {
+    if (isAdmin) return true;
+    if (myProjectRole === '系统组' && device.设备负责人 === user?.username) return true;
     return false;
   };
   const canDeleteSignal = (signal: SignalRow) => !isReadOnly && (isAdmin || signal.can_edit === true);
@@ -1504,9 +1521,15 @@ export default function ProjectDataView() {
             >清空设备视图数据</button>
           )}
           {canManageDevices && (
-            <button id="tour-add-device" onClick={openAddDevice} className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700">
-              + 添加设备
-            </button>
+            <>
+              <button
+                onClick={() => { setImportDevFile(null); setImportDevResult(null); setShowImportDevDataModal(true); }}
+                className="bg-purple-600 text-white px-3 py-1.5 rounded text-sm hover:bg-purple-700"
+              >导入设备数据</button>
+              <button id="tour-add-device" onClick={openAddDevice} className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700">
+                + 添加设备
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -2153,7 +2176,7 @@ export default function ProjectDataView() {
                                         {/* 针孔展开 */}
                                         {connExpanded && (
                                           <tr key={`${conn.id}-pins`}>
-                                            <td colSpan={canEditDevice(device) ? 7 : 6} className="px-0 py-0">
+                                            <td colSpan={(canEditDevice(device) || canEditPin(device)) ? 7 : 6} className="px-0 py-0">
                                               <div className="pl-8 pr-2 py-1 bg-indigo-50">
                                                 {/* 连接器详情 */}
                                                 <div className="mb-2 p-2 bg-white border border-indigo-100 rounded text-xs">
@@ -2275,7 +2298,7 @@ export default function ProjectDataView() {
                                                 })()}
                                                 <div className="flex justify-between items-center mb-1">
                                                   <span className="text-xs font-semibold text-indigo-600">针孔列表</span>
-                                                  {canEditDevice(device) && conn.status !== 'Pending' && (device as any)['设备LIN号（DOORS）'] !== SPECIAL_ERN_LIN && (
+                                                  {canEditPin(device) && conn.status !== 'Pending' && (device as any)['设备LIN号（DOORS）'] !== SPECIAL_ERN_LIN && (
                                                     <button onClick={() => openAddPin(device.id, conn.id)} className="text-xs text-indigo-600">+ 添加针孔</button>
                                                   )}
                                                 </div>
@@ -2289,7 +2312,7 @@ export default function ProjectDataView() {
                                                       <tr className="bg-indigo-100">
                                                         <th className="px-2 py-1 text-left text-gray-600">针孔号</th>
                                                         <th className="px-2 py-1 text-left text-gray-600">最后更新</th>
-                                                        {canEditDevice(device) && <th className="px-2 py-1 text-left text-gray-600">操作</th>}
+                                                        {(canEditDevice(device) || canEditPin(device)) && <th className="px-2 py-1 text-left text-gray-600">操作</th>}
                                                       </tr>
                                                     </thead>
                                                     <tbody>
@@ -2308,7 +2331,7 @@ export default function ProjectDataView() {
                                                             {(device as any)['设备LIN号（DOORS）'] === SPECIAL_ERN_LIN ? (
                                                               <span className="text-xs text-gray-400">固有ERN</span>
                                                             ) : (<>
-                                                              {canEditDevice(device) && (pin.status === 'Pending' ? (
+                                                              {canEditPin(device) && (pin.status === 'Pending' ? (
                                                                 <button onClick={() => loadApprovalInfo('pin', pin.id)} className="text-xs text-blue-600 hover:text-blue-800">审批详情</button>
                                                               ) : (
                                                                 <>
@@ -2651,9 +2674,15 @@ export default function ProjectDataView() {
           >WB导出</button>
           )}
           {canManageSignals && (
-            <button onClick={openAddSignal} className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700">
-              + 添加信号
-            </button>
+            <>
+              <button
+                onClick={() => { setImportSigFile(null); setImportSigResult(null); setImportSigType('import'); setShowImportSigModal(true); }}
+                className="bg-purple-600 text-white px-3 py-1.5 rounded text-sm hover:bg-purple-700"
+              >导入信号及针孔数据</button>
+              <button onClick={openAddSignal} className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700">
+                + 添加信号
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -3408,6 +3437,201 @@ export default function ProjectDataView() {
           : renderSignalView()}
         </div>
 
+        {/* ── 导入/更新设备数据弹窗 ── */}
+        {showImportDevDataModal && selectedProjectId && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg max-w-lg w-full max-h-[80vh] flex flex-col">
+              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
+                <h2 className="text-xl font-bold">导入/更新设备数据</h2>
+                <button onClick={() => setShowImportDevDataModal(false)} className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 text-sm">关闭</button>
+              </div>
+              <div className="flex-1 overflow-y-auto px-6 py-4">
+                {!importDevResult ? (
+                  <>
+                    {/* Tab 切换 */}
+                    <div className="flex mb-4">
+                      <button
+                        onClick={() => { setImportDevPhase('devices'); setImportDevFile(null); }}
+                        className={`flex-1 px-4 py-2.5 text-sm font-medium border rounded-l-lg ${importDevPhase === 'devices' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'}`}
+                      >电设备清单</button>
+                      <button
+                        onClick={() => { setImportDevPhase('connectors'); setImportDevFile(null); }}
+                        className={`flex-1 px-4 py-2.5 text-sm font-medium border-t border-b border-r rounded-r-lg ${importDevPhase === 'connectors' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'}`}
+                      >设备端元器件清单</button>
+                    </div>
+                    {/* 导入/更新按钮 */}
+                    <div className="flex gap-3 mb-4">
+                      <button
+                        onClick={() => { setImportDevType('import'); setImportDevFile(null); }}
+                        className={`flex-1 px-3 py-2 rounded text-sm border-2 ${importDevType === 'import' ? 'border-blue-500 bg-blue-50 text-blue-700 font-medium' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}
+                      >导入（新增）</button>
+                      <button
+                        onClick={() => { setImportDevType('update'); setImportDevFile(null); }}
+                        className={`flex-1 px-3 py-2 rounded text-sm border-2 ${importDevType === 'update' ? 'border-orange-500 bg-orange-50 text-orange-700 font-medium' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}
+                      >更新（已有数据）</button>
+                    </div>
+                    <div className="mb-4 text-sm text-gray-600">
+                      {importDevType === 'import'
+                        ? <p>选择 Excel 文件导入<b>{importDevPhase === 'devices' ? '电设备' : '设备端元器件'}</b>清单数据（新增记录）</p>
+                        : <p>选择 Excel 文件更新已有的<b>{importDevPhase === 'devices' ? '电设备' : '设备端元器件'}</b>数据（按匹配键更新）</p>
+                      }
+                    </div>
+                    <input type="file" accept=".xlsx,.xls"
+                      onChange={e => setImportDevFile(e.target.files?.[0] || null)}
+                      className="w-full border border-gray-300 rounded px-3 py-2 text-sm mb-4"
+                    />
+                    <button
+                      onClick={async () => {
+                        if (!importDevFile || !selectedProjectId) return;
+                        setImportDevLoading(true);
+                        try {
+                          const formData = new FormData();
+                          formData.append('file', importDevFile);
+                          let url: string;
+                          if (importDevType === 'import') {
+                            url = `/api/projects/${selectedProjectId}/import-data?phase=${importDevPhase}`;
+                          } else {
+                            url = `/api/projects/${selectedProjectId}/${importDevPhase === 'devices' ? 'update-devices' : 'update-connectors'}`;
+                          }
+                          const res = await fetch(url, {
+                            method: 'POST',
+                            headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+                            body: formData,
+                          });
+                          const data = await res.json();
+                          if (!res.ok) throw new Error(data.error || '操作失败');
+                          setImportDevResult(data);
+                          await loadDevices();
+                        } catch (err: any) {
+                          setImportDevResult({ error: err.message });
+                        } finally {
+                          setImportDevLoading(false);
+                        }
+                      }}
+                      disabled={importDevLoading || !importDevFile}
+                      className="w-full bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:bg-gray-400 text-sm"
+                    >{importDevLoading ? '处理中...' : '开始'}</button>
+                  </>
+                ) : importDevResult.error ? (
+                  <div>
+                    <p className="text-red-600 mb-3">{importDevResult.error}</p>
+                    <button onClick={() => setImportDevResult(null)} className="text-blue-600 text-sm">返回重试</button>
+                  </div>
+                ) : (
+                  <div>
+                    <div className="mb-3 space-y-1">
+                      {importDevResult.updated !== undefined && <p className="text-green-700 font-medium">更新成功 {importDevResult.updated} 条</p>}
+                      {importDevResult.results && Object.entries(importDevResult.results).map(([sheet, info]: [string, any]) => (
+                        <p key={sheet} className="text-green-700">
+                          {sheet}: 成功 {info.success || 0}{info.errors?.length > 0 && <>, 失败 {info.errors.length}</>}
+                        </p>
+                      ))}
+                      {importDevResult.unchanged > 0 && <p className="text-gray-500">数据无变化 {importDevResult.unchanged} 条</p>}
+                      {importDevResult.notFound > 0 && <p className="text-yellow-700">未匹配 {importDevResult.notFound} 条</p>}
+                    </div>
+                    {importDevResult.errors?.length > 0 && (
+                      <div className="border border-gray-200 rounded p-2 max-h-40 overflow-y-auto mb-3">
+                        {importDevResult.errors.map((e: string, i: number) => <p key={i} className="text-xs text-gray-500">{e}</p>)}
+                      </div>
+                    )}
+                    <button onClick={() => setImportDevResult(null)} className="text-blue-600 text-sm">继续操作</button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── 导入/更新信号数据弹窗 ── */}
+        {showImportSigModal && selectedProjectId && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg max-w-lg w-full max-h-[80vh] flex flex-col">
+              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
+                <h2 className="text-xl font-bold">导入/更新信号及针孔数据</h2>
+                <button onClick={() => setShowImportSigModal(false)} className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 text-sm">关闭</button>
+              </div>
+              <div className="flex-1 overflow-y-auto px-6 py-4">
+                {!importSigResult ? (
+                  <>
+                    <div className="flex gap-3 mb-4">
+                      <button
+                        onClick={() => { setImportSigType('import'); setImportSigFile(null); }}
+                        className={`flex-1 px-3 py-2 rounded text-sm border-2 ${importSigType === 'import' ? 'border-blue-500 bg-blue-50 text-blue-700 font-medium' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}
+                      >导入电气接口清单</button>
+                      <button
+                        onClick={() => { setImportSigType('update'); setImportSigFile(null); }}
+                        className={`flex-1 px-3 py-2 rounded text-sm border-2 ${importSigType === 'update' ? 'border-orange-500 bg-orange-50 text-orange-700 font-medium' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}
+                      >更新电气接口清单</button>
+                    </div>
+                    <div className="mb-4 text-sm text-gray-600">
+                      {importSigType === 'import'
+                        ? <p>选择 Excel 文件导入电气接口清单数据（新增信号和端点）</p>
+                        : <p>选择 Excel 文件更新已有的电气接口数据（按端点对匹配更新）</p>
+                      }
+                    </div>
+                    <input type="file" accept=".xlsx,.xls"
+                      onChange={e => setImportSigFile(e.target.files?.[0] || null)}
+                      className="w-full border border-gray-300 rounded px-3 py-2 text-sm mb-4"
+                    />
+                    <button
+                      onClick={async () => {
+                        if (!importSigFile || !selectedProjectId) return;
+                        setImportSigLoading(true);
+                        try {
+                          const formData = new FormData();
+                          formData.append('file', importSigFile);
+                          const url = importSigType === 'import'
+                            ? `/api/projects/${selectedProjectId}/import-data?phase=signals`
+                            : `/api/projects/${selectedProjectId}/update-signals`;
+                          const res = await fetch(url, {
+                            method: 'POST',
+                            headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+                            body: formData,
+                          });
+                          const data = await res.json();
+                          if (!res.ok) throw new Error(data.error || '操作失败');
+                          setImportSigResult(data);
+                          await loadSignals();
+                        } catch (err: any) {
+                          setImportSigResult({ error: err.message });
+                        } finally {
+                          setImportSigLoading(false);
+                        }
+                      }}
+                      disabled={importSigLoading || !importSigFile}
+                      className="w-full bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:bg-gray-400 text-sm"
+                    >{importSigLoading ? '处理中...' : '开始'}</button>
+                  </>
+                ) : importSigResult.error ? (
+                  <div>
+                    <p className="text-red-600 mb-3">{importSigResult.error}</p>
+                    <button onClick={() => setImportSigResult(null)} className="text-blue-600 text-sm">返回重试</button>
+                  </div>
+                ) : (
+                  <div>
+                    <div className="mb-3 space-y-1">
+                      {importSigResult.updated !== undefined && <p className="text-green-700 font-medium">更新成功 {importSigResult.updated} 条</p>}
+                      {importSigResult.results && Object.entries(importSigResult.results).map(([sheet, info]: [string, any]) => (
+                        <p key={sheet} className="text-green-700">
+                          {sheet}: 成功 {info.success || 0}{info.merged ? `, 合并 ${info.merged}` : ''}{info.errors?.length > 0 && `, 失败 ${info.errors.length}`}
+                        </p>
+                      ))}
+                      {importSigResult.unchanged > 0 && <p className="text-gray-500">数据无变化 {importSigResult.unchanged} 条</p>}
+                      {importSigResult.notFound > 0 && <p className="text-yellow-700">未匹配 {importSigResult.notFound} 条</p>}
+                    </div>
+                    {importSigResult.errors?.length > 0 && (
+                      <div className="border border-gray-200 rounded p-2 max-h-40 overflow-y-auto mb-3">
+                        {importSigResult.errors.map((e: string, i: number) => <p key={i} className="text-xs text-gray-500">{e}</p>)}
+                      </div>
+                    )}
+                    <button onClick={() => setImportSigResult(null)} className="text-blue-600 text-sm">继续操作</button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* ── 下载配置弹窗 ── */}
         {showDownloadModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
@@ -3559,7 +3783,7 @@ export default function ProjectDataView() {
                   return (
                   <div key={f.key}>
                     <label className={`block text-xs mb-1 ${isErr ? 'text-red-600 font-medium' : 'text-gray-600'}`}>
-                      {f.label}{(f.key === '设备编号' || f.key === '设备部件所属系统（4位ATA）') ? <span className="text-red-500"> *</span> : ''}
+                      {f.label}{(f.key === '设备编号' || f.key === '设备部件所属系统（4位ATA）' || f.key === '设备负责人') ? <span className="text-red-500"> *</span> : ''}
                       {fw && <span className={`ml-1 ${fw.type === 'error' ? 'text-red-600' : 'text-orange-500'}`}>({fw.message})</span>}
                     </label>
                     {(f.key === 'created_by' || f.key === '导入来源') ? (
@@ -3693,6 +3917,17 @@ export default function ProjectDataView() {
                         <option value="">请选择</option>
                         {['1级', '2级', '3级', '4级', '5级'].map(v => (
                           <option key={v} value={v}>{v}</option>
+                        ))}
+                      </select>
+                    ) : f.key === '设备负责人' ? (
+                      <select
+                        value={(deviceForm as any)[f.key] || ''}
+                        onChange={e => setDeviceForm({ ...deviceForm, [f.key]: e.target.value })}
+                        className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
+                      >
+                        <option value="">请选择系统组成员</option>
+                        {memberRoles.filter(m => m.project_role === '系统组').map(m => (
+                          <option key={m.username} value={m.username}>{m.username}</option>
                         ))}
                       </select>
                     ) : (f.key === '设备壳体是否金属' || f.key === '是否为选装设备' || f.key === '壳体接地是否故障电流路径' || f.key === '是否有特殊布线需求') ? (

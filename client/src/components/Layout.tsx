@@ -156,7 +156,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                     </Link>
                   </>
                 )}
-                {(isAdmin || isZonti) && (
+                {isAdmin && (
                   <>
                     <Link
                       to="/projects"

@@ -574,21 +574,73 @@ export function deviceRoutes(db: Database) {
         return res.status(409).json({ error: `设备LIN号（DOORS）"${linNum}"在本项目中已存在` });
       }
 
-      // admin / 总体组 → 直接写入
-      const insertStatus = forceDraft ? 'Draft' : 'normal';
       const cols = Object.keys(fields).map(k => `"${k}"`).join(', ');
       const placeholders = Object.keys(fields).map(() => '?').join(', ');
+
+      // admin → 直接写入
+      if (isAdmin) {
+        const insertStatus = forceDraft ? 'Draft' : 'normal';
+        const result = await db.run(
+          `INSERT INTO devices (project_id, status, ${cols}) VALUES (?, ?, ${placeholders})`,
+          [project_id, insertStatus, ...Object.values(fields)]
+        );
+        await db.run(
+          `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, new_values, reason, status)
+           VALUES ('devices', ?, ?, 'devices', ?, ?, ?, ?)`,
+          [result.lastID, result.lastID, req.user!.id, JSON.stringify(fields),
+           forceDraft ? '新增设备(Draft)' : '新增设备', forceDraft ? 'draft' : 'approved']
+        );
+        return res.json({ success: true, id: result.lastID });
+      }
+
+      // 总体组 → Draft 直接写入，提交则走审批
+      if (forceDraft) {
+        const result = await db.run(
+          `INSERT INTO devices (project_id, status, ${cols}) VALUES (?, 'Draft', ${placeholders})`,
+          [project_id, ...Object.values(fields)]
+        );
+        await db.run(
+          `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, new_values, reason, status)
+           VALUES ('devices', ?, ?, 'devices', ?, ?, '新增设备(Draft)', 'draft')`,
+          [result.lastID, result.lastID, req.user!.id, JSON.stringify(fields)]
+        );
+        return res.json({ success: true, id: result.lastID });
+      }
+
+      // 总体组提交审批：校验设备负责人
+      if (!fields['设备负责人']) return res.status(400).json({ error: '提交审批时设备负责人不能为空' });
+
       const result = await db.run(
-        `INSERT INTO devices (project_id, status, ${cols}) VALUES (?, ?, ${placeholders})`,
-        [project_id, insertStatus, ...Object.values(fields)]
+        `INSERT INTO devices (project_id, status, ${cols}) VALUES (?, 'Pending', ${placeholders})`,
+        [project_id, ...Object.values(fields)]
       );
-      await db.run(
-        `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, new_values, reason, status)
-         VALUES ('devices', ?, ?, 'devices', ?, ?, ?, ?)`,
-        [result.lastID, result.lastID, req.user!.id, JSON.stringify(fields),
-         forceDraft ? '新增设备(Draft)' : '新增设备', forceDraft ? 'draft' : 'approved']
-      );
-      return res.json({ success: true, id: result.lastID });
+
+      const zontiList = await getProjectRoleMembers(db, project_id, '总体组');
+      const otherZonti = zontiList.filter(u => u !== username);
+      if (otherZonti.length === 0) {
+        // 没有其他总体组成员，直接生效
+        await db.run(`UPDATE devices SET status = 'normal' WHERE id = ?`, [result.lastID]);
+        await db.run(
+          `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, new_values, reason, status)
+           VALUES ('devices', ?, ?, 'devices', ?, ?, '新增设备（无需审批）', 'approved')`,
+          [result.lastID, result.lastID, req.user!.id, JSON.stringify(fields)]
+        );
+        return res.json({ success: true, id: result.lastID });
+      }
+
+      const items: ApprovalItemSpec[] = otherZonti.map(u => ({ recipient_username: u, item_type: 'approval' as const }));
+      await submitChangeRequest(db, {
+        projectId: project_id,
+        requesterId: req.user!.id,
+        requesterUsername: username,
+        actionType: 'create_device',
+        entityType: 'device',
+        entityId: result.lastID,
+        oldPayload: {},
+        newPayload: fields,
+        items,
+      });
+      return res.status(202).json({ pending: true, id: result.lastID, message: '已提交审批，等待其他总体组成员审批' });
     } catch (error: any) {
       if (error.message?.includes('UNIQUE')) {
         return res.status(409).json({ error: '该项目中设备LIN号（DOORS）已存在' });
@@ -827,21 +879,70 @@ export function deviceRoutes(db: Database) {
       );
       if (dup) return res.status(409).json({ error: `设备端元器件编号"${compId}"在该设备中已存在` });
 
-      // admin / 总体组 → 直接写入
-      const insertStatus = forceDraft ? 'Draft' : 'normal';
       const cols = Object.keys(fields).map(k => `"${k}"`).join(', ');
       const placeholders = Object.keys(fields).map(() => '?').join(', ');
+
+      // admin → 直接写入
+      if (isAdmin) {
+        const insertStatus = forceDraft ? 'Draft' : 'normal';
+        const result = await db.run(
+          `INSERT INTO connectors (device_id, status, ${cols}) VALUES (?, ?, ${placeholders})`,
+          [deviceId, insertStatus, ...Object.values(fields)]
+        );
+        await db.run(
+          `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, new_values, reason, status)
+           VALUES ('connectors', ?, ?, 'connectors', ?, ?, ?, ?)`,
+          [result.lastID, result.lastID, req.user!.id, JSON.stringify(fields),
+           forceDraft ? '新增连接器(Draft)' : '新增连接器', forceDraft ? 'draft' : 'approved']
+        );
+        return res.json({ success: true, id: result.lastID });
+      }
+
+      // 总体组 → Draft 直接写入，提交则走审批
+      if (forceDraft) {
+        const result = await db.run(
+          `INSERT INTO connectors (device_id, status, ${cols}) VALUES (?, 'Draft', ${placeholders})`,
+          [deviceId, ...Object.values(fields)]
+        );
+        await db.run(
+          `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, new_values, reason, status)
+           VALUES ('connectors', ?, ?, 'connectors', ?, ?, '新增连接器(Draft)', 'draft')`,
+          [result.lastID, result.lastID, req.user!.id, JSON.stringify(fields)]
+        );
+        return res.json({ success: true, id: result.lastID });
+      }
+
       const result = await db.run(
-        `INSERT INTO connectors (device_id, status, ${cols}) VALUES (?, ?, ${placeholders})`,
-        [deviceId, insertStatus, ...Object.values(fields)]
+        `INSERT INTO connectors (device_id, status, ${cols}) VALUES (?, 'Pending', ${placeholders})`,
+        [deviceId, ...Object.values(fields)]
       );
-      await db.run(
-        `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, new_values, reason, status)
-         VALUES ('connectors', ?, ?, 'connectors', ?, ?, ?, ?)`,
-        [result.lastID, result.lastID, req.user!.id, JSON.stringify(fields),
-         forceDraft ? '新增连接器(Draft)' : '新增连接器', forceDraft ? 'draft' : 'approved']
-      );
-      return res.json({ success: true, id: result.lastID });
+
+      const zontiList = await getProjectRoleMembers(db, devRow.project_id, '总体组');
+      const otherZonti = zontiList.filter(u => u !== username);
+      if (otherZonti.length === 0) {
+        await db.run(`UPDATE connectors SET status = 'normal' WHERE id = ?`, [result.lastID]);
+        await db.run(
+          `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, new_values, reason, status)
+           VALUES ('connectors', ?, ?, 'connectors', ?, ?, '新增连接器（无需审批）', 'approved')`,
+          [result.lastID, result.lastID, req.user!.id, JSON.stringify(fields)]
+        );
+        return res.json({ success: true, id: result.lastID });
+      }
+
+      const items: ApprovalItemSpec[] = otherZonti.map(u => ({ recipient_username: u, item_type: 'approval' as const }));
+      await submitChangeRequest(db, {
+        projectId: devRow.project_id,
+        requesterId: req.user!.id,
+        requesterUsername: username,
+        actionType: 'create_connector',
+        entityType: 'connector',
+        entityId: result.lastID,
+        deviceId,
+        oldPayload: {},
+        newPayload: fields,
+        items,
+      });
+      return res.status(202).json({ pending: true, id: result.lastID, message: '已提交审批，等待其他总体组成员审批' });
     } catch (error: any) {
       if (error.message?.includes('UNIQUE')) {
         return res.status(409).json({ error: '该设备中设备端元器件编号已存在' });
@@ -1065,10 +1166,9 @@ export function deviceRoutes(db: Database) {
         return res.status(403).json({ error: '固有ERN针孔不可添加' });
       }
       const isDevMgr = !isAdmin && await isDeviceManager(db, username, devRow.project_id);
-      const isZonti = !isAdmin && !isDevMgr && await isZontiRenyuan(db, username, devRow.project_id);
 
-      if (!isAdmin && !isDevMgr && !isZonti) {
-        return res.status(403).json({ error: '无权限，需要系统组或总体组角色' });
+      if (!isAdmin && !isDevMgr) {
+        return res.status(403).json({ error: '无权限，需要系统组角色' });
       }
 
       // 系统组只能操作自己负责的设备
@@ -1118,9 +1218,8 @@ export function deviceRoutes(db: Database) {
         return res.status(403).json({ error: '固有ERN针孔不可编辑' });
       }
       const isDevMgr = !isAdmin && await isDeviceManager(db, username, devRow.project_id);
-      const isZonti = !isAdmin && !isDevMgr && await isZontiRenyuan(db, username, devRow.project_id);
 
-      if (!isAdmin && !isDevMgr && !isZonti) {
+      if (!isAdmin && !isDevMgr) {
         return res.status(403).json({ error: '无权限修改针孔' });
       }
 
@@ -1183,9 +1282,8 @@ export function deviceRoutes(db: Database) {
         return res.status(403).json({ error: '固有ERN针孔不可删除' });
       }
       const isDevMgr = !isAdmin && await isDeviceManager(db, username, devRow.project_id);
-      const isZonti = !isAdmin && !isDevMgr && await isZontiRenyuan(db, username, devRow.project_id);
 
-      if (!isAdmin && !isDevMgr && !isZonti) {
+      if (!isAdmin && !isDevMgr) {
         return res.status(403).json({ error: '无权限删除针孔' });
       }
 

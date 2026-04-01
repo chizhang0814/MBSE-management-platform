@@ -75,7 +75,6 @@ export function signalRoutes(db: Database) {
     if (role === 'admin') return true;
     return (
       await isDeviceManager(db, username, projectId) ||
-      await isZontiRenyuan(db, username, projectId) ||
       await isEwisAdmin(db, username, projectId)
     );
   }
@@ -646,9 +645,8 @@ export function signalRoutes(db: Database) {
         }
       }
 
-      // 临时策略：总体组/系统组/EWIS管理员 → 与 admin 相同，直接更新不走审批
+      // 系统组/EWIS管理员 → 与 admin 相同，直接更新不走审批
       const isPrivilegedRole = role === 'admin'
-        || await isZontiRenyuan(db, username, signal.project_id)
         || await isDeviceManager(db, username, signal.project_id)
         || await isEwisAdmin(db, username, signal.project_id);
 
