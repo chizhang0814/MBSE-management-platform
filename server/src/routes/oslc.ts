@@ -31,8 +31,12 @@ import {
   SIGNAL_ATTR_TO_COL,
   // RDF/XML support for OSLC 2.0 clients (DataHub / MagicDraw)
   wantsRdfXml,
+  wantsCompactXml,
+  compactXml,
   catalogToRdfXml,
+  projectCatalogToRdfXml,
   serviceProviderToRdfXml,
+  resourceTypeProviderToRdfXml,
   resourceShapeToRdfXml,
   deviceToRdfXml,
   connectorToRdfXml,
@@ -66,6 +70,34 @@ interface OAuthToken {
 }
 const oauthTokens = new Map<string, OAuthToken>();
 
+// ── Session store for Jazz-style form login (j_security_check) ───
+interface SessionData {
+  userId: number;
+  username: string;
+  role: string;
+  createdAt: number;
+}
+const sessions = new Map<string, SessionData>();
+
+function cleanSessions() {
+  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  for (const [k, v] of sessions) {
+    if (v.createdAt < cutoff) sessions.delete(k);
+  }
+}
+
+function parseCookies(header: string | undefined): Record<string, string> {
+  const result: Record<string, string> = {};
+  if (!header) return result;
+  for (const pair of header.split(';')) {
+    const idx = pair.indexOf('=');
+    if (idx > 0) {
+      result[pair.substring(0, idx).trim()] = pair.substring(idx + 1).trim();
+    }
+  }
+  return result;
+}
+
 // Clean up tokens older than 24 hours (DataHub maintains long sessions)
 function cleanOAuthTokens() {
   const cutoff = Date.now() - 24 * 60 * 60 * 1000;
@@ -81,41 +113,35 @@ function generateToken(): string {
 export function oslcRoutes(db: Database) {
   const router = express.Router();
 
-  // ── OSLC headers middleware ───────────────────────────────
-  router.use((_req: Request, res: Response, next: NextFunction) => {
+  // ── OSLC headers + request logging middleware ─────────────
+  router.use((req: Request, res: Response, next: NextFunction) => {
     res.set('OSLC-Core-Version', '2.0');
+    console.log(`[OSLC] ${req.method} ${req.originalUrl} Accept=${req.headers.accept || '*/*'} Auth=${req.headers.authorization ? req.headers.authorization.substring(0, 20) + '...' : 'none'}`);
     next();
   });
 
   // ── Root Services (OSLC 2.0 discovery, no auth required) ──
+  // Jazz-compatible rootservices — DataHub parses rdf:resource attributes
+  // to discover the ServiceProviderCatalog URL for each OSLC domain.
   router.get('/rootservices', (req: Request, res: Response) => {
     const base = buildBaseUrl(req);
+    const catalogUrl = `${base}/api/oslc/catalog`;
     const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <rdf:Description
     xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
     xmlns:dc="http://purl.org/dc/terms/"
+    xmlns:oslc_rm="http://open-services.net/xmlns/rm/1.0/"
     xmlns:oslc_cm="http://open-services.net/xmlns/cm/1.0/"
     xmlns:oslc_am="http://open-services.net/xmlns/am/1.0/"
-    xmlns:oslc="http://open-services.net/xmlns/discovery/1.0/"
     xmlns:jfs="http://jazz.net/xmlns/prod/jazz/jfs/1.0/"
     rdf:about="${base}/api/oslc/rootservices">
 
   <dc:title>EICD OSLC Root Services</dc:title>
 
-  <!-- Service Provider Catalog -->
-  <oslc_cm:cmServiceProviders>
-    <oslc:ServiceProviderCatalog rdf:about="${base}/api/oslc/catalog">
-      <dc:title>EICD Service Provider Catalog</dc:title>
-    </oslc:ServiceProviderCatalog>
-  </oslc_cm:cmServiceProviders>
+  <!-- Service Provider Catalog (RM domain — DataHub primary) -->
+  <oslc_rm:rmServiceProviders rdf:resource="${catalogUrl}"/>
 
-  <oslc_am:amServiceProviders>
-    <oslc:ServiceProviderCatalog rdf:about="${base}/api/oslc/catalog">
-      <dc:title>EICD Service Provider Catalog</dc:title>
-    </oslc:ServiceProviderCatalog>
-  </oslc_am:amServiceProviders>
-
-  <!-- OAuth not used — Basic Auth -->
+  <!-- OAuth 1.0a endpoints -->
   <jfs:oauthRequestTokenUrl rdf:resource="${base}/api/oslc/oauth/requestToken"/>
   <jfs:oauthAccessTokenUrl rdf:resource="${base}/api/oslc/oauth/accessToken"/>
   <jfs:oauthUserAuthorizationUrl rdf:resource="${base}/api/oslc/oauth/authorize"/>
@@ -274,10 +300,23 @@ button:hover{background:#1d4ed8}.err{color:red;font-size:13px}</style></head>
       .send(`oauth_token=${encodeURIComponent(accessToken)}&oauth_token_secret=${encodeURIComponent(accessSecret)}`);
   });
 
-  // ── Auth middleware (JWT Bearer + HTTP Basic Auth + OAuth) ─
+  // ── Auth middleware (Session Cookie + JWT Bearer + HTTP Basic Auth + OAuth) ─
   const oslcAuth = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    // Check session cookies first (Jazz-style form login)
+    const cookies = parseCookies(req.headers.cookie);
+    const sessionId = cookies['JSESSIONID'] || cookies['LtpaToken2'];
+    if (sessionId) {
+      const session = sessions.get(sessionId);
+      if (session) {
+        req.user = { id: session.userId, username: session.username, role: session.role };
+        console.log(`[OSLC] Auth via session cookie: user=${session.username}`);
+        return next();
+      }
+    }
+
     const authHeader = req.headers.authorization;
     if (!authHeader) {
+      console.log(`[OSLC-AUTH] ✗ No auth header — ${req.method} ${req.path}`);
       res.set('WWW-Authenticate', 'Basic realm="EICD OSLC"');
       return res.status(401).json({ error: 'Authentication required' });
     }
@@ -288,8 +327,10 @@ button:hover{background:#1d4ed8}.err{color:red;font-size:13px}</style></head>
       try {
         const decoded = jwt.verify(token, JWT_SECRET) as any;
         req.user = decoded;
+        console.log(`[OSLC-AUTH] ✓ JWT user=${decoded.username} — ${req.method} ${req.path}`);
         return next();
       } catch {
+        console.log(`[OSLC-AUTH] ✗ Invalid JWT — ${req.method} ${req.path}`);
         return res.status(401).json({ error: 'Invalid or expired token' });
       }
     }
@@ -299,7 +340,10 @@ button:hover{background:#1d4ed8}.err{color:red;font-size:13px}</style></head>
       const b64 = authHeader.slice(6).trim();
       const decoded = Buffer.from(b64, 'base64').toString('utf-8');
       const colonIdx = decoded.indexOf(':');
-      if (colonIdx < 0) return res.status(401).json({ error: 'Invalid Basic credentials' });
+      if (colonIdx < 0) {
+        console.log(`[OSLC-AUTH] ✗ Malformed Basic header — ${req.method} ${req.path}`);
+        return res.status(401).json({ error: 'Invalid Basic credentials' });
+      }
 
       const username = decoded.substring(0, colonIdx);
       const password = decoded.substring(colonIdx + 1);
@@ -309,14 +353,22 @@ button:hover{background:#1d4ed8}.err{color:red;font-size:13px}</style></head>
           'SELECT id, username, password, role FROM users WHERE username = ?',
           [username],
         );
-        if (!user) return res.status(401).json({ error: 'Invalid credentials' });
+        if (!user) {
+          console.log(`[OSLC-AUTH] ✗ User not found: ${username} — ${req.method} ${req.path}`);
+          return res.status(401).json({ error: 'Invalid credentials' });
+        }
 
         const valid = await bcrypt.compare(password, user.password);
-        if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
+        if (!valid) {
+          console.log(`[OSLC-AUTH] ✗ Wrong password for: ${username} — ${req.method} ${req.path}`);
+          return res.status(401).json({ error: 'Invalid credentials' });
+        }
 
         req.user = { id: user.id, username: user.username, role: user.role };
+        console.log(`[OSLC-AUTH] ✓ Basic user=${username} — ${req.method} ${req.path}`);
         return next();
       } catch (err) {
+        console.error(`[OSLC-AUTH] ✗ DB error during Basic auth: ${err}`);
         return res.status(500).json({ error: 'Auth error' });
       }
     }
@@ -336,6 +388,119 @@ button:hover{background:#1d4ed8}.err{color:red;font-size:13px}</style></head>
     res.set('WWW-Authenticate', 'Basic realm="EICD OSLC"');
     return res.status(401).json({ error: 'Unsupported auth scheme' });
   };
+
+  // ── Jazz-style form login (j_security_check) — before auth middleware ──
+  // DataHub "login" auth type GETs this URL to show login form in a webview,
+  // then the form POSTs credentials back here.
+  router.get('/j_security_check', (req: Request, res: Response) => {
+    const base = buildBaseUrl(req);
+    // Check if already logged in via cookie
+    const cookies = parseCookies(req.headers.cookie);
+    const sessionId = cookies['JSESSIONID'] || cookies['LtpaToken2'];
+    if (sessionId && sessions.get(sessionId)) {
+      console.log(`[OSLC] j_security_check GET: already authenticated via cookie`);
+      return res.type('text/html').send(`<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>EICD OSLC - Authenticated</title></head>
+<body><p>Authenticated. You may close this window.</p></body></html>`);
+    }
+    console.log(`[OSLC] j_security_check GET: showing login form`);
+    res.type('text/html').send(`<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>EICD OSLC Login</title>
+<style>body{font-family:sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f5f5f5}
+.card{background:#fff;padding:2rem;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.1);width:320px}
+h2{margin-top:0}input{width:100%;padding:8px;margin:6px 0 12px;box-sizing:border-box;border:1px solid #ccc;border-radius:4px}
+button{width:100%;padding:10px;background:#2563eb;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:14px}
+button:hover{background:#1d4ed8}</style></head>
+<body><div class="card">
+<h2>EICD OSLC Login</h2>
+<form method="POST" action="${base}/api/oslc/j_security_check">
+<label>Username<input name="j_username" required/></label>
+<label>Password<input name="j_password" type="password" required/></label>
+<button type="submit">Login</button>
+</form></div></body></html>`);
+  });
+
+  router.post('/j_security_check', express.urlencoded({ extended: false }), async (req: Request, res: Response) => {
+    const username = req.body?.j_username || req.body?.username;
+    const password = req.body?.j_password || req.body?.password;
+    console.log(`[OSLC] j_security_check login attempt: user=${username}`);
+
+    if (!username || !password) {
+      return res.status(401).send('Missing credentials');
+    }
+
+    try {
+      const user = await db.get('SELECT id, username, password, role FROM users WHERE username = ?', [username]);
+      if (!user) return res.status(401).send('Invalid credentials');
+      const valid = await bcrypt.compare(password, user.password);
+      if (!valid) return res.status(401).send('Invalid credentials');
+
+      cleanSessions();
+      const sessionId = generateToken();
+      sessions.set(sessionId, {
+        userId: user.id,
+        username: user.username,
+        role: user.role,
+        createdAt: Date.now(),
+      });
+
+      // Set JSESSIONID cookie (Jazz standard) + LtpaToken2 (some clients check this)
+      res.cookie('JSESSIONID', sessionId, { path: '/api/oslc', httpOnly: true });
+      res.cookie('LtpaToken2', sessionId, { path: '/api/oslc', httpOnly: true });
+      console.log(`[OSLC] j_security_check success: user=${username}, session=${sessionId.substring(0, 8)}...`);
+
+      // If there was an original URL the client wanted, redirect there
+      const redirectUrl = req.query.redirect as string;
+      if (redirectUrl) {
+        return res.redirect(302, redirectUrl);
+      }
+      // Show success page — DataHub webview should capture the cookies
+      res.status(200).type('text/html').send(`<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>EICD OSLC - Login Successful</title></head>
+<body><h2>Login Successful</h2><p>Authenticated as ${user.username}. You may close this window.</p></body></html>`);
+    } catch (err: any) {
+      console.error(`[OSLC] j_security_check error:`, err.message);
+      res.status(500).send('Login failed');
+    }
+  });
+
+  // Jazz-compatible identity endpoint — DataHub may check this to verify session
+  router.get('/whoami', (req: Request, res: Response) => {
+    const cookies = parseCookies(req.headers.cookie);
+    const sessionId = cookies['JSESSIONID'] || cookies['LtpaToken2'];
+    const session = sessionId ? sessions.get(sessionId) : undefined;
+
+    if (session) {
+      return res.type('application/rdf+xml').send(`<?xml version="1.0" encoding="UTF-8"?>
+<rdf:Description xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+    xmlns:foaf="http://xmlns.com/foaf/0.1/"
+    xmlns:dc="http://purl.org/dc/terms/">
+  <foaf:name>${session.username}</foaf:name>
+  <dc:identifier>${session.userId}</dc:identifier>
+</rdf:Description>`);
+    }
+    res.status(401).send('Not authenticated');
+  });
+
+  // Jazz auth redirect — when DataHub hits a protected resource without auth,
+  // redirect to login form (DataHub "login" type expects this pattern)
+  router.get('/auth', (req: Request, res: Response) => {
+    const base = buildBaseUrl(req);
+    res.type('text/html').send(`<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>EICD OSLC Login</title>
+<style>body{font-family:sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f5f5f5}
+.card{background:#fff;padding:2rem;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.1);width:320px}
+h2{margin-top:0}input{width:100%;padding:8px;margin:6px 0 12px;box-sizing:border-box;border:1px solid #ccc;border-radius:4px}
+button{width:100%;padding:10px;background:#2563eb;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:14px}
+button:hover{background:#1d4ed8}</style></head>
+<body><div class="card">
+<h2>EICD OSLC Login</h2>
+<form method="POST" action="${base}/api/oslc/j_security_check">
+<label>Username<input name="j_username" required/></label>
+<label>Password<input name="j_password" type="password" required/></label>
+<button type="submit">Login</button>
+</form></div></body></html>`);
+  });
 
   router.use(oslcAuth);
 
@@ -379,6 +544,15 @@ button:hover{background:#1d4ed8}.err{color:red;font-size:13px}</style></head>
       const project = await db.get('SELECT id, name FROM projects WHERE id = ?', [pid]);
       if (!project) return res.status(404).json({ error: 'Project not found' });
 
+      // OSLC Compact Representation (for OSLC Preview panel)
+      if (wantsCompactXml(req)) {
+        const providerUri = `${base}/api/oslc/projects/${pid}/provider`;
+        const previewUrl = `${base}/api/oslc/projects/${pid}/preview`;
+        return res.type('application/x-oslc-compact+xml').send(
+          compactXml(providerUri, `Project: ${project.name}`, project.name, previewUrl),
+        );
+      }
+
       if (wantsRdfXml(req)) {
         return res.type('application/rdf+xml').send(serviceProviderToRdfXml(base, pid, project.name));
       }
@@ -400,13 +574,47 @@ button:hover{background:#1d4ed8}.err{color:red;font-size:13px}</style></head>
         'oslc:service': [
           {
             '@type': 'oslc:Service',
-            'oslc:domain': 'http://open-services.net/ns/am#',
+            'oslc:domain': ['http://open-services.net/ns/rm#', 'http://open-services.net/ns/am#'],
             'oslc:queryCapability': queryCapabilities,
           },
         ],
       };
 
       res.type('application/ld+json').json(provider);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ══════════════════════════════════════════════════════════
+  // Project Sub-Catalog (DataHub fetches when expanding a project node)
+  // ══════════════════════════════════════════════════════════
+  router.get('/projects/:projectId/catalog', async (req: AuthRequest, res: Response) => {
+    try {
+      const base = buildBaseUrl(req);
+      const pid = Number(req.params.projectId);
+      const project = await db.get('SELECT id, name FROM projects WHERE id = ?', [pid]);
+      if (!project) return res.status(404).json({ error: 'Project not found' });
+      res.type('application/rdf+xml').send(projectCatalogToRdfXml(base, pid, project.name));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ══════════════════════════════════════════════════════════
+  // Per-resource-type Service Provider (e.g., /projects/34/devices/provider)
+  // ══════════════════════════════════════════════════════════
+  router.get('/projects/:projectId/:resourceType/provider', async (req: AuthRequest, res: Response) => {
+    const validTypes = ['devices', 'connectors', 'pins', 'signals'];
+    const rType = req.params.resourceType;
+    if (!validTypes.includes(rType)) return res.status(404).json({ error: `Unknown type: ${rType}` });
+
+    try {
+      const base = buildBaseUrl(req);
+      const pid = Number(req.params.projectId);
+      const project = await db.get('SELECT id, name FROM projects WHERE id = ?', [pid]);
+      if (!project) return res.status(404).json({ error: 'Project not found' });
+      res.type('application/rdf+xml').send(resourceTypeProviderToRdfXml(base, pid, project.name, rType));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -467,12 +675,12 @@ button:hover{background:#1d4ed8}.err{color:red;font-size:13px}</style></head>
     try {
       const base = buildBaseUrl(req);
       const pid = Number(req.params.projectId);
-      const pageSize = Math.min(Number(req.query['oslc.pageSize']) || 200, 1000);
+      const pageSize = Math.min(Number(req.query['oslc.pageSize']) || 5000, 10000);
       const page = Math.max(Number(req.query['oslc.pageNo']) || 1, 1);
       const offset = (page - 1) * pageSize;
 
       const { clauses, params } = parseOslcWhere(req.query['oslc.where'] as string, DEVICE_ATTR_TO_COL);
-      const whereBase = `project_id = ? AND (status = 'normal' OR status IS NULL)`;
+      const whereBase = `project_id = ?`;
       const where = clauses.length > 0
         ? `${whereBase} AND ${clauses.join(' AND ')}`
         : whereBase;
@@ -487,12 +695,13 @@ button:hover{background:#1d4ed8}.err{color:red;font-size:13px}</style></head>
       if (wantsRdfXml(req)) {
         const queryBase = `${base}/api/oslc/projects/${pid}/devices`;
         const memberUris = rows.map((d: any) => `${queryBase}/${d.id}`);
-        const resourcesXml = rows.map((d: any) => deviceToRdfXml(d, base, pid)).join('\n');
+        const inlineResources = rows.map((d: any) => deviceToRdfXml(d, base, pid));
+        const resourcesXml = inlineResources.join('\n');
         const nextPageUri = rows.length === pageSize && offset + pageSize < total.cnt
           ? `${queryBase}?oslc.pageNo=${page + 1}&oslc.pageSize=${pageSize}`
           : undefined;
         return res.type('application/rdf+xml').send(
-          queryResponseRdfXml(queryBase, total.cnt, memberUris, resourcesXml, base, nextPageUri),
+          queryResponseRdfXml(queryBase, total.cnt, memberUris, resourcesXml, base, nextPageUri, inlineResources),
         );
       }
 
@@ -535,6 +744,12 @@ button:hover{background:#1d4ed8}.err{color:red;font-size:13px}</style></head>
       const connectorIds = connectors.map((c: any) => c.id);
 
       res.set('ETag', `"${device.updated_at || device.created_at}"`);
+      if (wantsCompactXml(req)) {
+        const uri = `${base}/api/oslc/projects/${pid}/devices/${did}`;
+        const title = device['设备编号'] || `Device ${did}`;
+        const preview = `${uri}/preview`;
+        return res.type('application/x-oslc-compact+xml').send(compactXml(uri, title, title, preview));
+      }
       if (wantsRdfXml(req)) {
         return res.type('application/rdf+xml').send(wrapRdfXml(deviceToRdfXml(device, base, pid, connectorIds), base));
       }
@@ -552,12 +767,12 @@ button:hover{background:#1d4ed8}.err{color:red;font-size:13px}</style></head>
     try {
       const base = buildBaseUrl(req);
       const pid = Number(req.params.projectId);
-      const pageSize = Math.min(Number(req.query['oslc.pageSize']) || 200, 1000);
+      const pageSize = Math.min(Number(req.query['oslc.pageSize']) || 5000, 10000);
       const page = Math.max(Number(req.query['oslc.pageNo']) || 1, 1);
       const offset = (page - 1) * pageSize;
 
       const { clauses, params } = parseOslcWhere(req.query['oslc.where'] as string, CONNECTOR_ATTR_TO_COL);
-      const whereBase = `d.project_id = ? AND (c.status = 'normal' OR c.status IS NULL)`;
+      const whereBase = `d.project_id = ?`;
       const where = clauses.length > 0
         ? `${whereBase} AND ${clauses.map(c => `c.${c}`).join(' AND ')}`
         : whereBase;
@@ -575,12 +790,13 @@ button:hover{background:#1d4ed8}.err{color:red;font-size:13px}</style></head>
       if (wantsRdfXml(req)) {
         const queryBase = `${base}/api/oslc/projects/${pid}/connectors`;
         const memberUris = rows.map((c: any) => `${queryBase}/${c.id}`);
-        const resourcesXml = rows.map((c: any) => connectorToRdfXml(c, base, pid)).join('\n');
+        const inlineResources = rows.map((c: any) => connectorToRdfXml(c, base, pid));
+        const resourcesXml = inlineResources.join('\n');
         const nextPageUri = rows.length === pageSize && offset + pageSize < total.cnt
           ? `${queryBase}?oslc.pageNo=${page + 1}&oslc.pageSize=${pageSize}`
           : undefined;
         return res.type('application/rdf+xml').send(
-          queryResponseRdfXml(queryBase, total.cnt, memberUris, resourcesXml, base, nextPageUri),
+          queryResponseRdfXml(queryBase, total.cnt, memberUris, resourcesXml, base, nextPageUri, inlineResources),
         );
       }
 
@@ -621,6 +837,11 @@ button:hover{background:#1d4ed8}.err{color:red;font-size:13px}</style></head>
       const pinIds = pins.map((p: any) => p.id);
 
       res.set('ETag', `"${conn.updated_at || conn.created_at}"`);
+      if (wantsCompactXml(req)) {
+        const uri = `${base}/api/oslc/projects/${pid}/connectors/${cid}`;
+        const title = conn['设备端元器件编号'] || `Connector ${cid}`;
+        return res.type('application/x-oslc-compact+xml').send(compactXml(uri, title, title, `${uri}/preview`));
+      }
       if (wantsRdfXml(req)) {
         return res.type('application/rdf+xml').send(wrapRdfXml(connectorToRdfXml(conn, base, pid, pinIds), base));
       }
@@ -638,12 +859,12 @@ button:hover{background:#1d4ed8}.err{color:red;font-size:13px}</style></head>
     try {
       const base = buildBaseUrl(req);
       const pid = Number(req.params.projectId);
-      const pageSize = Math.min(Number(req.query['oslc.pageSize']) || 500, 2000);
+      const pageSize = Math.min(Number(req.query['oslc.pageSize']) || 5000, 10000);
       const page = Math.max(Number(req.query['oslc.pageNo']) || 1, 1);
       const offset = (page - 1) * pageSize;
 
       const { clauses, params } = parseOslcWhere(req.query['oslc.where'] as string, PIN_ATTR_TO_COL);
-      const whereBase = `d.project_id = ? AND (p.status = 'normal' OR p.status IS NULL)`;
+      const whereBase = `d.project_id = ?`;
       const where = clauses.length > 0
         ? `${whereBase} AND ${clauses.map(c => `p.${c}`).join(' AND ')}`
         : whereBase;
@@ -667,12 +888,13 @@ button:hover{background:#1d4ed8}.err{color:red;font-size:13px}</style></head>
       if (wantsRdfXml(req)) {
         const queryBase = `${base}/api/oslc/projects/${pid}/pins`;
         const memberUris = rows.map((p: any) => `${queryBase}/${p.id}`);
-        const resourcesXml = rows.map((p: any) => pinToRdfXml(p, base, pid)).join('\n');
+        const inlineResources = rows.map((p: any) => pinToRdfXml(p, base, pid));
+        const resourcesXml = inlineResources.join('\n');
         const nextPageUri = rows.length === pageSize && offset + pageSize < total.cnt
           ? `${queryBase}?oslc.pageNo=${page + 1}&oslc.pageSize=${pageSize}`
           : undefined;
         return res.type('application/rdf+xml').send(
-          queryResponseRdfXml(queryBase, total.cnt, memberUris, resourcesXml, base, nextPageUri),
+          queryResponseRdfXml(queryBase, total.cnt, memberUris, resourcesXml, base, nextPageUri, inlineResources),
         );
       }
 
@@ -712,6 +934,11 @@ button:hover{background:#1d4ed8}.err{color:red;font-size:13px}</style></head>
       if (!pin) return res.status(404).json({ error: 'Pin not found' });
 
       res.set('ETag', `"${pin.updated_at || pin.created_at}"`);
+      if (wantsCompactXml(req)) {
+        const uri = `${base}/api/oslc/projects/${pid}/pins/${pinId}`;
+        const title = pin['针孔号'] || `Pin ${pinId}`;
+        return res.type('application/x-oslc-compact+xml').send(compactXml(uri, title, title, `${uri}/preview`));
+      }
       if (wantsRdfXml(req)) {
         return res.type('application/rdf+xml').send(wrapRdfXml(pinToRdfXml(pin, base, pid), base));
       }
@@ -729,12 +956,12 @@ button:hover{background:#1d4ed8}.err{color:red;font-size:13px}</style></head>
     try {
       const base = buildBaseUrl(req);
       const pid = Number(req.params.projectId);
-      const pageSize = Math.min(Number(req.query['oslc.pageSize']) || 200, 1000);
+      const pageSize = Math.min(Number(req.query['oslc.pageSize']) || 5000, 10000);
       const page = Math.max(Number(req.query['oslc.pageNo']) || 1, 1);
       const offset = (page - 1) * pageSize;
 
       const { clauses, params } = parseOslcWhere(req.query['oslc.where'] as string, SIGNAL_ATTR_TO_COL);
-      const whereBase = `project_id = ? AND (status = 'Active' OR status = 'normal' OR status IS NULL)`;
+      const whereBase = `project_id = ?`;
       const where = clauses.length > 0
         ? `${whereBase} AND ${clauses.join(' AND ')}`
         : whereBase;
@@ -749,12 +976,13 @@ button:hover{background:#1d4ed8}.err{color:red;font-size:13px}</style></head>
       if (wantsRdfXml(req)) {
         const queryBase = `${base}/api/oslc/projects/${pid}/signals`;
         const memberUris = rows.map((s: any) => `${queryBase}/${s.id}`);
-        const resourcesXml = rows.map((s: any) => signalToRdfXml(s, [], [], base, pid)).join('\n');
+        const inlineResources = rows.map((s: any) => signalToRdfXml(s, [], [], base, pid));
+        const resourcesXml = inlineResources.join('\n');
         const nextPageUri = rows.length === pageSize && offset + pageSize < total.cnt
           ? `${queryBase}?oslc.pageNo=${page + 1}&oslc.pageSize=${pageSize}`
           : undefined;
         return res.type('application/rdf+xml').send(
-          queryResponseRdfXml(queryBase, total.cnt, memberUris, resourcesXml, base, nextPageUri),
+          queryResponseRdfXml(queryBase, total.cnt, memberUris, resourcesXml, base, nextPageUri, inlineResources),
         );
       }
 
@@ -819,6 +1047,12 @@ button:hover{background:#1d4ed8}.err{color:red;font-size:13px}</style></head>
       );
 
       res.set('ETag', `"${signal.updated_at || signal.created_at}"`);
+      if (wantsCompactXml(req)) {
+        const sid = Number(req.params.id);
+        const uri = `${base}/api/oslc/projects/${pid}/signals/${sid}`;
+        const title = signal.unique_id || signal.signal_name || `Signal ${sid}`;
+        return res.type('application/x-oslc-compact+xml').send(compactXml(uri, title, title, `${uri}/preview`));
+      }
       if (wantsRdfXml(req)) {
         return res.type('application/rdf+xml').send(
           wrapRdfXml(signalToRdfXml(signal, endpoints, edges, base, pid), base),
@@ -847,28 +1081,28 @@ button:hover{background:#1d4ed8}.err{color:red;font-size:13px}</style></head>
           label: 'Device',
           idCol: '设备编号',
           titleCol: '设备中文名称',
-          where: `project_id = ${pid} AND (status = 'normal' OR status IS NULL)`,
+          where: `project_id = ${pid}`,
         },
         connectors: {
           table: 'connectors c JOIN devices d ON c.device_id = d.id',
           label: 'Connector',
           idCol: '设备端元器件编号',
           titleCol: '设备端元器件名称及类型',
-          where: `d.project_id = ${pid} AND (c.status = 'normal' OR c.status IS NULL)`,
+          where: `d.project_id = ${pid}`,
         },
         pins: {
           table: 'pins p JOIN connectors c ON p.connector_id = c.id JOIN devices d ON c.device_id = d.id',
           label: 'Pin',
           idCol: '针孔号',
           titleCol: '针孔号',
-          where: `d.project_id = ${pid} AND (p.status = 'normal' OR p.status IS NULL)`,
+          where: `d.project_id = ${pid}`,
         },
         signals: {
           table: 'signals',
           label: 'Signal',
           idCol: 'unique_id',
           titleCol: 'unique_id',
-          where: `project_id = ${pid} AND (status = 'Active' OR status = 'normal' OR status IS NULL)`,
+          where: `project_id = ${pid}`,
         },
       };
 
@@ -943,6 +1177,134 @@ function cancel() {
 </script></body></html>`);
     } catch (err: any) {
       res.status(500).send('Error loading selector');
+    }
+  });
+
+  // ══════════════════════════════════════════════════════════
+  // OSLC Preview HTML pages (referenced by compact+xml)
+  // ══════════════════════════════════════════════════════════
+
+  // Project preview
+  router.get('/projects/:projectId/preview', async (req: AuthRequest, res: Response) => {
+    try {
+      const pid = Number(req.params.projectId);
+      const project = await db.get('SELECT id, name FROM projects WHERE id = ?', [pid]);
+      if (!project) return res.status(404).send('Not found');
+      const devCount = await db.get(`SELECT COUNT(*) as cnt FROM devices WHERE project_id = ? AND (status='normal' OR status IS NULL)`, [pid]);
+      const sigCount = await db.get(`SELECT COUNT(*) as cnt FROM signals WHERE project_id = ? AND (status='Active' OR status='normal' OR status IS NULL)`, [pid]);
+      res.type('text/html').send(`<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>body{font-family:sans-serif;margin:12px;font-size:13px}h3{margin:0 0 8px}table{border-collapse:collapse}td{padding:2px 12px 2px 0;color:#333}</style></head>
+<body><h3>${project.name}</h3>
+<table><tr><td>Devices:</td><td><b>${devCount.cnt}</b></td></tr>
+<tr><td>Signals:</td><td><b>${sigCount.cnt}</b></td></tr></table></body></html>`);
+    } catch { res.status(500).send('Error'); }
+  });
+
+  // Device preview
+  router.get('/projects/:projectId/devices/:id/preview', async (req: AuthRequest, res: Response) => {
+    try {
+      const device = await db.get('SELECT * FROM devices WHERE id = ? AND project_id = ?', [req.params.id, req.params.projectId]);
+      if (!device) return res.status(404).send('Not found');
+      const rows = Object.entries(device).filter(([k]) => !['id','project_id','status','created_at','updated_at','pending_item_type'].includes(k));
+      const html = rows.map(([k,v]) => `<tr><td>${k}</td><td>${v ?? ''}</td></tr>`).join('');
+      res.type('text/html').send(`<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>body{font-family:sans-serif;margin:12px;font-size:13px}table{border-collapse:collapse}td{padding:2px 8px 2px 0;border-bottom:1px solid #eee}</style></head>
+<body><table>${html}</table></body></html>`);
+    } catch { res.status(500).send('Error'); }
+  });
+
+  // Connector preview
+  router.get('/projects/:projectId/connectors/:id/preview', async (req: AuthRequest, res: Response) => {
+    try {
+      const conn = await db.get(`SELECT c.* FROM connectors c JOIN devices d ON c.device_id=d.id WHERE c.id=? AND d.project_id=?`, [req.params.id, req.params.projectId]);
+      if (!conn) return res.status(404).send('Not found');
+      const rows = Object.entries(conn).filter(([k]) => !['id','device_id','status','created_at','updated_at','pending_item_type'].includes(k));
+      const html = rows.map(([k,v]) => `<tr><td>${k}</td><td>${v ?? ''}</td></tr>`).join('');
+      res.type('text/html').send(`<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>body{font-family:sans-serif;margin:12px;font-size:13px}table{border-collapse:collapse}td{padding:2px 8px 2px 0;border-bottom:1px solid #eee}</style></head>
+<body><table>${html}</table></body></html>`);
+    } catch { res.status(500).send('Error'); }
+  });
+
+  // Pin preview
+  router.get('/projects/:projectId/pins/:id/preview', async (req: AuthRequest, res: Response) => {
+    try {
+      const pin = await db.get(`SELECT p.* FROM pins p JOIN connectors c ON p.connector_id=c.id JOIN devices d ON c.device_id=d.id WHERE p.id=? AND d.project_id=?`, [req.params.id, req.params.projectId]);
+      if (!pin) return res.status(404).send('Not found');
+      const rows = Object.entries(pin).filter(([k]) => !['id','connector_id','status','created_at','updated_at','pending_item_type'].includes(k));
+      const html = rows.map(([k,v]) => `<tr><td>${k}</td><td>${v ?? ''}</td></tr>`).join('');
+      res.type('text/html').send(`<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>body{font-family:sans-serif;margin:12px;font-size:13px}table{border-collapse:collapse}td{padding:2px 8px 2px 0;border-bottom:1px solid #eee}</style></head>
+<body><table>${html}</table></body></html>`);
+    } catch { res.status(500).send('Error'); }
+  });
+
+  // Signal preview
+  router.get('/projects/:projectId/signals/:id/preview', async (req: AuthRequest, res: Response) => {
+    try {
+      const signal = await db.get('SELECT * FROM signals WHERE id=? AND project_id=?', [req.params.id, req.params.projectId]);
+      if (!signal) return res.status(404).send('Not found');
+      const rows = Object.entries(signal).filter(([k]) => !['id','project_id','status','created_at','updated_at','endpoints','edges','pending_item_type'].includes(k));
+      const html = rows.map(([k,v]) => `<tr><td>${k}</td><td>${v ?? ''}</td></tr>`).join('');
+      res.type('text/html').send(`<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>body{font-family:sans-serif;margin:12px;font-size:13px}table{border-collapse:collapse}td{padding:2px 8px 2px 0;border-bottom:1px solid #eee}</style></head>
+<body><table>${html}</table></body></html>`);
+    } catch { res.status(500).send('Error'); }
+  });
+
+  // ══════════════════════════════════════════════════════════
+  // JSON Export (for MagicDraw Groovy macro — returns raw DB rows)
+  // ══════════════════════════════════════════════════════════
+  router.get('/projects/:projectId/export/:type', async (req: AuthRequest, res: Response) => {
+    const ts = new Date().toISOString();
+    const pid = Number(req.params.projectId);
+    const type = req.params.type;
+    const user = (req as any).user?.username || 'unknown';
+    console.log(`[OSLC-EXPORT ${ts}] ➜ GET /projects/${pid}/export/${type}  user=${user}  ip=${req.ip}`);
+
+    try {
+      const exclude = ['import_conflicts', 'validation_errors', 'version', 'import_status', 'pending_item_type'];
+      const filterRow = (row: any) => {
+        const r: any = {};
+        for (const [k, v] of Object.entries(row)) {
+          if (!exclude.includes(k) && v !== null && v !== undefined && v !== '') r[k] = v;
+        }
+        return r;
+      };
+
+      let rows: any[];
+      if (type === 'devices') {
+        rows = await db.query('SELECT * FROM devices WHERE project_id = ?', [pid]);
+      } else if (type === 'connectors') {
+        rows = await db.query(
+          'SELECT c.* FROM connectors c JOIN devices d ON c.device_id = d.id WHERE d.project_id = ?', [pid]);
+      } else if (type === 'pins') {
+        rows = await db.query(
+          `SELECT p.* FROM pins p JOIN connectors c ON p.connector_id = c.id
+           JOIN devices d ON c.device_id = d.id WHERE d.project_id = ?`, [pid]);
+      } else if (type === 'signals') {
+        rows = await db.query('SELECT * FROM signals WHERE project_id = ?', [pid]);
+      } else if (type === 'signal_endpoints') {
+        rows = await db.query(
+          `SELECT se.*, d."设备编号" as device_code, c."设备端元器件编号" as connector_code, p."针孔号" as pin_code
+           FROM signal_endpoints se
+           JOIN signals s ON se.signal_id = s.id
+           LEFT JOIN devices d ON se.device_id = d.id
+           LEFT JOIN pins p ON se.pin_id = p.id
+           LEFT JOIN connectors c ON p.connector_id = c.id
+           WHERE s.project_id = ?`, [pid]);
+      } else {
+        console.log(`[OSLC-EXPORT ${ts}] ✗ Unknown type: ${type}`);
+        return res.status(404).json({ error: 'Unknown type' });
+      }
+
+      const filtered = rows.map(filterRow);
+      const jsonSize = JSON.stringify({ total: filtered.length, results: filtered }).length;
+      console.log(`[OSLC-EXPORT ${ts}] ✓ ${type}: ${filtered.length} rows, ${(jsonSize / 1024).toFixed(1)} KB`);
+      res.json({ total: filtered.length, results: filtered });
+    } catch (err: any) {
+      console.error(`[OSLC-EXPORT ${ts}] ✗ ERROR: ${err.message}`);
+      res.status(500).json({ error: err.message });
     }
   });
 

@@ -327,12 +327,15 @@ const DCTERMS_NS = 'http://purl.org/dc/terms/';
 const RDF_NS = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#';
 const XSD_NS = 'http://www.w3.org/2001/XMLSchema#';
 
+const OSLC_RM_NS = 'http://open-services.net/ns/rm#';
+
 function rdfXmlPreamble(baseUrl: string): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <rdf:RDF
   xmlns:rdf="${RDF_NS}"
   xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"
   xmlns:oslc="${OSLC_NS}"
+  xmlns:oslc_rm="${OSLC_RM_NS}"
   xmlns:dcterms="${DCTERMS_NS}"
   xmlns:xsd="${XSD_NS}"
   xmlns:eicd="${baseUrl}/ns/eicd#">`;
@@ -342,9 +345,50 @@ function rdfXmlPreamble(baseUrl: string): string {
 export function wantsRdfXml(req: Request): boolean {
   const accept = req.headers.accept || '';
   if (!accept || accept === '*/*') return true;
+  // compact+xml is a separate format — don't match it as RDF/XML
+  if (accept.includes('application/x-oslc-compact+xml')) return false;
   if (accept.includes('application/rdf+xml') || accept.includes('application/xml')) return true;
   if (accept.includes('application/ld+json') || accept.includes('application/json')) return false;
   return true;
+}
+
+/** Check if client wants OSLC Compact Representation (for OSLC Preview) */
+export function wantsCompactXml(req: Request): boolean {
+  const accept = req.headers.accept || '';
+  return accept.includes('application/x-oslc-compact+xml');
+}
+
+/** Build OSLC Compact Representation XML */
+export function compactXml(
+  resourceUri: string,
+  title: string,
+  shortTitle: string,
+  previewUrl: string,
+  options?: { icon?: string; hintWidth?: string; hintHeight?: string },
+): string {
+  const w = options?.hintWidth || '500px';
+  const h = options?.hintHeight || '300px';
+  let xml = `<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF xmlns:rdf="${RDF_NS}"
+  xmlns:oslc="${OSLC_NS}"
+  xmlns:dcterms="${DCTERMS_NS}">
+  <oslc:Compact rdf:about="${xmlEscape(resourceUri)}">
+    <dcterms:title>${xmlEscape(title)}</dcterms:title>
+    <oslc:shortTitle>${xmlEscape(shortTitle)}</oslc:shortTitle>`;
+  if (options?.icon) {
+    xml += `\n    <oslc:icon rdf:resource="${xmlEscape(options.icon)}"/>`;
+  }
+  xml += `
+    <oslc:smallPreview>
+      <oslc:Preview>
+        <oslc:document rdf:resource="${xmlEscape(previewUrl)}"/>
+        <oslc:hintWidth>${w}</oslc:hintWidth>
+        <oslc:hintHeight>${h}</oslc:hintHeight>
+      </oslc:Preview>
+    </oslc:smallPreview>
+  </oslc:Compact>
+</rdf:RDF>`;
+  return xml;
 }
 
 // ── RDF/XML: Catalog ───────────────────────────────────────
@@ -358,6 +402,7 @@ export function catalogToRdfXml(
   xml += `\n  <oslc:ServiceProviderCatalog rdf:about="${xmlEscape(catalogUri)}">`;
   xml += `\n    <dcterms:title>EICD OSLC Service Provider Catalog</dcterms:title>`;
   xml += `\n    <dcterms:description>EICD electrical interface data for MagicDraw SysML integration</dcterms:description>`;
+  xml += `\n    <oslc:domain rdf:resource="http://open-services.net/ns/rm#"/>`;
   for (const p of projects) {
     xml += `\n    <oslc:serviceProvider>`;
     xml += `\n      <oslc:ServiceProvider rdf:about="${xmlEscape(baseUrl)}/api/oslc/projects/${p.id}/provider">`;
@@ -370,8 +415,40 @@ export function catalogToRdfXml(
   return xml;
 }
 
+/** Sub-catalog for a single project (if DataHub fetches it separately) */
+export function projectCatalogToRdfXml(
+  baseUrl: string,
+  pid: number,
+  projectName: string,
+): string {
+  const catalogUri = `${baseUrl}/api/oslc/projects/${pid}/catalog`;
+  const types = ['devices', 'connectors', 'pins', 'signals'];
+  const labels: Record<string, string> = {
+    devices: 'Devices (设备)',
+    connectors: 'Connectors (连接器)',
+    pins: 'Pins (针孔)',
+    signals: 'Signals (信号)',
+  };
+
+  let xml = rdfXmlPreamble(baseUrl);
+  xml += `\n  <oslc:ServiceProviderCatalog rdf:about="${xmlEscape(catalogUri)}">`;
+  xml += `\n    <dcterms:title>${xmlEscape(projectName)}</dcterms:title>`;
+  xml += `\n    <oslc:domain rdf:resource="http://open-services.net/ns/rm#"/>`;
+  for (const t of types) {
+    xml += `\n    <oslc:serviceProvider>`;
+    xml += `\n      <oslc:ServiceProvider rdf:about="${xmlEscape(baseUrl)}/api/oslc/projects/${pid}/${t}/provider">`;
+    xml += `\n        <dcterms:title>${labels[t]}</dcterms:title>`;
+    xml += `\n      </oslc:ServiceProvider>`;
+    xml += `\n    </oslc:serviceProvider>`;
+  }
+  xml += `\n  </oslc:ServiceProviderCatalog>`;
+  xml += `\n</rdf:RDF>`;
+  return xml;
+}
+
 // ── RDF/XML: Service Provider ──────────────────────────────
 
+/** Original combined service provider (kept for backward compat) */
 export function serviceProviderToRdfXml(
   baseUrl: string,
   pid: number,
@@ -393,11 +470,10 @@ export function serviceProviderToRdfXml(
   xml += `\n    <oslc:details rdf:resource="${xmlEscape(providerUri)}"/>`;
   xml += `\n    <oslc:service>`;
   xml += `\n      <oslc:Service>`;
-  xml += `\n        <oslc:domain rdf:resource="http://open-services.net/ns/am#"/>`;
+  xml += `\n        <oslc:domain rdf:resource="http://open-services.net/ns/rm#"/>`;
 
   for (const t of types) {
     const singular = t.replace(/s$/, '');
-    const Title = t.charAt(0).toUpperCase() + t.slice(1);
     const SingularTitle = singular.charAt(0).toUpperCase() + singular.slice(1);
     const qBase = `${baseUrl}/api/oslc/projects/${pid}/${t}`;
     xml += `\n        <oslc:queryCapability>`;
@@ -407,9 +483,9 @@ export function serviceProviderToRdfXml(
     xml += `\n            <oslc:queryBase rdf:resource="${xmlEscape(qBase)}"/>`;
     xml += `\n            <oslc:resourceShape rdf:resource="${xmlEscape(baseUrl)}/api/oslc/shapes/${singular}"/>`;
     xml += `\n            <oslc:resourceType rdf:resource="${xmlEscape(baseUrl)}/ns/eicd#${SingularTitle}"/>`;
+    xml += `\n            <oslc:usage rdf:resource="http://open-services.net/ns/core#default"/>`;
     xml += `\n          </oslc:QueryCapability>`;
     xml += `\n        </oslc:queryCapability>`;
-    // Selection dialog for each resource type
     xml += `\n        <oslc:selectionDialog>`;
     xml += `\n          <oslc:Dialog>`;
     xml += `\n            <dcterms:title>Select ${labels[t]}</dcterms:title>`;
@@ -422,6 +498,60 @@ export function serviceProviderToRdfXml(
     xml += `\n        </oslc:selectionDialog>`;
   }
 
+  xml += `\n      </oslc:Service>`;
+  xml += `\n    </oslc:service>`;
+  xml += `\n  </oslc:ServiceProvider>`;
+  xml += `\n</rdf:RDF>`;
+  return xml;
+}
+
+/** Per-resource-type service provider (e.g., "Devices" under a project) */
+export function resourceTypeProviderToRdfXml(
+  baseUrl: string,
+  pid: number,
+  projectName: string,
+  resourceType: string,  // 'devices' | 'connectors' | 'pins' | 'signals'
+): string {
+  const singular = resourceType.replace(/s$/, '');
+  const SingularTitle = singular.charAt(0).toUpperCase() + singular.slice(1);
+  const labels: Record<string, string> = {
+    devices: 'Devices (设备)',
+    connectors: 'Connectors (连接器)',
+    pins: 'Pins (针孔)',
+    signals: 'Signals (信号)',
+  };
+  const label = labels[resourceType] || resourceType;
+  const providerUri = `${baseUrl}/api/oslc/projects/${pid}/${resourceType}/provider`;
+  const qBase = `${baseUrl}/api/oslc/projects/${pid}/${resourceType}`;
+
+  let xml = rdfXmlPreamble(baseUrl);
+  xml += `\n  <oslc:ServiceProvider rdf:about="${xmlEscape(providerUri)}">`;
+  xml += `\n    <dcterms:title>${xmlEscape(label)}</dcterms:title>`;
+  xml += `\n    <dcterms:description>${xmlEscape(projectName)} — ${xmlEscape(label)}</dcterms:description>`;
+  xml += `\n    <oslc:details rdf:resource="${xmlEscape(providerUri)}"/>`;
+  xml += `\n    <oslc:service>`;
+  xml += `\n      <oslc:Service>`;
+  xml += `\n        <oslc:domain rdf:resource="http://open-services.net/ns/rm#"/>`;
+  xml += `\n        <oslc:queryCapability>`;
+  xml += `\n          <oslc:QueryCapability>`;
+  xml += `\n            <dcterms:title>${xmlEscape(label)} Query</dcterms:title>`;
+  xml += `\n            <oslc:label>${xmlEscape(label)}</oslc:label>`;
+  xml += `\n            <oslc:queryBase rdf:resource="${xmlEscape(qBase)}"/>`;
+  xml += `\n            <oslc:resourceShape rdf:resource="${xmlEscape(baseUrl)}/api/oslc/shapes/${singular}"/>`;
+  xml += `\n            <oslc:resourceType rdf:resource="${xmlEscape(baseUrl)}/ns/eicd#${SingularTitle}"/>`;
+  xml += `\n            <oslc:usage rdf:resource="http://open-services.net/ns/core#default"/>`;
+  xml += `\n          </oslc:QueryCapability>`;
+  xml += `\n        </oslc:queryCapability>`;
+  xml += `\n        <oslc:selectionDialog>`;
+  xml += `\n          <oslc:Dialog>`;
+  xml += `\n            <dcterms:title>Select ${xmlEscape(label)}</dcterms:title>`;
+  xml += `\n            <oslc:label>${xmlEscape(label)}</oslc:label>`;
+  xml += `\n            <oslc:dialog rdf:resource="${xmlEscape(baseUrl)}/api/oslc/projects/${pid}/selector/${resourceType}"/>`;
+  xml += `\n            <oslc:hintWidth>600px</oslc:hintWidth>`;
+  xml += `\n            <oslc:hintHeight>500px</oslc:hintHeight>`;
+  xml += `\n            <oslc:resourceType rdf:resource="${xmlEscape(baseUrl)}/ns/eicd#${SingularTitle}"/>`;
+  xml += `\n          </oslc:Dialog>`;
+  xml += `\n        </oslc:selectionDialog>`;
   xml += `\n      </oslc:Service>`;
   xml += `\n    </oslc:service>`;
   xml += `\n  </oslc:ServiceProvider>`;
@@ -495,7 +625,9 @@ function propsToRdfXml(row: any, propMap: Record<string, string>): string {
 
 export function deviceToRdfXml(device: any, baseUrl: string, projectId: number, connectorIds?: number[]): string {
   const uri = `${baseUrl}/api/oslc/projects/${projectId}/devices/${device.id}`;
-  let xml = `  <eicd:Device rdf:about="${xmlEscape(uri)}">`;
+  let xml = `  <rdf:Description rdf:about="${xmlEscape(uri)}">`;
+  xml += `\n    <rdf:type rdf:resource="${OSLC_RM_NS}Requirement"/>`;
+  xml += `\n    <rdf:type rdf:resource="${xmlEscape(baseUrl)}/ns/eicd#Device"/>`;
   xml += `\n    <dcterms:identifier>${xmlEscape(device['设备编号'] || String(device.id))}</dcterms:identifier>`;
   xml += `\n    <dcterms:title>${xmlEscape(device['设备中文名称'] || device['设备英文名称'] || device['设备编号'] || '')}</dcterms:title>`;
   if (device.created_at) xml += `\n    <dcterms:created>${xmlEscape(device.created_at)}</dcterms:created>`;
@@ -506,13 +638,15 @@ export function deviceToRdfXml(device: any, baseUrl: string, projectId: number, 
       xml += `\n    <eicd:hasConnector rdf:resource="${xmlEscape(baseUrl)}/api/oslc/projects/${projectId}/connectors/${cid}"/>`;
     }
   }
-  xml += `\n  </eicd:Device>`;
+  xml += `\n  </rdf:Description>`;
   return xml;
 }
 
 export function connectorToRdfXml(conn: any, baseUrl: string, projectId: number, pinIds?: number[]): string {
   const uri = `${baseUrl}/api/oslc/projects/${projectId}/connectors/${conn.id}`;
-  let xml = `  <eicd:Connector rdf:about="${xmlEscape(uri)}">`;
+  let xml = `  <rdf:Description rdf:about="${xmlEscape(uri)}">`;
+  xml += `\n    <rdf:type rdf:resource="${OSLC_RM_NS}Requirement"/>`;
+  xml += `\n    <rdf:type rdf:resource="${xmlEscape(baseUrl)}/ns/eicd#Connector"/>`;
   xml += `\n    <dcterms:identifier>${xmlEscape(conn['设备端元器件编号'] || String(conn.id))}</dcterms:identifier>`;
   xml += `\n    <dcterms:title>${xmlEscape(conn['设备端元器件名称及类型'] || conn['设备端元器件编号'] || '')}</dcterms:title>`;
   if (conn.created_at) xml += `\n    <dcterms:created>${xmlEscape(conn.created_at)}</dcterms:created>`;
@@ -526,13 +660,15 @@ export function connectorToRdfXml(conn: any, baseUrl: string, projectId: number,
       xml += `\n    <eicd:hasPin rdf:resource="${xmlEscape(baseUrl)}/api/oslc/projects/${projectId}/pins/${pid}"/>`;
     }
   }
-  xml += `\n  </eicd:Connector>`;
+  xml += `\n  </rdf:Description>`;
   return xml;
 }
 
 export function pinToRdfXml(pin: any, baseUrl: string, projectId: number): string {
   const uri = `${baseUrl}/api/oslc/projects/${projectId}/pins/${pin.id}`;
-  let xml = `  <eicd:Pin rdf:about="${xmlEscape(uri)}">`;
+  let xml = `  <rdf:Description rdf:about="${xmlEscape(uri)}">`;
+  xml += `\n    <rdf:type rdf:resource="${OSLC_RM_NS}Requirement"/>`;
+  xml += `\n    <rdf:type rdf:resource="${xmlEscape(baseUrl)}/ns/eicd#Pin"/>`;
   xml += `\n    <dcterms:identifier>${xmlEscape(pin['针孔号'] || String(pin.id))}</dcterms:identifier>`;
   xml += `\n    <dcterms:title>${xmlEscape(pin['针孔号'] || '')}</dcterms:title>`;
   if (pin.created_at) xml += `\n    <dcterms:created>${xmlEscape(pin.created_at)}</dcterms:created>`;
@@ -544,7 +680,7 @@ export function pinToRdfXml(pin: any, baseUrl: string, projectId: number): strin
   if (pin.device_id) {
     xml += `\n    <eicd:belongsToDevice rdf:resource="${xmlEscape(baseUrl)}/api/oslc/projects/${projectId}/devices/${pin.device_id}"/>`;
   }
-  xml += `\n  </eicd:Pin>`;
+  xml += `\n  </rdf:Description>`;
   return xml;
 }
 
@@ -556,7 +692,9 @@ export function signalToRdfXml(
   projectId: number,
 ): string {
   const uri = `${baseUrl}/api/oslc/projects/${projectId}/signals/${signal.id}`;
-  let xml = `  <eicd:Signal rdf:about="${xmlEscape(uri)}">`;
+  let xml = `  <rdf:Description rdf:about="${xmlEscape(uri)}">`;
+  xml += `\n    <rdf:type rdf:resource="${OSLC_RM_NS}Requirement"/>`;
+  xml += `\n    <rdf:type rdf:resource="${xmlEscape(baseUrl)}/ns/eicd#Signal"/>`;
   xml += `\n    <dcterms:identifier>${xmlEscape(signal.unique_id || String(signal.id))}</dcterms:identifier>`;
   xml += `\n    <dcterms:title>${xmlEscape(signal.unique_id || '')}</dcterms:title>`;
   if (signal.created_at) xml += `\n    <dcterms:created>${xmlEscape(signal.created_at)}</dcterms:created>`;
@@ -592,7 +730,7 @@ export function signalToRdfXml(
     xml += `\n    </eicd:hasEdge>`;
   }
 
-  xml += `\n  </eicd:Signal>`;
+  xml += `\n  </rdf:Description>`;
   return xml;
 }
 
@@ -601,7 +739,7 @@ export function wrapRdfXml(innerXml: string, baseUrl: string): string {
   return `${rdfXmlPreamble(baseUrl)}\n${innerXml}\n</rdf:RDF>`;
 }
 
-/** Build a query response in RDF/XML */
+/** Build a query response in RDF/XML — inline members (DNG-compatible) */
 export function queryResponseRdfXml(
   queryUri: string,
   totalCount: number,
@@ -609,13 +747,32 @@ export function queryResponseRdfXml(
   resourcesXml: string,
   baseUrl: string,
   nextPageUri?: string,
+  /** Individual resource XML strings for inline embedding */
+  inlineResources?: string[],
 ): string {
-  const membersXml = memberUris
-    .map(uri => `    <rdfs:member rdf:resource="${xmlEscape(uri)}"/>`)
-    .join('\n');
   const nextPageXml = nextPageUri
     ? `\n    <oslc:nextPage rdf:resource="${xmlEscape(nextPageUri)}"/>`
     : '';
+
+  // Use inline members if provided (DNG-compatible format)
+  if (inlineResources && inlineResources.length > 0) {
+    const inlineMembers = inlineResources
+      .map(resXml => `    <rdfs:member>\n  ${resXml}\n    </rdfs:member>`)
+      .join('\n');
+    return `${rdfXmlPreamble(baseUrl)}
+  <oslc:ResponseInfo rdf:about="${xmlEscape(queryUri)}">
+    <oslc:totalCount>${totalCount}</oslc:totalCount>${nextPageXml}
+  </oslc:ResponseInfo>
+  <rdf:Description rdf:about="${xmlEscape(queryUri)}">
+${inlineMembers}
+  </rdf:Description>
+</rdf:RDF>`;
+  }
+
+  // Fallback: reference members + separate descriptions
+  const membersXml = memberUris
+    .map(uri => `    <rdfs:member rdf:resource="${xmlEscape(uri)}"/>`)
+    .join('\n');
   return `${rdfXmlPreamble(baseUrl)}
   <oslc:ResponseInfo rdf:about="${xmlEscape(queryUri)}">
     <oslc:totalCount>${totalCount}</oslc:totalCount>${nextPageXml}
