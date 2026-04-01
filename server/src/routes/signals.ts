@@ -87,21 +87,23 @@ export function signalRoutes(db: Database) {
     operatorUsername: string,
     resolvedEndpoints: Array<{ deviceId: number; pinId: number | null }>
   ): Promise<ApprovalItemSpec[]> {
-    const zontiList = await getProjectRoleMembers(db, projectId, '总体组');
     const items: ApprovalItemSpec[] = [];
 
-    zontiList.filter(u => u !== operatorUsername).forEach(u =>
-      items.push({ recipient_username: u, item_type: 'approval' })
-    );
-
+    // 阶段一 completion：其他设备负责人（全部通过才进阶段二）
     const ownersSeen = new Set<string>();
-    for (const { deviceId, pinId } of resolvedEndpoints) {
+    for (const { deviceId } of resolvedEndpoints) {
       const ownerRow = await db.get('SELECT 设备负责人 FROM devices WHERE id = ?', [deviceId]);
       const owner = ownerRow?.设备负责人;
       if (!owner || owner === operatorUsername || ownersSeen.has(owner)) continue;
       ownersSeen.add(owner);
-      items.push({ recipient_username: owner, item_type: pinId !== null ? 'approval' : 'completion' });
+      items.push({ recipient_username: owner, item_type: 'completion' });
     }
+
+    // 阶段二 approval：总体组（一人通过即生效）
+    const zontiList = await getProjectRoleMembers(db, projectId, '总体组');
+    zontiList.filter(u => u !== operatorUsername).forEach(u =>
+      items.push({ recipient_username: u, item_type: 'approval' })
+    );
 
     return items;
   }
@@ -653,10 +655,8 @@ export function signalRoutes(db: Database) {
         }
       }
 
-      // 系统组/EWIS管理员 → 与 admin 相同，直接更新不走审批
-      const isPrivilegedRole = role === 'admin'
-        || await isDeviceManager(db, username, signal.project_id)
-        || await isEwisAdmin(db, username, signal.project_id);
+      // 仅 admin 直接更新不走审批
+      const isPrivilegedRole = role === 'admin';
 
       if (isPrivilegedRole) {
         if (Object.keys(fields).length > 0) {

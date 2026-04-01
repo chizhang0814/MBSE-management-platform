@@ -1384,30 +1384,123 @@ export function deviceRoutes(db: Database) {
       delete fields.id; delete fields.connector_id; delete fields.created_at;
 
       const oldPin = await db.get('SELECT * FROM pins WHERE id = ?', [pinId]);
-
-      // admin / 总体组 / 系统组 → 直接更新
       const setClauses = Object.keys(fields).map(k => `"${k}" = ?`).join(', ');
-      const updateStatus = forceDraft ? 'Draft' : 'normal';
-      const result = await db.run(
-        `UPDATE pins SET ${setClauses}, status = ?, import_status = NULL, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND version = ?`,
-        [...Object.values(fields), updateStatus, pinId, version ?? 1]
-      );
-      if (result.changes === 0) {
-        return res.status(409).json({ error: '记录已被他人修改，请刷新后重试' });
+
+      // admin → 直接更新
+      if (isAdmin) {
+        const result = await db.run(
+          `UPDATE pins SET ${setClauses}, status = ?, import_status = NULL, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND version = ?`,
+          [...Object.values(fields), forceDraft ? 'Draft' : 'normal', pinId, version ?? 1]
+        );
+        if (result.changes === 0) return res.status(409).json({ error: '记录已被他人修改，请刷新后重试' });
+        await db.run(
+          `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, old_values, new_values, reason, status)
+           VALUES ('pins', ?, ?, 'pins', ?, ?, ?, ?, ?)`,
+          [pinId, pinId, req.user!.id, JSON.stringify(oldPin), JSON.stringify(fields),
+           forceDraft ? '修改针孔(Draft)' : '修改针孔', forceDraft ? 'draft' : 'approved']
+        );
+        return res.json({ success: true });
       }
-      await db.run(
-        `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, old_values, new_values, reason, status)
-         VALUES ('pins', ?, ?, 'pins', ?, ?, ?, ?, ?)`,
-        [pinId, pinId, req.user!.id, JSON.stringify(oldPin), JSON.stringify(fields),
-         forceDraft ? '修改针孔(Draft)' : '修改针孔', forceDraft ? 'draft' : 'approved']
+
+      // 系统组 → Draft 直接更新
+      if (forceDraft) {
+        const result = await db.run(
+          `UPDATE pins SET ${setClauses}, status = 'Draft', import_status = NULL, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND version = ?`,
+          [...Object.values(fields), pinId, version ?? 1]
+        );
+        if (result.changes === 0) return res.status(409).json({ error: '记录已被他人修改，请刷新后重试' });
+        await db.run(
+          `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, old_values, new_values, reason, status)
+           VALUES ('pins', ?, ?, 'pins', ?, ?, ?, '修改针孔(Draft)', 'draft')`,
+          [pinId, pinId, req.user!.id, JSON.stringify(oldPin), JSON.stringify(fields)]
+        );
+        return res.json({ success: true });
+      }
+
+      // 系统组提交：检查是否有关联信号
+      const relatedSignals = await db.query(
+        `SELECT DISTINCT se.signal_id FROM signal_endpoints se WHERE se.pin_id = ?`, [pinId]
       );
-      return res.json({ success: true });
+
+      if (relatedSignals.length === 0) {
+        // 无关联信号 → 直接更新
+        const result = await db.run(
+          `UPDATE pins SET ${setClauses}, status = 'normal', import_status = NULL, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND version = ?`,
+          [...Object.values(fields), pinId, version ?? 1]
+        );
+        if (result.changes === 0) return res.status(409).json({ error: '记录已被他人修改，请刷新后重试' });
+        await db.run(
+          `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, old_values, new_values, reason, status)
+           VALUES ('pins', ?, ?, 'pins', ?, ?, ?, '修改针孔', 'approved')`,
+          [pinId, pinId, req.user!.id, JSON.stringify(oldPin), JSON.stringify(fields)]
+        );
+        return res.json({ success: true });
+      }
+
+      // 有关联信号 → 提交两阶段审批
+      await db.run(`UPDATE pins SET status = 'Pending' WHERE id = ?`, [pinId]);
+
+      // 收集审批人：关联信号的其他设备负责人(completion) + 总体组(approval)
+      const items: ApprovalItemSpec[] = [];
+      const ownersSeen = new Set<string>();
+      for (const { signal_id } of relatedSignals) {
+        const eps = await db.query(
+          `SELECT d.设备负责人 FROM signal_endpoints se JOIN devices d ON se.device_id = d.id WHERE se.signal_id = ?`,
+          [signal_id]
+        );
+        for (const ep of eps) {
+          const owner = ep.设备负责人;
+          if (owner && owner !== username && !ownersSeen.has(owner)) {
+            ownersSeen.add(owner);
+            items.push({ recipient_username: owner, item_type: 'completion' });
+          }
+        }
+      }
+      const zontiList = await getProjectRoleMembers(db, devRow.project_id, '总体组');
+      zontiList.forEach(u => items.push({ recipient_username: u, item_type: 'approval' }));
+
+      if (items.length === 0) {
+        // 无审批人 → 直接更新
+        const result = await db.run(
+          `UPDATE pins SET ${setClauses}, status = 'normal', import_status = NULL, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND version = ?`,
+          [...Object.values(fields), pinId, version ?? 1]
+        );
+        if (result.changes === 0) return res.status(409).json({ error: '记录已被他人修改，请刷新后重试' });
+        return res.json({ success: true });
+      }
+
+      await submitChangeRequest(db, {
+        projectId: devRow.project_id,
+        requesterId: req.user!.id,
+        requesterUsername: username,
+        actionType: 'edit_pin',
+        entityType: 'pin',
+        entityId: pinId,
+        deviceId: parseInt(req.params.devId),
+        oldPayload: oldPin,
+        newPayload: fields,
+        items,
+      });
+      return res.status(202).json({ pending: true, message: '已提交审批' });
     } catch (error: any) {
       res.status(500).json({ error: error.message || '更新针孔失败' });
     }
   });
 
   // DELETE /api/devices/:devId/connectors/:connId/pins/:id
+  // GET /api/devices/:devId/connectors/:connId/pins/:id/related-signals
+  router.get('/:devId/connectors/:connId/pins/:id/related-signals', authenticate, async (req, res) => {
+    try {
+      const signals = await db.query(
+        `SELECT DISTINCT s.id, s.unique_id, (SELECT COUNT(*) FROM signal_endpoints WHERE signal_id = s.id) as ep_count
+         FROM signal_endpoints se JOIN signals s ON se.signal_id = s.id
+         WHERE se.pin_id = ?`,
+        [req.params.id]
+      );
+      res.json({ signals });
+    } catch (error: any) { res.status(500).json({ error: error.message }); }
+  });
+
   // GET /api/devices/:devId/connectors/:connId/pins/:id/delete-impact
   router.get('/:devId/connectors/:connId/pins/:id/delete-impact', authenticate, async (req, res) => {
     try {
@@ -1446,10 +1539,69 @@ export function deviceRoutes(db: Database) {
       const pinToDelete = await db.get('SELECT * FROM pins WHERE id = ? AND connector_id = ?', [pinId, req.params.connId]);
       if (!pinToDelete) return res.status(404).json({ error: '针孔不存在' });
 
-      // admin / 总体组 / 系统组 → 级联删除
-      const log: string[] = [];
-      await cascadeDeletePin(db, pinId, req.user!.id, log);
-      return res.json({ success: true });
+      // admin → 直接级联删除
+      if (isAdmin) {
+        const log: string[] = [];
+        await cascadeDeletePin(db, pinId, req.user!.id, log);
+        return res.json({ success: true });
+      }
+
+      // 系统组：检查是否有关联信号
+      const relatedSignals = await db.query(
+        `SELECT DISTINCT se.signal_id FROM signal_endpoints se WHERE se.pin_id = ?`, [pinId]
+      );
+
+      if (relatedSignals.length === 0) {
+        // 无关联信号 → 直接删除
+        await db.run(
+          `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, old_values, reason, status)
+           VALUES ('pins', ?, ?, 'pins', ?, ?, '删除针孔', 'approved')`,
+          [pinId, pinId, req.user!.id, JSON.stringify(pinToDelete)]
+        );
+        await db.run('DELETE FROM pins WHERE id = ?', [pinId]);
+        return res.json({ success: true });
+      }
+
+      // 有关联信号 → 提交两阶段审批
+      await db.run(`UPDATE pins SET status = 'Pending' WHERE id = ?`, [pinId]);
+
+      const items: ApprovalItemSpec[] = [];
+      const ownersSeen = new Set<string>();
+      for (const { signal_id } of relatedSignals) {
+        const eps = await db.query(
+          `SELECT d.设备负责人 FROM signal_endpoints se JOIN devices d ON se.device_id = d.id WHERE se.signal_id = ?`,
+          [signal_id]
+        );
+        for (const ep of eps) {
+          const owner = ep.设备负责人;
+          if (owner && owner !== username && !ownersSeen.has(owner)) {
+            ownersSeen.add(owner);
+            items.push({ recipient_username: owner, item_type: 'completion' });
+          }
+        }
+      }
+      const zontiList = await getProjectRoleMembers(db, devRow.project_id, '总体组');
+      zontiList.forEach(u => items.push({ recipient_username: u, item_type: 'approval' }));
+
+      if (items.length === 0) {
+        const log: string[] = [];
+        await cascadeDeletePin(db, pinId, req.user!.id, log);
+        return res.json({ success: true });
+      }
+
+      await submitChangeRequest(db, {
+        projectId: devRow.project_id,
+        requesterId: req.user!.id,
+        requesterUsername: username,
+        actionType: 'delete_pin',
+        entityType: 'pin',
+        entityId: pinId,
+        deviceId: parseInt(req.params.devId),
+        oldPayload: pinToDelete,
+        newPayload: {},
+        items,
+      });
+      return res.status(202).json({ pending: true, message: '删除请求已提交审批' });
     } catch (error: any) {
       res.status(500).json({ error: error.message || '删除针孔失败' });
     }

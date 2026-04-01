@@ -1151,6 +1151,20 @@ export default function ProjectDataView() {
   const savePin = async (forceDraft = false) => {
     if (!pinTargetConnectorId || !connectorTargetDeviceId || !pinForm['针孔号']) { alert('针孔号不能为空'); return; }
     try {
+      // 编辑已有针孔且非Draft时，检查关联信号
+      if (editingPin && !forceDraft) {
+        const impactRes = await fetch(
+          `/api/devices/${connectorTargetDeviceId}/connectors/${pinTargetConnectorId}/pins/${editingPin.id}/related-signals`,
+          { headers: API_HEADERS() }
+        );
+        if (impactRes.ok) {
+          const { signals: relatedSigs } = await impactRes.json();
+          if (relatedSigs && relatedSigs.length > 0) {
+            const sigList = relatedSigs.slice(0, 10).map((s: any) => s.unique_id || `#${s.id}`).join('、');
+            if (!confirm(`修改此针孔将影响 ${relatedSigs.length} 条信号：${sigList}${relatedSigs.length > 10 ? '...' : ''}\n\n修改将提交审批，确认继续？`)) return;
+          }
+        }
+      }
       const url = editingPin
         ? `/api/devices/${connectorTargetDeviceId}/connectors/${pinTargetConnectorId}/pins/${editingPin.id}`
         : `/api/devices/${connectorTargetDeviceId}/connectors/${pinTargetConnectorId}/pins`;

@@ -66,25 +66,47 @@ export const SPECIAL_ERN_LIN = '8800G0000';
 
 /** 检查 pin 是否属于待删除审批中的设备或连接器 */
 export async function isPinFrozen(db: Database, pinId: number): Promise<string | null> {
-  // 检查连接器是否 Pending 删除
-  const conn = await db.get(
-    `SELECT c.status, c."设备端元器件编号", ar.action_type
-     FROM pins p JOIN connectors c ON p.connector_id = c.id
-     LEFT JOIN approval_requests ar ON ar.entity_type = 'connector' AND ar.entity_id = c.id AND ar.status = 'pending' AND ar.action_type = 'delete_connector'
-     WHERE p.id = ?`,
+  // 1. 检查连接器是否 Pending 删除
+  const connDel = await db.get(
+    `SELECT ar.id FROM approval_requests ar
+     JOIN connectors c ON ar.entity_id = c.id
+     JOIN pins p ON p.connector_id = c.id
+     WHERE p.id = ? AND ar.entity_type = 'connector' AND ar.action_type = 'delete_connector' AND ar.status = 'pending'`,
     [pinId]
   );
-  if (conn?.action_type === 'delete_connector') return `连接器 ${conn['设备端元器件编号']} 待删除审批中，不可操作`;
+  if (connDel) return '所属连接器待删除审批中，不可操作';
 
-  // 检查设备是否 Pending 删除
-  const dev = await db.get(
-    `SELECT d.status, d."设备编号", ar.action_type
-     FROM pins p JOIN connectors c ON p.connector_id = c.id JOIN devices d ON c.device_id = d.id
-     LEFT JOIN approval_requests ar ON ar.entity_type = 'device' AND ar.entity_id = d.id AND ar.status = 'pending' AND ar.action_type = 'delete_device'
-     WHERE p.id = ?`,
+  // 2. 检查设备是否 Pending 删除
+  const devDel = await db.get(
+    `SELECT ar.id FROM approval_requests ar
+     JOIN devices d ON ar.entity_id = d.id
+     JOIN connectors c ON c.device_id = d.id
+     JOIN pins p ON p.connector_id = c.id
+     WHERE p.id = ? AND ar.entity_type = 'device' AND ar.action_type = 'delete_device' AND ar.status = 'pending'`,
     [pinId]
   );
-  if (dev?.action_type === 'delete_device') return `设备 ${dev['设备编号']} 待删除审批中，不可操作`;
+  if (devDel) return '所属设备待删除审批中，不可操作';
+
+  // 3. 检查 pin 本身是否正在修改/删除审批中
+  const pinReq = await db.get(
+    `SELECT ar.action_type FROM approval_requests ar
+     WHERE ar.entity_type = 'pin' AND ar.entity_id = ? AND ar.status = 'pending'
+     AND ar.action_type IN ('edit_pin', 'delete_pin')`,
+    [pinId]
+  );
+  if (pinReq) return `该针孔正在${pinReq.action_type === 'edit_pin' ? '修改' : '删除'}审批中，不可操作`;
+
+  // 4. 检查 pin 是否属于正在审批中的信号的端点
+  const sigReq = await db.get(
+    `SELECT ar.action_type, s.unique_id FROM approval_requests ar
+     JOIN signals s ON ar.entity_id = s.id
+     JOIN signal_endpoints se ON se.signal_id = s.id
+     WHERE se.pin_id = ? AND ar.entity_type = 'signal' AND ar.status = 'pending'
+     AND ar.action_type IN ('create_signal', 'edit_signal', 'delete_signal')
+     LIMIT 1`,
+    [pinId]
+  );
+  if (sigReq) return `关联信号 ${sigReq.unique_id || ''} 正在审批中，不可操作`;
 
   return null;
 }
@@ -375,6 +397,30 @@ export async function checkAndAdvancePhase(db: Database, approvalRequestId: numb
         await db.run('DELETE FROM devices WHERE id = ?', [req.entity_id]);
       } else if (req.action_type.startsWith('delete_')) {
         await db.run(`DELETE FROM ${entityTable} WHERE id = ?`, [req.entity_id]);
+      } else if (req.action_type === 'edit_pin') {
+        // 针孔编辑：将 payload 新值应用到针孔
+        const newFields = (() => { try { return JSON.parse(req.payload); } catch { return {}; } })();
+        if (Object.keys(newFields).length > 0) {
+          const setClauses = Object.keys(newFields).map(k => `"${k}" = ?`).join(', ');
+          await db.run(
+            `UPDATE pins SET ${setClauses}, status = 'normal', version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+            [...Object.values(newFields), req.entity_id]
+          );
+        } else {
+          await db.run(`UPDATE pins SET status = 'normal' WHERE id = ?`, [req.entity_id]);
+        }
+      } else if (req.action_type === 'edit_signal') {
+        // 信号编辑：将 payload 新值应用到信号
+        const newFields = (() => { try { return JSON.parse(req.payload); } catch { return {}; } })();
+        if (Object.keys(newFields).length > 0) {
+          const setClauses = Object.keys(newFields).map(k => `"${k}" = ?`).join(', ');
+          await db.run(
+            `UPDATE signals SET ${setClauses}, status = 'Active', version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+            [...Object.values(newFields), req.entity_id]
+          );
+        } else {
+          await db.run(`UPDATE signals SET status = 'Active' WHERE id = ?`, [req.entity_id]);
+        }
       } else if (req.action_type === 'edit_device' || req.action_type === 'edit_connector') {
         // 编辑操作：将 payload 中的新值应用到实体
         const newFields = (() => { try { return JSON.parse(req.payload); } catch { return {}; } })();
