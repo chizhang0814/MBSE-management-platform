@@ -34,6 +34,63 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [myPermissions, setMyPermissions] = useState<{ project_name: string; project_role: string }[]>([]);
 
+  // 反馈相关状态
+  const [showFeedback, setShowFeedback] = useState(false);
+  const [feedbackDesc, setFeedbackDesc] = useState('');
+  const [feedbackScreenshot, setFeedbackScreenshot] = useState<File | null>(null);
+  const [feedbackPreview, setFeedbackPreview] = useState<string | null>(null);
+  const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
+
+  const handleFeedbackPaste = (e: React.ClipboardEvent) => {
+    const items = e.clipboardData.items;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.startsWith('image/')) {
+        const file = items[i].getAsFile();
+        if (file) {
+          setFeedbackScreenshot(file);
+          if (feedbackPreview) URL.revokeObjectURL(feedbackPreview);
+          setFeedbackPreview(URL.createObjectURL(file));
+        }
+        break;
+      }
+    }
+  };
+
+  const closeFeedback = () => {
+    setShowFeedback(false);
+    setFeedbackDesc('');
+    setFeedbackScreenshot(null);
+    if (feedbackPreview) URL.revokeObjectURL(feedbackPreview);
+    setFeedbackPreview(null);
+  };
+
+  const submitFeedback = async () => {
+    if (!feedbackDesc.trim()) { alert('请填写问题描述'); return; }
+    setFeedbackSubmitting(true);
+    try {
+      const formData = new FormData();
+      formData.append('description', feedbackDesc);
+      formData.append('page_url', location.pathname);
+      if (feedbackScreenshot) formData.append('screenshot', feedbackScreenshot);
+      const res = await fetch('/api/feedback', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+        body: formData,
+      });
+      const data = await res.json();
+      if (res.ok) {
+        alert(data.message || '反馈已提交');
+        closeFeedback();
+      } else {
+        alert(data.error || '提交失败');
+      }
+    } catch {
+      alert('提交失败，请检查网络');
+    } finally {
+      setFeedbackSubmitting(false);
+    }
+  };
+
   const prevUnreadRef = useRef(0);
   const fetchUnreadCount = useCallback(async () => {
     if (!user) return;
@@ -295,6 +352,77 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       {showProfile && <ProfileModal onClose={() => setShowProfile(false)} />}
       {/* 使用引导暂停 */}
       {/* {user?.role !== 'admin' && <TourGuide user={user} />} */}
+
+      {/* 悬浮反馈按钮 */}
+      <button
+        onClick={() => setShowFeedback(true)}
+        className="fixed bottom-6 right-6 z-40 bg-blue-600 hover:bg-blue-700 text-white rounded-full w-11 h-11 shadow-lg flex items-center justify-center transition-colors"
+        title="问题反馈"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+        </svg>
+      </button>
+
+      {/* 反馈弹窗 */}
+      {showFeedback && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-lg mx-4">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+              <h3 className="text-lg font-semibold text-gray-800">问题反馈</h3>
+              <button onClick={closeFeedback} className="text-gray-400 hover:text-gray-600 text-sm">关闭</button>
+            </div>
+            <div className="px-6 py-4">
+              <textarea
+                value={feedbackDesc}
+                onChange={e => setFeedbackDesc(e.target.value)}
+                onPaste={handleFeedbackPaste}
+                placeholder="请描述您遇到的问题...&#10;&#10;支持直接粘贴截图（Ctrl+V）"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm h-32 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                autoFocus
+              />
+              {feedbackPreview && (
+                <div className="mt-3 relative inline-block">
+                  <img src={feedbackPreview} alt="截图预览" className="max-h-40 rounded border border-gray-200" />
+                  <button
+                    onClick={() => { setFeedbackScreenshot(null); if (feedbackPreview) URL.revokeObjectURL(feedbackPreview); setFeedbackPreview(null); }}
+                    className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs hover:bg-red-600"
+                  >x</button>
+                </div>
+              )}
+              <div className="flex items-center justify-between mt-4">
+                <label className="cursor-pointer text-blue-600 hover:text-blue-800 text-sm flex items-center gap-1">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  </svg>
+                  上传截图
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={e => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        setFeedbackScreenshot(file);
+                        if (feedbackPreview) URL.revokeObjectURL(feedbackPreview);
+                        setFeedbackPreview(URL.createObjectURL(file));
+                      }
+                    }}
+                  />
+                </label>
+                <div className="flex gap-2">
+                  <button onClick={closeFeedback} className="px-4 py-2 border border-gray-300 rounded-lg text-sm text-gray-600 hover:bg-gray-50">取消</button>
+                  <button
+                    onClick={submitFeedback}
+                    disabled={feedbackSubmitting || !feedbackDesc.trim()}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+                  >{feedbackSubmitting ? '提交中...' : '提交反馈'}</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

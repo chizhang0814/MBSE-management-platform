@@ -17,6 +17,7 @@ import { sectionConnectorRoutes } from './routes/section-connectors.js';
 import { changeLogRoutes } from './routes/change-logs.js';
 import { employeeRoutes } from './routes/employees.js';
 import { chatRoutes } from './routes/chat.js';
+import { feedbackRoutes } from './routes/feedback.js';
 import path from 'path';
 
 dotenv.config();
@@ -54,6 +55,7 @@ app.use('/api/section-connectors', sectionConnectorRoutes(db));
 app.use('/api/change-logs', changeLogRoutes(db));
 app.use('/api/employees', employeeRoutes(db));
 app.use('/api/chat', chatRoutes(db));
+app.use('/api/feedback', feedbackRoutes());
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' });
