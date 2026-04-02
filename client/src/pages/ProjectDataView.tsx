@@ -1581,7 +1581,7 @@ export default function ProjectDataView() {
             <button
               onClick={async () => {
                 if (!selectedProjectId) return;
-                if (!confirm('确定要清空当前项目的全部设备及连接器数据吗？此操作不可恢复！')) return;
+                if (!confirm('确定要清空当前项目的全部设备及连接器数据吗？（ERN设备将保留）此操作不可恢复！')) return;
                 const res = await fetch(`/api/devices/project/${selectedProjectId}/all`, { method: 'DELETE', headers: API_HEADERS() });
                 if (res.ok) { await loadDevices(); }
                 else { alert((await res.json()).error || '清空失败'); }
@@ -1594,7 +1594,7 @@ export default function ProjectDataView() {
               <button
                 onClick={() => { setImportDevFile(null); setImportDevResult(null); setShowImportDevDataModal(true); }}
                 className="bg-purple-600 text-white px-3 py-1.5 rounded text-sm hover:bg-purple-700"
-              >导入设备数据</button>
+              >导入设备和连接器数据</button>
               <button id="tour-add-device" onClick={openAddDevice} className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700">
                 + 添加设备
               </button>
@@ -1902,12 +1902,7 @@ export default function ProjectDataView() {
                             {device.management_claim_requester} 正在申请管理此设备
                           </span>
                         )}
-                        {(device as any).import_status === 'uploaded' && (
-                          <span className="ml-1 px-1.5 py-0.5 rounded bg-teal-100 text-teal-700 text-xs font-semibold">已导入</span>
-                        )}
-                        {(device as any).import_status === 'updated' && (
-                          <span className="ml-1 px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 text-xs font-semibold">已更新</span>
-                        )}
+                        {/* 已导入/已更新标签暂时隐藏 */}
                       </td>
                       <td className="px-2 py-2 text-gray-600 text-sm max-w-[100px] truncate" title={device['设备LIN号（DOORS）'] || '-'}>{device['设备LIN号（DOORS）'] || '-'}</td>
                       <td className="px-2 py-2 text-gray-700 text-sm">{device.设备中文名称 || '-'}</td>
@@ -2243,12 +2238,7 @@ export default function ProjectDataView() {
                                             {conn.status === 'normal' && !(conn as any).has_pending_sub && (
                                               <span className="ml-1 px-1 py-0.5 text-xs bg-green-100 text-green-700 rounded">已生效</span>
                                             )}
-                                            {(conn as any).import_status === 'uploaded' && (
-                                              <span className="ml-1 px-1 py-0.5 text-xs bg-teal-100 text-teal-700 rounded font-semibold">已导入</span>
-                                            )}
-                                            {(conn as any).import_status === 'updated' && (
-                                              <span className="ml-1 px-1 py-0.5 text-xs bg-purple-100 text-purple-700 rounded font-semibold">已更新</span>
-                                            )}
+                                            {/* 已导入/已更新标签暂时隐藏 */}
                                           </td>
                                           <td className="px-2 py-1">{conn.设备端元器件名称及类型 || '-'}</td>
                                           <td className="px-2 py-1">{conn.pin_count ?? 0}</td>
@@ -2422,8 +2412,7 @@ export default function ProjectDataView() {
                                                             {pin.针孔号}
                                                             {pin.status === 'Pending' && <span className="ml-1 px-1 py-0.5 text-xs bg-blue-100 text-blue-700 rounded">审批中</span>}
                                                             {pin.status === 'normal' && <span className="ml-1 px-1 py-0.5 text-xs bg-green-100 text-green-700 rounded">已生效</span>}
-                                                            {(pin as any).import_status === 'uploaded' && <span className="ml-1 px-1 py-0.5 text-xs bg-teal-100 text-teal-700 rounded font-semibold">已导入</span>}
-                                                            {(pin as any).import_status === 'updated' && <span className="ml-1 px-1 py-0.5 text-xs bg-purple-100 text-purple-700 rounded font-semibold">已更新</span>}
+                                                            {/* 已导入/已更新标签暂时隐藏 */}
                                                           </td>
                                                           <td className="px-2 py-1 text-gray-400 text-xs">{(pin as any).updated_at ? new Date((pin as any).updated_at).toLocaleDateString() : '-'}</td>
                                                           <td className="px-2 py-1 space-x-1">
@@ -3045,12 +3034,7 @@ export default function ProjectDataView() {
                         {signal.status === 'Active' && (
                           <span className="px-1.5 py-0.5 rounded bg-green-100 text-green-700 text-xs font-semibold">已生效</span>
                         )}
-                        {(signal as any).import_status === 'uploaded' && (
-                          <span className="ml-1 px-1.5 py-0.5 rounded bg-teal-100 text-teal-700 text-xs font-semibold">已导入</span>
-                        )}
-                        {(signal as any).import_status === 'updated' && (
-                          <span className="ml-1 px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 text-xs font-semibold">已更新</span>
-                        )}
+                        {/* 已导入/已更新标签暂时隐藏 */}
                       </td>
                       <td className="px-4 py-2 text-xs max-w-[180px] truncate" title={signal.信号名称摘要 || '-'}>{signal.信号名称摘要 || '-'}</td>
                       <td className="px-4 py-2 text-gray-600 w-[80px] truncate" title={signal.连接类型 || '-'}>{signal.连接类型 || '-'}</td>
@@ -3619,7 +3603,7 @@ export default function ProjectDataView() {
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
             <div className="bg-white rounded-lg max-w-lg w-full max-h-[80vh] flex flex-col">
               <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
-                <h2 className="text-xl font-bold">导入/更新设备数据</h2>
+                <h2 className="text-xl font-bold">导入设备和连接器数据</h2>
                 <button onClick={() => setShowImportDevDataModal(false)} className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 text-sm">关闭</button>
               </div>
               <div className="flex-1 overflow-y-auto px-6 py-4">
@@ -3636,7 +3620,8 @@ export default function ProjectDataView() {
                         className={`flex-1 px-4 py-2.5 text-sm font-medium border-t border-b border-r rounded-r-lg ${importDevPhase === 'connectors' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'}`}
                       >设备端元器件清单</button>
                     </div>
-                    {/* 导入/更新按钮 */}
+                    {/* 导入/更新按钮（更新暂时隐藏） */}
+                    {/*
                     <div className="flex gap-3 mb-4">
                       <button
                         onClick={() => { setImportDevType('import'); setImportDevFile(null); }}
@@ -3647,11 +3632,9 @@ export default function ProjectDataView() {
                         className={`flex-1 px-3 py-2 rounded text-sm border-2 ${importDevType === 'update' ? 'border-orange-500 bg-orange-50 text-orange-700 font-medium' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}
                       >更新（已有数据）</button>
                     </div>
+                    */}
                     <div className="mb-4 text-sm text-gray-600">
-                      {importDevType === 'import'
-                        ? <p>选择 Excel 文件导入<b>{importDevPhase === 'devices' ? '电设备' : '设备端元器件'}</b>清单数据（新增记录）</p>
-                        : <p>选择 Excel 文件更新已有的<b>{importDevPhase === 'devices' ? '电设备' : '设备端元器件'}</b>数据（按匹配键更新）</p>
-                      }
+                      <p>选择 Excel 文件导入<b>{importDevPhase === 'devices' ? '电设备' : '设备端元器件'}</b>清单数据（新增记录）</p>
                     </div>
                     <input type="file" accept=".xlsx,.xls"
                       onChange={e => setImportDevFile(e.target.files?.[0] || null)}
@@ -3724,12 +3707,14 @@ export default function ProjectDataView() {
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
             <div className="bg-white rounded-lg max-w-lg w-full max-h-[80vh] flex flex-col">
               <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
-                <h2 className="text-xl font-bold">导入/更新信号及针孔数据</h2>
+                <h2 className="text-xl font-bold">导入信号及针孔数据</h2>
                 <button onClick={() => setShowImportSigModal(false)} className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 text-sm">关闭</button>
               </div>
               <div className="flex-1 overflow-y-auto px-6 py-4">
                 {!importSigResult ? (
                   <>
+                    {/* 导入/更新切换（更新暂时隐藏） */}
+                    {/*
                     <div className="flex gap-3 mb-4">
                       <button
                         onClick={() => { setImportSigType('import'); setImportSigFile(null); }}
@@ -3740,11 +3725,9 @@ export default function ProjectDataView() {
                         className={`flex-1 px-3 py-2 rounded text-sm border-2 ${importSigType === 'update' ? 'border-orange-500 bg-orange-50 text-orange-700 font-medium' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}
                       >更新电气接口清单</button>
                     </div>
+                    */}
                     <div className="mb-4 text-sm text-gray-600">
-                      {importSigType === 'import'
-                        ? <p>选择 Excel 文件导入电气接口清单数据（新增信号和端点）</p>
-                        : <p>选择 Excel 文件更新已有的电气接口数据（按端点对匹配更新）</p>
-                      }
+                      <p>选择 Excel 文件导入电气接口清单数据（新增信号和端点）</p>
                     </div>
                     <input type="file" accept=".xlsx,.xls"
                       onChange={e => setImportSigFile(e.target.files?.[0] || null)}

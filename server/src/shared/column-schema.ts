@@ -245,35 +245,9 @@ export const SIGNALS_DB_COLUMNS = [
  * @param ata 设备ATA章节号（如 "86-10"）
  * @returns null 表示校验通过，否则返回错误信息
  */
-export function validateConnectorCompId(compId: string, lin: string, ata: string): string | null {
+export function validateConnectorCompId(compId: string, lin: string, _ata: string): string | null {
   if (!compId) return '设备端元器件编号不能为空';
   if (!compId.startsWith(lin + '-')) return `设备端元器件编号必须以"${lin}-"开头`;
-
-  const suffix = compId.slice(lin.length + 1); // "-" 之后的部分
-
-  if (lin === '8810G0000') {
-    // 死接头：SP + 5位数字
-    if (!/^SP\d{5}$/.test(suffix)) return `死接头(8810)的连接器编号格式应为 ${lin}-SP{5位数字}，如 ${lin}-SP30001`;
-    return null;
-  }
-
-  if (lin === '8820G0000') {
-    // 分离面：D + 4位数字 + - + 3位数字 + - + R或P
-    if (!/^D\d{4}-\d{3}-(R|P)$/.test(suffix)) return `分离面(8820)的连接器编号格式应为 ${lin}-D{4位数字}-{3位数字}-{R或P}，如 ${lin}-D7101-001-P`;
-    return null;
-  }
-
-  if (ata && ata.startsWith('86')) {
-    // 电驱系统：G / N / P / NA / J+数字
-    if (/^(G|N|P|NA)$/.test(suffix)) return null;
-    if (/^J\d+$/.test(suffix)) return null;
-    return `ATA86设备的连接器编号格式应为 ${lin}-{G|N|P|NA} 或 ${lin}-J{数字}`;
-  }
-
-  // 其他设备：J+数字 / TB+数字 / M+数字 / NA
-  if (/^NA$/.test(suffix)) return null;
-  if (/^(J|TB|M)\d+$/.test(suffix)) return null;
-  // 允许多段后缀如 M1-J141
-  if (/^M\d+-.+$/.test(suffix)) return null;
-  return `连接器编号格式应为 ${lin}-{J|TB|M}{数字} 或 ${lin}-NA`;
+  // 后缀格式校验暂时取消
+  return null;
 }

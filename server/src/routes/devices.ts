@@ -896,13 +896,16 @@ export function deviceRoutes(db: Database) {
   router.delete('/project/:projectId/all', authenticate, requireRole('admin'), async (req: AuthRequest, res) => {
     try {
       const projectId = parseInt(req.params.projectId);
-      // 先删除 signal_endpoints 中引用该项目设备的记录（无 CASCADE）
+      // 先删除 signal_endpoints 中引用该项目非ERN设备的记录（无 CASCADE）
       await db.run(`
         DELETE FROM signal_endpoints WHERE device_id IN (
-          SELECT id FROM devices WHERE project_id = ?
+          SELECT id FROM devices WHERE project_id = ? AND "设备LIN号（DOORS）" != ?
         )
-      `, [projectId]);
-      const { changes } = await db.run('DELETE FROM devices WHERE project_id = ?', [projectId]);
+      `, [projectId, SPECIAL_ERN_LIN]);
+      const { changes } = await db.run(
+        `DELETE FROM devices WHERE project_id = ? AND "设备LIN号（DOORS）" != ?`,
+        [projectId, SPECIAL_ERN_LIN]
+      );
       res.json({ deleted: changes });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
