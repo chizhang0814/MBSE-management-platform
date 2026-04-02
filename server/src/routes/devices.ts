@@ -814,6 +814,11 @@ export function deviceRoutes(db: Database) {
         return res.json({ success: true });
       }
 
+      // Pending 设备禁止再次提交审批
+      if (device.status === 'Pending') {
+        return res.status(400).json({ error: '该设备正在审批中，无法重复提交修改。请等待审批完成后再编辑。' });
+      }
+
       // 总体组提交审批：不直接修改设备数据，存入审批请求
       await db.run(`UPDATE devices SET status = 'Pending' WHERE id = ?`, [deviceId]);
 
@@ -896,7 +901,8 @@ export function deviceRoutes(db: Database) {
   router.delete('/project/:projectId/all', authenticate, requireRole('admin'), async (req: AuthRequest, res) => {
     try {
       const projectId = parseInt(req.params.projectId);
-      // 先删除 signal_endpoints 中引用该项目非ERN设备的记录（无 CASCADE）
+      // admin 批量清空：先手动删 signal_endpoints 绕过 pin_id RESTRICT 约束，
+      // 再删 devices（CASCADE 删 connectors → pins）。不走 cascadeDeletePinShared，属于预期行为。
       await db.run(`
         DELETE FROM signal_endpoints WHERE device_id IN (
           SELECT id FROM devices WHERE project_id = ? AND "设备LIN号（DOORS）" != ?
@@ -1195,6 +1201,11 @@ export function deviceRoutes(db: Database) {
           [connectorId, connectorId, req.user!.id, JSON.stringify(oldConnector), JSON.stringify(fields)]
         );
         return res.json({ success: true });
+      }
+
+      // Pending 连接器禁止再次提交审批
+      if (oldConnector.status === 'Pending') {
+        return res.status(400).json({ error: '该连接器正在审批中，无法重复提交修改。请等待审批完成后再编辑。' });
       }
 
       // 总体组提交审批
@@ -1667,7 +1678,7 @@ export function deviceRoutes(db: Database) {
       );
 
       if (relatedSignals.length === 0) {
-        // 无关联信号 → 直接删除
+        // 无关联信号 → 无 signal_endpoints 引用，可安全直接删除（不需走 cascadeDeletePinShared）
         await db.run(
           `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, old_values, reason, status)
            VALUES ('pins', ?, ?, 'pins', ?, ?, '删除针孔', 'approved')`,

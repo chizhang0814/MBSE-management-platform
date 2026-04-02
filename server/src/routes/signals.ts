@@ -870,6 +870,11 @@ export function signalRoutes(db: Database) {
         }
       }
 
+      // Pending 信号：上面 completion 分支未匹配（用户无待完善项），禁止再次提交审批
+      if (signal.status === 'Pending') {
+        return res.status(400).json({ error: '该信号正在审批中，无法重复提交修改。请等待审批完成后再编辑。' });
+      }
+
       // 非 admin、非 forceDraft → 提交审批
       if (Object.keys(fields).length > 0) {
         const setClauses = Object.keys(fields).map(k => `"${k}" = ?`).join(', ');

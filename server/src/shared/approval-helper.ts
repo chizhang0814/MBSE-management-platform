@@ -111,7 +111,17 @@ export async function isPinFrozen(db: Database, pinId: number): Promise<string |
   return null;
 }
 
-/** 级联删除针孔：删除关联的信号端点/信号，记录日志 */
+/**
+ * 级联删除针孔：删除关联的信号端点/信号，记录日志。
+ *
+ * 这是删除单个 pin 的唯一推荐入口。pin_id 外键为 ON DELETE RESTRICT，
+ * 直接 DELETE FROM pins 会在有 signal_endpoints 引用时报错。
+ * 本函数先按逻辑清理关联端点（≤2端点删整条信号，>2端点仅移除该端点），
+ * 再安全删除 pin。
+ *
+ * 例外：批量清空项目/设备场景（admin-only）会先批量删 signal_endpoints
+ * 再删 devices CASCADE，不经过本函数，属于预期行为。
+ */
 export async function cascadeDeletePinShared(db: Database, pinId: number, userId: number, parentLog: string[]): Promise<void> {
   const pin = await db.get('SELECT * FROM pins WHERE id = ?', [pinId]);
   if (!pin) return;
