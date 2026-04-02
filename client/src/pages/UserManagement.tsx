@@ -299,19 +299,77 @@ export default function UserManagement() {
   return (
     <Layout>
       <div className="px-4 sm:px-0">
-        <div className="flex justify-between items-center mb-6">
-          <h1 className="text-3xl font-bold text-gray-900">用户管理</h1>
-          {canManageUsers && (
-            <button
-              onClick={() => handleOpenModal()}
-              className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600"
-            >
-              + 添加用户
-            </button>
-          )}
+        <h1 className="text-3xl font-bold text-gray-900 mb-6">用户管理</h1>
+
+        {/* 区域一：用户组权限说明 */}
+        <div className="bg-white shadow rounded-lg p-4 mb-6">
+          <h2 className="text-lg font-bold text-gray-800 mb-3">用户组权限说明</h2>
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-xs">
+              <thead>
+                <tr className="bg-gray-50 text-gray-500">
+                  <th className="px-3 py-2 text-left">权限</th>
+                  <th className="px-3 py-2 text-center">总体组</th>
+                  <th className="px-3 py-2 text-center">系统组</th>
+                  <th className="px-3 py-2 text-center">总体PMO组</th>
+                  <th className="px-3 py-2 text-center">供应商组</th>
+                  <th className="px-3 py-2 text-center">其他组</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 text-gray-700">
+                <tr><td className="px-3 py-1.5">添加/编辑/删除设备</td><td className="px-3 py-1.5 text-center">✅ 需审批</td><td className="px-3 py-1.5 text-center">—</td><td className="px-3 py-1.5 text-center">—</td><td className="px-3 py-1.5 text-center">—</td><td className="px-3 py-1.5 text-center">—</td></tr>
+                <tr><td className="px-3 py-1.5">添加/编辑/删除连接器</td><td className="px-3 py-1.5 text-center">✅ 需审批</td><td className="px-3 py-1.5 text-center">—</td><td className="px-3 py-1.5 text-center">—</td><td className="px-3 py-1.5 text-center">—</td><td className="px-3 py-1.5 text-center">—</td></tr>
+                <tr><td className="px-3 py-1.5">添加/编辑/删除针孔</td><td className="px-3 py-1.5 text-center">—</td><td className="px-3 py-1.5 text-center">✅ 自己设备</td><td className="px-3 py-1.5 text-center">—</td><td className="px-3 py-1.5 text-center">—</td><td className="px-3 py-1.5 text-center">—</td></tr>
+                <tr><td className="px-3 py-1.5">添加/编辑/删除信号</td><td className="px-3 py-1.5 text-center">—</td><td className="px-3 py-1.5 text-center">✅ 需审批</td><td className="px-3 py-1.5 text-center">—</td><td className="px-3 py-1.5 text-center">—</td><td className="px-3 py-1.5 text-center">—</td></tr>
+                <tr><td className="px-3 py-1.5">导入设备/连接器数据</td><td className="px-3 py-1.5 text-center">✅</td><td className="px-3 py-1.5 text-center">—</td><td className="px-3 py-1.5 text-center">—</td><td className="px-3 py-1.5 text-center">—</td><td className="px-3 py-1.5 text-center">—</td></tr>
+                <tr><td className="px-3 py-1.5">导入信号数据</td><td className="px-3 py-1.5 text-center">—</td><td className="px-3 py-1.5 text-center">✅</td><td className="px-3 py-1.5 text-center">—</td><td className="px-3 py-1.5 text-center">—</td><td className="px-3 py-1.5 text-center">—</td></tr>
+                <tr><td className="px-3 py-1.5">WB导出 / 下载数据</td><td className="px-3 py-1.5 text-center">✅</td><td className="px-3 py-1.5 text-center">✅</td><td className="px-3 py-1.5 text-center">—</td><td className="px-3 py-1.5 text-center">✅</td><td className="px-3 py-1.5 text-center">—</td></tr>
+                <tr><td className="px-3 py-1.5">用户管理 / 权限审批</td><td className="px-3 py-1.5 text-center">—</td><td className="px-3 py-1.5 text-center">—</td><td className="px-3 py-1.5 text-center">✅</td><td className="px-3 py-1.5 text-center">—</td><td className="px-3 py-1.5 text-center">—</td></tr>
+              </tbody>
+            </table>
+          </div>
         </div>
 
+        {/* 区域二：待审批的权限申请 */}
+        {permRequests.filter(r => r.status === 'pending').length > 0 && (
+          <div className="bg-white shadow rounded-lg p-4 mb-6">
+            <h2 className="text-lg font-bold text-gray-800 mb-3">待审批的权限申请</h2>
+            <table className="min-w-full divide-y divide-gray-200 text-sm">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">用户</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">申请项目</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">申请角色</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">申请时间</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">操作</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {permRequests.filter(r => r.status === 'pending').map(req => (
+                  <tr key={req.id}>
+                    <td className="px-4 py-2">{req.display_name || req.username} <span className="text-gray-400">({req.username})</span></td>
+                    <td className="px-4 py-2">{req.project_name}</td>
+                    <td className="px-4 py-2">{req.project_role}</td>
+                    <td className="px-4 py-2 text-gray-500">{new Date(req.created_at).toLocaleString()}</td>
+                    <td className="px-4 py-2 space-x-2">
+                      <button onClick={() => handleReviewRequest(req.id, 'approve')} className="text-green-600 hover:text-green-900">批准</button>
+                      <button onClick={() => handleReviewRequest(req.id, 'reject')} className="text-red-600 hover:text-red-900">驳回</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* 区域三：用户管理 */}
         <div className="bg-white shadow rounded-lg overflow-hidden">
+          <div className="flex justify-between items-center px-4 py-3 border-b border-gray-200">
+            <h2 className="text-lg font-bold text-gray-800">用户列表</h2>
+            {canManageUsers && (
+              <button onClick={() => handleOpenModal()} className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 text-sm">+ 添加用户</button>
+            )}
+          </div>
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
@@ -398,54 +456,6 @@ export default function UserManagement() {
           </table>
         </div>
 
-        {/* 权限申请审批 */}
-        {permRequests.filter(r => r.status === 'pending').length > 0 && (
-          <div className="mt-8">
-            <h2 className="text-xl font-bold text-gray-900 mb-4">待审批的权限申请</h2>
-            <div className="bg-white shadow rounded-lg overflow-hidden">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">用户</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">申请项目</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">申请角色</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">申请时间</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {permRequests.filter(r => r.status === 'pending').map(req => (
-                    <tr key={req.id}>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {req.display_name || req.username}
-                        <span className="text-gray-400 ml-1">({req.username})</span>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{req.project_name}</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{req.project_role}</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {new Date(req.created_at).toLocaleString()}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
-                        <button
-                          onClick={() => handleReviewRequest(req.id, 'approve')}
-                          className="text-green-600 hover:text-green-900"
-                        >
-                          批准
-                        </button>
-                        <button
-                          onClick={() => handleReviewRequest(req.id, 'reject')}
-                          className="text-red-600 hover:text-red-900"
-                        >
-                          驳回
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
 
         {/* 添加/编辑用户对话框 */}
         {showModal && (

@@ -22,7 +22,15 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (user?.role !== 'admin') {
-      navigate('/project-data', { replace: true });
+      // 总体PMO组默认进用户管理页，其他角色进项目数据页
+      fetch('/api/users/me/permissions', { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+          const perms = data?.permissions || [];
+          const isPMO = perms.some((p: any) => p.project_role === '总体PMO组');
+          navigate(isPMO ? '/users' : '/project-data', { replace: true });
+        })
+        .catch(() => navigate('/project-data', { replace: true }));
       return;
     }
     fetchStats();

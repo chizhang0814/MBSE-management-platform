@@ -181,21 +181,27 @@ export function authRoutes(db: Database) {
         [req.user.id, project_name, project_role]
       );
 
-      // 通知该项目所有总体组
+      // 通知所有总体PMO组成员和admin
       try {
-        const project = await db.get('SELECT id FROM projects WHERE name = ?', [project_name]);
-        if (project) {
-          const zontiList = await getProjectRoleMembers(db, project.id, '总体组');
-          const displayName = req.user.display_name || req.user.username;
-          for (const u of zontiList) {
-            await db.run(
-              `INSERT INTO notifications (recipient_username, type, title, message, reference_id)
-               VALUES (?, 'permission_request', ?, ?, ?)`,
-              [u, `权限申请：${req.user.username} 申请加入 ${project_name}`,
-               `${displayName} 申请「${project_role}」角色，请审批`,
-               result.lastID]
-            );
-          }
+        const displayName = req.user.display_name || req.user.username;
+        // 查找所有拥有总体PMO组角色的用户（不限项目）
+        const allUsers = await db.query('SELECT username, permissions, role FROM users');
+        const notifyUsers = new Set<string>();
+        for (const u of allUsers) {
+          if (u.role === 'admin') { notifyUsers.add(u.username); continue; }
+          try {
+            const perms = JSON.parse(u.permissions || '[]');
+            if (perms.some((p: any) => p.project_role === '总体PMO组')) notifyUsers.add(u.username);
+          } catch {}
+        }
+        for (const u of notifyUsers) {
+          await db.run(
+            `INSERT INTO notifications (recipient_username, type, title, message, reference_id)
+             VALUES (?, 'permission_request', ?, ?, ?)`,
+            [u, `权限申请：${req.user.username} 申请加入 ${project_name}`,
+             `${displayName} 申请「${project_role}」角色，请审批`,
+             result.lastID]
+          );
         }
       } catch (e) { console.error('发送权限申请通知失败:', e); }
 

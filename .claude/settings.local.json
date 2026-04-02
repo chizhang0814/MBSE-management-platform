@@ -77,7 +77,15 @@
       "Bash(scp -F /dev/null -i \"D:\\\\Downloads\\\\mbse.pem\" -o StrictHostKeyChecking=no \"d:\\\\Downloads\\\\MBSE综合管理平台\\\\client\\\\nginx.conf\" root@8.140.11.97:/opt/mbse-platform/client/nginx.conf)",
       "Bash(ssh -i \"D:\\\\Downloads\\\\mbse.pem\" -F /dev/null -o StrictHostKeyChecking=no root@8.140.11.97 \"cd /opt/mbse-platform && docker compose -f docker-compose.prod.yml down && docker compose -f docker-compose.prod.yml up -d --build frontend backend\")",
       "Bash(ssh -i \"D:\\\\Downloads\\\\mbse.pem\" -F /dev/null -o StrictHostKeyChecking=no root@8.140.11.97 \"docker compose -f /opt/mbse-platform/docker-compose.prod.yml ps && echo ''=== TEST ==='' && curl -s -w ''\\\\nHTTP %{http_code}\\\\n'' http://localhost/ | head -10 && echo ''=== API ==='' && curl -s -w ''\\\\nHTTP %{http_code}\\\\n'' http://localhost/api/users | head -5\")",
-      "Bash(ssh -i \"D:\\\\Downloads\\\\mbse.pem\" -F /dev/null -o StrictHostKeyChecking=no root@8.140.11.97 \"docker compose -f /opt/mbse-platform/docker-compose.prod.yml logs --tail=5 frontend\")"
+      "Bash(ssh -i \"D:\\\\Downloads\\\\mbse.pem\" -F /dev/null -o StrictHostKeyChecking=no root@8.140.11.97 \"docker compose -f /opt/mbse-platform/docker-compose.prod.yml logs --tail=5 frontend\")",
+      "Bash(bash scripts/pull-db.sh)",
+      "Bash(sshpass -p 'Niubiaw198#@' ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@36.212.172.150 \"uname -a && cat /etc/os-release | head -3\")",
+      "Bash(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 -o PasswordAuthentication=yes root@36.212.172.150 \"uname -a\")",
+      "Bash(SSH=\"SSH_ASKPASS=/tmp/askpass.sh DISPLAY=:0 ssh -F /dev/null -o StrictHostKeyChecking=no -o PubkeyAuthentication=no root@36.212.172.150\")",
+      "Bash(eval \"$SSH\" \"cat /etc/os-release | head -4 && echo ''---'' && nproc && free -h && df -h / && docker --version 2>/dev/null || echo ''Docker未安装'' && git --version 2>/dev/null || echo ''Git未安装''\")"
+    ],
+    "additionalDirectories": [
+      "\\tmp"
     ]
   }
 }

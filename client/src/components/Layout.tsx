@@ -34,11 +34,20 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [myPermissions, setMyPermissions] = useState<{ project_name: string; project_role: string }[]>([]);
 
+  const prevUnreadRef = useRef(0);
   const fetchUnreadCount = useCallback(async () => {
     if (!user) return;
     try {
       const res = await fetch('/api/notifications/unread-count', { headers: API_HEADERS() });
-      if (res.ok) setUnreadCount((await res.json()).count ?? 0);
+      if (res.ok) {
+        const newCount = (await res.json()).count ?? 0;
+        if (newCount > prevUnreadRef.current) {
+          // 新通知到达，通知数据视图刷新
+          window.dispatchEvent(new CustomEvent('new-notification'));
+        }
+        prevUnreadRef.current = newCount;
+        setUnreadCount(newCount);
+      }
     } catch { }
   }, [user]);
 
@@ -157,7 +166,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                   </>
                 )}
                 {isAdmin && (
-                  <>
                     <Link
                       to="/projects"
                       className={`${
@@ -166,6 +174,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                     >
                       项目管理
                     </Link>
+                )}
+                {(isAdmin || isZonti || myPermissions.some(p => p.project_role === '系统组')) && (
                     <Link
                       to="/files"
                       className={`${
@@ -174,7 +184,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                     >
                       文件管理
                     </Link>
-                  </>
                 )}
                 {(isAdmin || isPMO) && (
                     <Link
@@ -284,7 +293,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       </main>
 
       {showProfile && <ProfileModal onClose={() => setShowProfile(false)} />}
-      {user?.role !== 'admin' && <TourGuide user={user} />}
+      {/* 使用引导暂停 */}
+      {/* {user?.role !== 'admin' && <TourGuide user={user} />} */}
     </div>
   );
 }

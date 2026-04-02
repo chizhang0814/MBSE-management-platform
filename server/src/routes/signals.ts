@@ -9,6 +9,103 @@ import {
 export function signalRoutes(db: Database) {
   const router = express.Router();
 
+  /** 替换信号端点并保留/重建 edges */
+  async function replaceEndpointsWithEdges(signalId: number, projectId: number, endpoints: any[]) {
+    // 保存旧 edges
+    const oldEdges = await db.query(
+      `SELECT e.direction, e.source_info,
+              se_from.pin_id as from_pin_id, se_to.pin_id as to_pin_id
+       FROM signal_edges e
+       JOIN signal_endpoints se_from ON e.from_endpoint_id = se_from.id
+       JOIN signal_endpoints se_to ON e.to_endpoint_id = se_to.id
+       WHERE e.signal_id = ?`,
+      [signalId]
+    );
+
+    await db.run('DELETE FROM signal_endpoints WHERE signal_id = ?', [signalId]);
+
+    const newEpByPin: Record<number, number> = {};
+    const newEpByIdx: Record<number, number> = {};
+    for (let i = 0; i < endpoints.length; i++) {
+      const ep = endpoints[i];
+      if (!ep.设备编号) continue;
+      const device = await db.get(
+        `SELECT id FROM devices WHERE project_id = ? AND "设备编号" = ?`, [projectId, ep.设备编号]
+      );
+      if (!device) continue;
+      let pinId: number | null = null;
+      if (ep.设备端元器件编号 && ep.针孔号) {
+        const pin = await db.get(
+          `SELECT p.id FROM pins p JOIN connectors c ON p.connector_id = c.id WHERE c.device_id = ? AND c."设备端元器件编号" = ? AND p."针孔号" = ?`,
+          [device.id, ep.设备端元器件编号, ep.针孔号]
+        );
+        if (pin) pinId = pin.id;
+      }
+      const epRes = await db.run(
+        `INSERT INTO signal_endpoints (signal_id, device_id, pin_id, endpoint_index, "端接尺寸", "信号名称", "信号定义", input, output)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [signalId, device.id, pinId, i, ep.端接尺寸 || null, ep.信号名称 || null, ep.信号定义 || null, ep.input ?? 0, ep.output ?? 0]
+      );
+      newEpByIdx[i] = epRes.lastID;
+      if (pinId) newEpByPin[pinId] = epRes.lastID;
+
+      // 更新针孔的端接尺寸和屏蔽类型
+      if (pinId && (ep.端接尺寸 !== undefined || ep.屏蔽类型 !== undefined)) {
+        const pinUpdates: string[] = [];
+        const pinVals: any[] = [];
+        if (ep.端接尺寸 !== undefined) { pinUpdates.push('"端接尺寸" = ?'); pinVals.push(ep.端接尺寸 || null); }
+        if (ep.屏蔽类型 !== undefined) { pinUpdates.push('"屏蔽类型" = ?'); pinVals.push(ep.屏蔽类型 || null); }
+        if (pinUpdates.length > 0) {
+          await db.run(`UPDATE pins SET ${pinUpdates.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [...pinVals, pinId]);
+        }
+      }
+    }
+
+    // 检查前端是否提供了手动 edge 信息
+    const hasManualEdges = endpoints.some((ep: any, idx: number) => idx > 0 && ep._edgeDirection && ep._edgeDirection !== 'N/A');
+
+    if (!hasManualEdges) {
+      // 无手动 edge 信息 → 恢复旧 edges（pin_id 映射）
+      for (const oe of oldEdges) {
+        const newFromId = oe.from_pin_id ? newEpByPin[oe.from_pin_id] : null;
+        const newToId = oe.to_pin_id ? newEpByPin[oe.to_pin_id] : null;
+        if (newFromId && newToId) {
+          await db.run(
+            `INSERT INTO signal_edges (signal_id, from_endpoint_id, to_endpoint_id, direction, source_info) VALUES (?, ?, ?, ?, ?)`,
+            [signalId, newFromId, newToId, oe.direction, oe.source_info]
+          );
+        }
+      }
+    }
+
+    // 根据前端 _edgeDirection / _edgeTarget 创建新 edges
+    for (let i = 1; i < endpoints.length; i++) {
+      const ep = endpoints[i];
+      const dir = ep._edgeDirection;
+      if (!dir || dir === 'N/A') continue;
+      const targetIdx = typeof ep._edgeTarget === 'number' ? ep._edgeTarget : 0;
+      if (targetIdx < 0 || !(targetIdx in newEpByIdx) || !(i in newEpByIdx) || targetIdx === i) continue;
+      if (dir === 'BI-DIR') {
+        await db.run(
+          `INSERT INTO signal_edges (signal_id, from_endpoint_id, to_endpoint_id, direction) VALUES (?, ?, ?, 'bidirectional')`,
+          [signalId, newEpByIdx[targetIdx], newEpByIdx[i]]
+        );
+      } else if (dir === 'OUTPUT') {
+        await db.run(
+          `INSERT INTO signal_edges (signal_id, from_endpoint_id, to_endpoint_id, direction) VALUES (?, ?, ?, 'directed')`,
+          [signalId, newEpByIdx[i], newEpByIdx[targetIdx]]
+        );
+      } else if (dir === 'INPUT') {
+        await db.run(
+          `INSERT INTO signal_edges (signal_id, from_endpoint_id, to_endpoint_id, direction) VALUES (?, ?, ?, 'directed')`,
+          [signalId, newEpByIdx[targetIdx], newEpByIdx[i]]
+        );
+      }
+    }
+
+    return newEpByPin;
+  }
+
   // ── 辅助：根据连接类型生成 unique_id ──────────────────────
 
   async function generateUniqueId(db: Database, projectId: number, connectionType: string): Promise<string> {
@@ -560,16 +657,29 @@ export function signalRoutes(db: Database) {
         insertedEpIds.push(epResult.lastID);
       }
 
-      // 创建 edges：2端点→1条边(ep0→ep1)，>2端点→ep0连接每个后续端点
-      if (insertedEpIds.length >= 2) {
-        for (let i = 1; i < insertedEpIds.length; i++) {
-          const fromEp = resolved[0].ep;
-          const toEp = resolved[i].ep;
-          const bothBi = (fromEp.input && fromEp.output) || (toEp.input && toEp.output);
-          const direction = bothBi ? 'bidirectional' : 'directed';
+      // 创建 edges：根据前端 _edgeDirection / _edgeTarget 字段
+      for (let i = 1; i < resolved.length; i++) {
+        const ep = resolved[i].ep;
+        const dir = ep._edgeDirection || 'N/A';
+        if (dir === 'N/A') continue;
+        const targetIdx = typeof ep._edgeTarget === 'number' ? ep._edgeTarget : 0;
+        if (targetIdx < 0 || targetIdx >= insertedEpIds.length || targetIdx === i) continue;
+        if (dir === 'BI-DIR') {
           await db.run(
-            `INSERT INTO signal_edges (signal_id, from_endpoint_id, to_endpoint_id, direction) VALUES (?, ?, ?, ?)`,
-            [signalId, insertedEpIds[0], insertedEpIds[i], direction]
+            `INSERT INTO signal_edges (signal_id, from_endpoint_id, to_endpoint_id, direction) VALUES (?, ?, ?, 'bidirectional')`,
+            [signalId, insertedEpIds[targetIdx], insertedEpIds[i]]
+          );
+        } else if (dir === 'OUTPUT') {
+          // 当前端点 → 目标端点
+          await db.run(
+            `INSERT INTO signal_edges (signal_id, from_endpoint_id, to_endpoint_id, direction) VALUES (?, ?, ?, 'directed')`,
+            [signalId, insertedEpIds[i], insertedEpIds[targetIdx]]
+          );
+        } else if (dir === 'INPUT') {
+          // 目标端点 → 当前端点
+          await db.run(
+            `INSERT INTO signal_edges (signal_id, from_endpoint_id, to_endpoint_id, direction) VALUES (?, ?, ?, 'directed')`,
+            [signalId, insertedEpIds[targetIdx], insertedEpIds[i]]
           );
         }
       }
@@ -671,85 +781,8 @@ export function signalRoutes(db: Database) {
         }
 
         if (Array.isArray(endpoints)) {
-          // 保存旧 edges（用 pin_id 作为键，删除后重建）
-          const oldEdges = await db.query(
-            `SELECT e.direction, e.source_info,
-                    se_from.pin_id as from_pin_id, se_to.pin_id as to_pin_id
-             FROM signal_edges e
-             JOIN signal_endpoints se_from ON e.from_endpoint_id = se_from.id
-             JOIN signal_endpoints se_to ON e.to_endpoint_id = se_to.id
-             WHERE e.signal_id = ?`,
-            [signalId]
-          );
-
-          await db.run('DELETE FROM signal_endpoints WHERE signal_id = ?', [signalId]);
-          // edges 被 CASCADE 删除
-
+          await replaceEndpointsWithEdges(signalId, signal.project_id, endpoints);
           const endpointErrors: string[] = [];
-          const newEpByPin: Record<number, number> = {}; // pin_id → new endpoint id
-
-          for (let i = 0; i < endpoints.length; i++) {
-            const ep = endpoints[i];
-            if (!ep.设备编号) { endpointErrors.push(`端点${i + 1}: 必须选择设备`); continue; }
-            const device = await db.get(
-              `SELECT id FROM devices WHERE project_id = ? AND "设备编号" = ?`,
-              [signal.project_id, ep.设备编号]
-            );
-            if (!device) { endpointErrors.push(`端点${i + 1}: 找不到设备 "${ep.设备编号}"`); continue; }
-
-            let pinId: number | null = null;
-            if (ep.设备端元器件编号 && ep.针孔号) {
-              const pin = await db.get(
-                `SELECT p.id FROM pins p JOIN connectors c ON p.connector_id = c.id WHERE c.device_id = ? AND c."设备端元器件编号" = ? AND p."针孔号" = ?`,
-                [device.id, ep.设备端元器件编号, ep.针孔号]
-              );
-              if (!pin) { endpointErrors.push(`端点${i + 1}: 找不到 ${ep.设备端元器件编号}.${ep.针孔号}`); continue; }
-              pinId = pin.id;
-            }
-            const epRes = await db.run(
-              `INSERT INTO signal_endpoints (signal_id, device_id, pin_id, endpoint_index, "端接尺寸", "信号名称", "信号定义", input, output)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-              [signalId, device.id, pinId, i, ep.端接尺寸 || null, ep.信号名称 || null, ep.信号定义 || null, ep.input ?? 0, ep.output ?? 0]
-            );
-            if (pinId) newEpByPin[pinId] = epRes.lastID;
-
-            // 更新针孔的端接尺寸和屏蔽类型
-            if (pinId && (ep.端接尺寸 !== undefined || ep.屏蔽类型 !== undefined)) {
-              const pinUpdates: string[] = [];
-              const pinVals: any[] = [];
-              if (ep.端接尺寸 !== undefined) { pinUpdates.push('"端接尺寸" = ?'); pinVals.push(ep.端接尺寸 || null); }
-              if (ep.屏蔽类型 !== undefined) { pinUpdates.push('"屏蔽类型" = ?'); pinVals.push(ep.屏蔽类型 || null); }
-              if (pinUpdates.length > 0) {
-                await db.run(`UPDATE pins SET ${pinUpdates.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [...pinVals, pinId]);
-              }
-            }
-          }
-
-          // 重建 edges：用 pin_id 映射到新 endpoint id
-          for (const oe of oldEdges) {
-            const newFromId = oe.from_pin_id ? newEpByPin[oe.from_pin_id] : null;
-            const newToId = oe.to_pin_id ? newEpByPin[oe.to_pin_id] : null;
-            if (newFromId && newToId) {
-              await db.run(
-                `INSERT INTO signal_edges (signal_id, from_endpoint_id, to_endpoint_id, direction, source_info) VALUES (?, ?, ?, ?, ?)`,
-                [signalId, newFromId, newToId, oe.direction, oe.source_info]
-              );
-            }
-          }
-
-          // 新增的端点（oldEdges 里没有的）：如果有新端点未在任何 edge 中出现，创建 edge 连接到第一个端点
-          const edgePinIds = new Set<number>();
-          for (const oe of oldEdges) { if (oe.from_pin_id) edgePinIds.add(oe.from_pin_id); if (oe.to_pin_id) edgePinIds.add(oe.to_pin_id); }
-          const allNewPinIds = Object.keys(newEpByPin).map(Number);
-          const firstEpId = allNewPinIds.length > 0 ? newEpByPin[allNewPinIds[0]] : null;
-          for (const pinId of allNewPinIds) {
-            if (!edgePinIds.has(pinId) && newEpByPin[pinId] !== firstEpId && firstEpId) {
-              await db.run(
-                `INSERT INTO signal_edges (signal_id, from_endpoint_id, to_endpoint_id, direction) VALUES (?, ?, ?, 'directed')`,
-                [signalId, firstEpId, newEpByPin[pinId]]
-              );
-            }
-          }
 
           if (forceDraft) {
             await db.run('UPDATE signals SET status = ? WHERE id = ?', ['Draft', signalId]);
@@ -790,28 +823,7 @@ export function signalRoutes(db: Database) {
         }
 
         if (Array.isArray(endpoints)) {
-          await db.run('DELETE FROM signal_endpoints WHERE signal_id = ?', [signalId]);
-          for (let i = 0; i < endpoints.length; i++) {
-            const ep = endpoints[i];
-            if (!ep.设备编号) continue;
-            const device = await db.get(
-              `SELECT id FROM devices WHERE project_id = ? AND "设备编号" = ?`, [signal.project_id, ep.设备编号]
-            );
-            if (!device) continue;
-            let pinId: number | null = null;
-            if (ep.设备端元器件编号 && ep.针孔号) {
-              const pin = await db.get(
-                `SELECT p.id FROM pins p JOIN connectors c ON p.connector_id = c.id WHERE c.device_id = ? AND c."设备端元器件编号" = ? AND p."针孔号" = ?`,
-                [device.id, ep.设备端元器件编号, ep.针孔号]
-              );
-              if (pin) pinId = pin.id;
-            }
-            await db.run(
-              `INSERT INTO signal_endpoints (signal_id, device_id, pin_id, endpoint_index, "端接尺寸", "信号名称", "信号定义", input, output)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-              [signalId, device.id, pinId, i, ep.端接尺寸 || null, ep.信号名称 || null, ep.信号定义 || null, ep.input ?? 0, ep.output ?? 0]
-            );
-          }
+          await replaceEndpointsWithEdges(signalId, signal.project_id, endpoints);
         }
         await db.run(
           `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, old_values, new_values, reason, status)
@@ -834,28 +846,7 @@ export function signalRoutes(db: Database) {
         if (pendingCompletion) {
           // 应用端点变更
           if (Array.isArray(endpoints)) {
-            await db.run('DELETE FROM signal_endpoints WHERE signal_id = ?', [signalId]);
-            for (let i = 0; i < endpoints.length; i++) {
-              const ep = endpoints[i];
-              if (!ep.设备编号) continue;
-              const device = await db.get(
-                `SELECT id FROM devices WHERE project_id = ? AND "设备编号" = ?`, [signal.project_id, ep.设备编号]
-              );
-              if (!device) continue;
-              let pinId: number | null = null;
-              if (ep.设备端元器件编号 && ep.针孔号) {
-                const pin = await db.get(
-                  `SELECT p.id FROM pins p JOIN connectors c ON p.connector_id = c.id WHERE c.device_id = ? AND c."设备端元器件编号" = ? AND p."针孔号" = ?`,
-                  [device.id, ep.设备端元器件编号, ep.针孔号]
-                );
-                if (pin) pinId = pin.id;
-              }
-              await db.run(
-                `INSERT INTO signal_endpoints (signal_id, device_id, pin_id, endpoint_index, "端接尺寸", "信号名称", "信号定义")
-                 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-                [signalId, device.id, pinId, i, ep.端接尺寸 || null, ep.信号名称 || null, ep.信号定义 || null]
-              );
-            }
+            await replaceEndpointsWithEdges(signalId, signal.project_id, endpoints);
           }
           if (Object.keys(fields).length > 0) {
             const setClauses = Object.keys(fields).map(k => `"${k}" = ?`).join(', ');
@@ -893,27 +884,17 @@ export function signalRoutes(db: Database) {
       // 替换端点
       const resolvedForItems: Array<{ deviceId: number; pinId: number | null }> = [];
       if (Array.isArray(endpoints)) {
-        await db.run('DELETE FROM signal_endpoints WHERE signal_id = ?', [signalId]);
-        for (let i = 0; i < endpoints.length; i++) {
-          const ep = endpoints[i];
+        const newEpByPin = await replaceEndpointsWithEdges(signalId, signal.project_id, endpoints);
+        // 收集 resolvedForItems 用于构建审批人
+        for (const ep of endpoints) {
           if (!ep.设备编号) continue;
-          const device = await db.get(
-            `SELECT id FROM devices WHERE project_id = ? AND "设备编号" = ?`, [signal.project_id, ep.设备编号]
-          );
+          const device = await db.get(`SELECT id FROM devices WHERE project_id = ? AND "设备编号" = ?`, [signal.project_id, ep.设备编号]);
           if (!device) continue;
           let pinId: number | null = null;
           if (ep.设备端元器件编号 && ep.针孔号) {
-            const pin = await db.get(
-              `SELECT p.id FROM pins p JOIN connectors c ON p.connector_id = c.id WHERE c.device_id = ? AND c."设备端元器件编号" = ? AND p."针孔号" = ?`,
-              [device.id, ep.设备端元器件编号, ep.针孔号]
-            );
+            const pin = await db.get(`SELECT p.id FROM pins p JOIN connectors c ON p.connector_id = c.id WHERE c.device_id = ? AND c."设备端元器件编号" = ? AND p."针孔号" = ?`, [device.id, ep.设备端元器件编号, ep.针孔号]);
             if (pin) pinId = pin.id;
           }
-          await db.run(
-            `INSERT INTO signal_endpoints (signal_id, device_id, pin_id, endpoint_index, "端接尺寸", "信号名称", "信号定义")
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
-            [signalId, device.id, pinId, i, ep.端接尺寸 || null, ep.信号名称 || null, ep.信号定义 || null]
-          );
           resolvedForItems.push({ deviceId: device.id, pinId });
         }
       } else {

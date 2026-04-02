@@ -4,6 +4,7 @@ import { authenticate, requireRole, AuthRequest } from '../middleware/auth.js';
 import {
   isZontiRenyuan, isDeviceManager, getProjectRoleMembers,
   submitChangeRequest, ApprovalItemSpec, SPECIAL_ERN_LIN, cascadeDeletePinShared, isPinFrozen,
+  renameConnectorsForLINChange,
 } from '../shared/approval-helper.js';
 import { validateConnectorCompId } from '../shared/column-schema.js';
 
@@ -744,6 +745,24 @@ export function deviceRoutes(db: Database) {
           [...Object.values(fields), deviceId, version ?? 1]
         );
         if (result.changes === 0) return res.status(409).json({ error: '记录已被他人修改，请刷新后重试' });
+
+        // LIN 号变更 → 自动重命名连接器前缀
+        const oldLIN = String(device['设备LIN号（DOORS）'] || '').trim();
+        const newLIN = String(fields['设备LIN号（DOORS）'] ?? oldLIN).trim();
+        let connRenames: Array<{ id: number; old: string; new: string }> = [];
+        if (oldLIN && newLIN && oldLIN !== newLIN) {
+          connRenames = await renameConnectorsForLINChange(db, deviceId, oldLIN, newLIN);
+          if (connRenames.length > 0) {
+            await db.run(
+              `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, new_values, reason, status)
+               VALUES ('devices', ?, ?, 'devices', ?, ?, ?, 'approved')`,
+              [deviceId, deviceId, req.user!.id,
+               JSON.stringify({ connector_renames: connRenames }),
+               `设备LIN号变更(${oldLIN}→${newLIN})，自动重命名 ${connRenames.length} 个连接器前缀`]
+            );
+          }
+        }
+
         await db.run(
           `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, old_values, new_values, reason, status)
            VALUES ('devices', ?, ?, 'devices', ?, ?, ?, ?, ?)`,
@@ -770,6 +789,23 @@ export function deviceRoutes(db: Database) {
           [...Object.values(fields), deviceId, version ?? 1]
         );
         if (result.changes === 0) return res.status(409).json({ error: '记录已被他人修改，请刷新后重试' });
+
+        // LIN 号变更 → 自动重命名连接器前缀
+        const oldLINDraft = String(device['设备LIN号（DOORS）'] || '').trim();
+        const newLINDraft = String(fields['设备LIN号（DOORS）'] ?? oldLINDraft).trim();
+        if (oldLINDraft && newLINDraft && oldLINDraft !== newLINDraft) {
+          const renames = await renameConnectorsForLINChange(db, deviceId, oldLINDraft, newLINDraft);
+          if (renames.length > 0) {
+            await db.run(
+              `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, new_values, reason, status)
+               VALUES ('devices', ?, ?, 'devices', ?, ?, ?, 'approved')`,
+              [deviceId, deviceId, req.user!.id,
+               JSON.stringify({ connector_renames: renames }),
+               `设备LIN号变更(${oldLINDraft}→${newLINDraft})，自动重命名 ${renames.length} 个连接器前缀`]
+            );
+          }
+        }
+
         await db.run(
           `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, old_values, new_values, reason, status)
            VALUES ('devices', ?, ?, 'devices', ?, ?, ?, '修改设备(Draft)', 'draft')`,
@@ -790,6 +826,23 @@ export function deviceRoutes(db: Database) {
           `UPDATE devices SET ${setClauses}, status = 'normal', version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
           [...Object.values(fields), deviceId]
         );
+
+        // LIN 号变更 → 自动重命名连接器前缀
+        const oldLIN0 = String(device['设备LIN号（DOORS）'] || '').trim();
+        const newLIN0 = String(fields['设备LIN号（DOORS）'] ?? oldLIN0).trim();
+        if (oldLIN0 && newLIN0 && oldLIN0 !== newLIN0) {
+          const renames = await renameConnectorsForLINChange(db, deviceId, oldLIN0, newLIN0);
+          if (renames.length > 0) {
+            await db.run(
+              `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, new_values, reason, status)
+               VALUES ('devices', ?, ?, 'devices', ?, ?, ?, 'approved')`,
+              [deviceId, deviceId, req.user!.id,
+               JSON.stringify({ connector_renames: renames }),
+               `设备LIN号变更(${oldLIN0}→${newLIN0})，自动重命名 ${renames.length} 个连接器前缀`]
+            );
+          }
+        }
+
         await db.run(
           `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, old_values, new_values, reason, status)
            VALUES ('devices', ?, ?, 'devices', ?, ?, ?, '修改设备（无需审批）', 'approved')`,
@@ -797,6 +850,26 @@ export function deviceRoutes(db: Database) {
         );
         return res.json({ success: true });
       }
+
+      // 若 LIN 号变更，预计算连接器重命名列表放入审批 payload
+      const oldLINAppr = String(device['设备LIN号（DOORS）'] || '').trim();
+      const newLINAppr = String(fields['设备LIN号（DOORS）'] ?? oldLINAppr).trim();
+      let pendingConnRenames: Array<{ id: number; old: string; new: string }> = [];
+      if (oldLINAppr && newLINAppr && oldLINAppr !== newLINAppr) {
+        const connectors: any[] = await db.query(
+          `SELECT id, "设备端元器件编号" FROM connectors WHERE device_id = ?`, [deviceId]
+        );
+        for (const c of connectors) {
+          const compId = c['设备端元器件编号'] || '';
+          if (compId.startsWith(oldLINAppr + '-')) {
+            pendingConnRenames.push({ id: c.id, old: compId, new: newLINAppr + compId.slice(oldLINAppr.length) });
+          }
+        }
+      }
+
+      const newPayload = pendingConnRenames.length > 0
+        ? { ...fields, _connector_renames: pendingConnRenames }
+        : fields;
 
       const items: ApprovalItemSpec[] = otherZonti.map(u => ({ recipient_username: u, item_type: 'approval' as const }));
       await submitChangeRequest(db, {
@@ -807,7 +880,7 @@ export function deviceRoutes(db: Database) {
         entityType: 'device',
         entityId: deviceId,
         oldPayload: device,
-        newPayload: fields,
+        newPayload: newPayload,
         items,
       });
       return res.status(202).json({ pending: true, message: '已提交审批，等待其他总体组成员审批' });
@@ -866,6 +939,16 @@ export function deviceRoutes(db: Database) {
         return res.json({ success: true });
       }
 
+      // 检查子项是否有审批中的
+      const pendingSub = await db.get(
+        `SELECT ar.id, ar.action_type, ar.entity_type FROM approval_requests ar WHERE ar.status = 'pending' AND (
+          (ar.entity_type = 'connector' AND ar.entity_id IN (SELECT id FROM connectors WHERE device_id = ?))
+          OR (ar.entity_type = 'pin' AND ar.entity_id IN (SELECT p.id FROM pins p JOIN connectors c ON p.connector_id = c.id WHERE c.device_id = ?))
+        ) LIMIT 1`,
+        [deviceId, deviceId]
+      );
+      if (pendingSub) return res.status(403).json({ error: '该设备下有子项正在审批中，请等待审批完成后再删除' });
+
       // 总体组 → 提交删除审批
       await db.run(`UPDATE devices SET status = 'Pending' WHERE id = ?`, [deviceId]);
 
@@ -876,6 +959,7 @@ export function deviceRoutes(db: Database) {
         return res.json({ success: true });
       }
 
+      const delImpact = await deviceDeleteImpact(db, deviceId);
       const items: ApprovalItemSpec[] = otherZonti.map(u => ({ recipient_username: u, item_type: 'approval' as const }));
       await submitChangeRequest(db, {
         projectId: device.project_id,
@@ -885,7 +969,7 @@ export function deviceRoutes(db: Database) {
         entityType: 'device',
         entityId: deviceId,
         oldPayload: device,
-        newPayload: {},
+        newPayload: { _deleteImpact: delImpact },
         items,
       });
       return res.status(202).json({ pending: true, message: '删除请求已提交审批' });
@@ -897,7 +981,7 @@ export function deviceRoutes(db: Database) {
   // ── 连接器 CRUD ───────────────────────────────────────────
 
   // GET /api/devices/:devId/connectors
-  router.get('/:devId/connectors', authenticate, async (req, res) => {
+  router.get('/:devId/connectors', authenticate, async (req: AuthRequest, res) => {
     try {
       const connectors = await db.query(
         `SELECT c.*,
@@ -905,6 +989,24 @@ export function deviceRoutes(db: Database) {
          FROM connectors c WHERE c.device_id = ? ORDER BY c."设备端元器件编号"`,
         [req.params.devId]
       );
+      // 为每个连接器检查是否有子项（针孔）在审批中
+      const connIds = connectors.map((c: any) => c.id);
+      if (connIds.length > 0) {
+        const ph = connIds.map(() => '?').join(',');
+        const pinPending = await db.query(
+          `SELECT DISTINCT c.id as conn_id
+           FROM approval_requests ar
+           JOIN pins p ON ar.entity_id = p.id
+           JOIN connectors c ON p.connector_id = c.id
+           WHERE ar.entity_type = 'pin' AND ar.status = 'pending'
+             AND c.id IN (${ph})`,
+          connIds
+        );
+        const pendingSet = new Set(pinPending.map((r: any) => r.conn_id));
+        for (const c of connectors) {
+          (c as any).has_pending_sub = pendingSet.has(c.id);
+        }
+      }
       res.json({ connectors });
     } catch (error: any) {
       res.status(500).json({ error: error.message || '获取连接器失败' });
@@ -1168,6 +1270,15 @@ export function deviceRoutes(db: Database) {
         return res.json({ success: true });
       }
 
+      // 检查子项（针孔）是否有审批中的
+      const pendingPin = await db.get(
+        `SELECT ar.id FROM approval_requests ar WHERE ar.status = 'pending'
+         AND ar.entity_type = 'pin' AND ar.entity_id IN (SELECT id FROM pins WHERE connector_id = ?)
+         LIMIT 1`,
+        [connectorId]
+      );
+      if (pendingPin) return res.status(403).json({ error: '该连接器下有针孔正在审批中，请等待审批完成后再删除' });
+
       // 总体组 → 提交删除审批
       await db.run(`UPDATE connectors SET status = 'Pending' WHERE id = ?`, [connectorId]);
 
@@ -1179,6 +1290,7 @@ export function deviceRoutes(db: Database) {
         return res.json({ success: true });
       }
 
+      const connDelImpact = await connectorDeleteImpact(db, connectorId);
       const items: ApprovalItemSpec[] = otherZonti.map(u => ({ recipient_username: u, item_type: 'approval' as const }));
       await submitChangeRequest(db, {
         projectId: devRow.project_id,
@@ -1189,7 +1301,7 @@ export function deviceRoutes(db: Database) {
         entityId: connectorId,
         deviceId: parseInt(req.params.devId),
         oldPayload: connToDelete,
-        newPayload: {},
+        newPayload: { _deleteImpact: connDelImpact },
         items,
       });
       return res.status(202).json({ pending: true, message: '删除请求已提交审批' });
@@ -1589,6 +1701,9 @@ export function deviceRoutes(db: Database) {
         return res.json({ success: true });
       }
 
+      // 获取删除影响信息存入审批请求
+      const delImpact = await pinDeleteImpact(db, pinId);
+
       await submitChangeRequest(db, {
         projectId: devRow.project_id,
         requesterId: req.user!.id,
@@ -1598,7 +1713,7 @@ export function deviceRoutes(db: Database) {
         entityId: pinId,
         deviceId: parseInt(req.params.devId),
         oldPayload: pinToDelete,
-        newPayload: {},
+        newPayload: { _deleteImpact: delImpact },
         items,
       });
       return res.status(202).json({ pending: true, message: '删除请求已提交审批' });

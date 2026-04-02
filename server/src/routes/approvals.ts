@@ -1,7 +1,7 @@
 import express from 'express';
 import { Database } from '../database.js';
 import { authenticate, AuthRequest } from '../middleware/auth.js';
-import { checkAndAdvancePhase } from '../shared/approval-helper.js';
+import { checkAndAdvancePhase, getEntityDescription } from '../shared/approval-helper.js';
 
 export function approvalRoutes(db: Database) {
   const router = express.Router();
@@ -290,10 +290,11 @@ export function approvalRoutes(db: Database) {
         request_device_management: '申请设备管理',
       };
       const label = actionLabels[approvalReq.action_type] || approvalReq.action_type;
+      const entityDesc = await getEntityDescription(db, approvalReq.entity_type, approvalReq.entity_id);
       await db.run(
         `INSERT INTO notifications (recipient_username, type, title, message) VALUES (?, 'approval_rejected', ?, ?)`,
-        [approvalReq.requester_username, `审批被拒绝：${label}`,
-         `您提交的「${label}」请求被 ${req.user!.username} 拒绝。理由：${reason.trim()}`]
+        [approvalReq.requester_username, `审批被拒绝：${label} — ${entityDesc}`,
+         `您提交的${entityDesc}的「${label}」请求被 ${req.user!.username} 拒绝。理由：${reason.trim()}`]
       );
 
       res.json({ success: true, message: '已拒绝该审批请求' });

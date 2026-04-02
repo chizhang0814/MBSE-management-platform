@@ -211,7 +211,8 @@ export default function ProjectDataView() {
 
   // ── 视图切换 ──
   const [activeView, setActiveView] = useState<'devices' | 'signals' | 'section-connectors'>('devices');
-  const [filterMode, setFilterMode] = useState<'all' | 'my' | 'related' | 'pending' | 'my_approval' | 'my_completion' | 'my_tasks' | 'networking'>(user?.role === 'admin' ? 'all' : 'my');
+  const [filterMode, setFilterMode] = useState<'all' | 'my' | 'related' | 'pending' | 'my_approval' | 'my_completion' | 'my_tasks' | 'networking'>('all');
+  const [filterModeInitialized, setFilterModeInitialized] = useState(false);
 
   type ApprovalItem = { id: number; recipient_username: string; item_type: string; status: string; rejection_reason?: string; responded_at?: string; };
   type ApprovalInfo = { request: { id: number; current_phase: string; status: string; action_type: string; requester_username: string; created_at: string; old_payload?: string; payload?: string; project_name?: string; } | null; items: ApprovalItem[]; my_pending_item: ApprovalItem | null; };
@@ -416,6 +417,20 @@ export default function ProjectDataView() {
     else loadSectionConnectors();
   }, [selectedProjectId, activeView, effectiveFilterKey, deviceSortOrder, signalSortOrder]);
 
+  // 新通知到达时自动刷新当前视图数据
+  const refreshDataRef = useRef(() => {});
+  refreshDataRef.current = () => {
+    if (!selectedProjectId) return;
+    if (activeView === 'devices') loadDevices();
+    else if (activeView === 'signals') loadSignals();
+    else loadSectionConnectors();
+  };
+  useEffect(() => {
+    const handler = () => refreshDataRef.current();
+    window.addEventListener('new-notification', handler);
+    return () => window.removeEventListener('new-notification', handler);
+  }, []);
+
   // 信号视图滚动加载：监听哨兵元素
   useEffect(() => {
     const sentinel = signalSentinelRef.current;
@@ -615,9 +630,11 @@ export default function ProjectDataView() {
     } catch { }
   };
 
-  const handleApprove = async (approvalId: number, entityType: string, entityId: number) => {
+  const handleApprove = async (approvalId: number, entityType: string, entityId: number, phase?: string) => {
     try {
-      const res = await fetch(`/api/approvals/${approvalId}/approve`, { method: 'POST', headers: API_JSON_HEADERS(), body: JSON.stringify({}) });
+      const endpoint = phase === 'completion' ? 'complete' : 'approve';
+      const body = phase === 'completion' ? { updated_fields: {} } : {};
+      const res = await fetch(`/api/approvals/${approvalId}/${endpoint}`, { method: 'POST', headers: API_JSON_HEADERS(), body: JSON.stringify(body) });
       if (!res.ok) throw new Error((await res.json()).error || '审批失败');
       await loadApprovalInfo(entityType, entityId);
       if (activeView === 'devices') await loadDevices(); else await loadSignals();
@@ -1271,20 +1288,51 @@ export default function ProjectDataView() {
 
     setEditingSignal(signal);
     setSignalForm({ ...freshSignal });
+    // 构建 endpoint_id → endpoint_index 映射，用于将 edges 转换为 _edgeDirection/_edgeTarget
+    const epIdToIdx: Record<number, number> = {};
+    freshEndpoints.forEach((e: any) => { if (e.id) epIdToIdx[e.id] = e.endpoint_index; });
+    const freshEdges: any[] = freshSignal.edges || [];
+
     const epList: SignalEndpoint[] = freshEndpoints.length > 0
-      ? freshEndpoints.map((e: any) => ({
-          设备编号: e.设备编号 || '',
-          设备端元器件编号: e.设备端元器件编号 || '',
-          针孔号: e.针孔号 || '',
-          端接尺寸: e.pin_端接尺寸 || '',
-          屏蔽类型: e.pin_屏蔽类型 || '',
-          信号名称: e.信号名称 || '',
-          信号定义: e.信号定义 || '',
-          设备负责人: e.设备负责人 || '',
-          confirmed: e.confirmed,
-          input: e.input ?? 0,
-          output: e.output ?? 0,
-        }))
+      ? freshEndpoints.map((e: any, idx: number) => {
+          let _edgeDirection = 'N/A';
+          let _edgeTarget = 0;
+          if (idx > 0 && e.id) {
+            // 查找涉及此端点的 edge
+            const edgeAsTo = freshEdges.find((ed: any) => ed.to_endpoint_id === e.id);
+            const edgeAsFrom = freshEdges.find((ed: any) => ed.from_endpoint_id === e.id);
+            if (edgeAsTo && edgeAsTo.direction === 'bidirectional') {
+              _edgeDirection = 'BI-DIR';
+              _edgeTarget = epIdToIdx[edgeAsTo.from_endpoint_id] ?? 0;
+            } else if (edgeAsTo) {
+              // from → this: this is INPUT
+              _edgeDirection = 'INPUT';
+              _edgeTarget = epIdToIdx[edgeAsTo.from_endpoint_id] ?? 0;
+            } else if (edgeAsFrom && edgeAsFrom.direction === 'bidirectional') {
+              _edgeDirection = 'BI-DIR';
+              _edgeTarget = epIdToIdx[edgeAsFrom.to_endpoint_id] ?? 0;
+            } else if (edgeAsFrom) {
+              // this → to: this is OUTPUT
+              _edgeDirection = 'OUTPUT';
+              _edgeTarget = epIdToIdx[edgeAsFrom.to_endpoint_id] ?? 0;
+            }
+          }
+          return {
+            设备编号: e.设备编号 || '',
+            设备端元器件编号: e.设备端元器件编号 || '',
+            针孔号: e.针孔号 || '',
+            端接尺寸: e.pin_端接尺寸 || '',
+            屏蔽类型: e.pin_屏蔽类型 || '',
+            信号名称: e.信号名称 || '',
+            信号定义: e.信号定义 || '',
+            设备负责人: e.设备负责人 || '',
+            confirmed: e.confirmed,
+            input: e.input ?? 0,
+            output: e.output ?? 0,
+            _edgeDirection,
+            _edgeTarget,
+          };
+        })
       : [{ 设备编号: '', 设备端元器件编号: '', 针孔号: '', 信号名称: '', 信号定义: '', 设备负责人: '', input: 0, output: 0 }];
     setSignalEndpoints(epList);
     setEpDeviceSearch(epList.map(e => e.设备编号));
@@ -1480,6 +1528,13 @@ export default function ProjectDataView() {
   const isAdmin = user?.role === 'admin';
   const selectedProjectName = projects.find(p => p.id === selectedProjectId)?.name;
   const myProjectRole = myPermissions.find(p => p.project_name === selectedProjectName)?.project_role;
+
+  // 系统组默认显示"己方设备"，其他角色默认"全部"
+  if (!filterModeInitialized && myProjectRole) {
+    setFilterModeInitialized(true);
+    if (myProjectRole === '系统组') setFilterMode('my');
+  }
+
   const isReadOnly = myProjectRole === '其他组';
   const canExport = isAdmin || myProjectRole === '总体组' || myProjectRole === '系统组' || myProjectRole === '供应商组';
   const canManageDevices = isAdmin || myProjectRole === '总体组';
@@ -1839,7 +1894,7 @@ export default function ProjectDataView() {
                         )}
                         {device.has_pending_sub && (
                           <span className="ml-1 px-1.5 py-0.5 rounded bg-orange-50 text-orange-600 text-xs" title="包含待审批的连接器或针孔">
-                            子项{device.pending_sub_item_type === 'completion' ? '待完善' : '待审批'}
+                            子项待审批
                           </span>
                         )}
                         {device.management_claim_requester && (
@@ -1992,10 +2047,15 @@ export default function ProjectDataView() {
                                 };
                                 const actionLabel = actionLabelsMap[request.action_type] || request.action_type;
                                 let diffRows: { key: string; oldVal: string; newVal: string }[] = [];
+                                let deleteImpact: any = null;
+                                let connRenames: any = null;
                                 try {
                                   const oldObj = request.old_payload ? JSON.parse(request.old_payload) : {};
                                   const newObj = request.payload ? JSON.parse(request.payload) : {};
+                                  if (newObj._deleteImpact) deleteImpact = newObj._deleteImpact;
+                                  connRenames = newObj._connector_renames;
                                   for (const key of Object.keys(newObj)) {
+                                    if (key === '_deleteImpact' || key === '_connector_renames') continue;
                                     const ov = oldObj[key] ?? '';
                                     const nv = newObj[key] ?? '';
                                     if (String(ov) !== String(nv)) {
@@ -2009,6 +2069,28 @@ export default function ProjectDataView() {
                                       <div className="text-xs text-blue-600 font-medium mb-1">项目：{request.project_name}</div>
                                     )}
                                     <div className="text-xs font-semibold text-gray-600 mb-2">审批进度（{actionLabel}）</div>
+                                    {deleteImpact && (
+                                      <div className="mb-2 text-xs text-red-600 bg-red-50 border border-red-200 rounded p-2">
+                                        <div className="font-medium mb-1">删除影响：</div>
+                                        {deleteImpact.connectors?.length > 0 && <div>删除 {deleteImpact.connectors.length} 个连接器</div>}
+                                        {deleteImpact.pins?.length > 0 && <div>删除 {deleteImpact.pins.length} 个针孔</div>}
+                                        {deleteImpact.signalsDeleted?.length > 0 && (
+                                          <div>整体删除 {deleteImpact.signalsDeleted.length} 条信号：{deleteImpact.signalsDeleted.slice(0, 5).map((s: any) => s.unique_id || `#${s.id}`).join('、')}{deleteImpact.signalsDeleted.length > 5 ? '...' : ''}</div>
+                                        )}
+                                        {deleteImpact.signalsModified?.length > 0 && (
+                                          <div>移除端点 {deleteImpact.signalsModified.length} 条信号：{deleteImpact.signalsModified.slice(0, 5).map((s: any) => `${s.unique_id || '#' + s.id}（减少${s.removedEndpoints}个端点）`).join('、')}{deleteImpact.signalsModified.length > 5 ? '...' : ''}</div>
+                                        )}
+                                      </div>
+                                    )}
+                                    {connRenames?.length > 0 && (
+                                      <div className="mb-2 text-xs text-blue-700 bg-blue-50 border border-blue-200 rounded p-2">
+                                        <div className="font-medium mb-1">LIN号变更将自动重命名 {connRenames.length} 个连接器：</div>
+                                        {connRenames.slice(0, 10).map((r: any, ri: number) => (
+                                          <div key={ri}><span className="line-through text-red-500">{r.old}</span> → <span className="text-green-700 font-medium">{r.new}</span></div>
+                                        ))}
+                                        {connRenames.length > 10 && <div className="text-gray-500">...及其他 {connRenames.length - 10} 个</div>}
+                                      </div>
+                                    )}
                                     {diffRows.length > 0 && (
                                       <div className="mb-2 text-xs border border-gray-200 rounded overflow-hidden">
                                         <div className="bg-gray-100 px-2 py-1 font-medium text-gray-500">变更内容</div>
@@ -2155,7 +2237,10 @@ export default function ProjectDataView() {
                                             {conn.status === 'Pending' && (
                                               <span className="ml-1 px-1 py-0.5 text-xs bg-blue-100 text-blue-700 rounded">审批中</span>
                                             )}
-                                            {conn.status === 'normal' && (
+                                            {conn.status !== 'Pending' && (conn as any).has_pending_sub && (
+                                              <span className="ml-1 px-1 py-0.5 text-xs bg-orange-100 text-orange-700 rounded">子项待审批</span>
+                                            )}
+                                            {conn.status === 'normal' && !(conn as any).has_pending_sub && (
                                               <span className="ml-1 px-1 py-0.5 text-xs bg-green-100 text-green-700 rounded">已生效</span>
                                             )}
                                             {(conn as any).import_status === 'uploaded' && (
@@ -2345,14 +2430,14 @@ export default function ProjectDataView() {
                                                             {(device as any)['设备LIN号（DOORS）'] === SPECIAL_ERN_LIN ? (
                                                               <span className="text-xs text-gray-400">固有ERN</span>
                                                             ) : (<>
-                                                              {canEditPin(device) && (pin.status === 'Pending' ? (
+                                                              {pin.status === 'Pending' ? (
                                                                 <button onClick={() => loadApprovalInfo('pin', pin.id)} className="text-xs text-blue-600 hover:text-blue-800">审批详情</button>
-                                                              ) : (
+                                                              ) : canEditPin(device) ? (
                                                                 <>
                                                                   <button onClick={() => openEditPin(device.id, conn.id, pin)} className="text-blue-600">编辑</button>
                                                                   <button onClick={() => deletePin(device.id, conn.id, pin)} className="text-red-600">删除</button>
                                                                 </>
-                                                              ))}
+                                                              ) : null}
                                                               <button onClick={() => setHistoryTarget({ entityTable: 'pins', entityId: pin.id, entityLabel: `针孔 ${pin.针孔号}` })} className="text-gray-500 hover:text-gray-700">历史</button>
                                                             </>)}
                                                             </td>
@@ -2366,20 +2451,92 @@ export default function ProjectDataView() {
                                                               <td colSpan={4} className="px-2 py-1">
                                                                 <div className="p-2 bg-yellow-50 border border-yellow-200 rounded text-xs mb-1">
                                                                   {ar.project_name && <div className="text-blue-600 font-medium mb-0.5">项目：{ar.project_name}</div>}
-                                                                  <div className="font-semibold text-gray-600 mb-1">针孔 {pin.针孔号} 审批进度</div>
-                                                                  {ais.map((it: any) => (
-                                                                    <div key={it.id} className="flex items-center gap-1.5 mb-0.5">
-                                                                      <span>{it.status === 'done' && !it.rejection_reason ? '✅' : it.status === 'cancelled' ? '❌' : '⏳'}</span>
-                                                                      <span className="font-medium">{it.recipient_username}</span>
-                                                                      <span className="text-gray-500">{it.status === 'done' && !it.rejection_reason ? '已通过' : it.status === 'cancelled' ? '已取消' : it.item_type === 'completion' ? '待完善' : '待审批'}</span>
-                                                                    </div>
-                                                                  ))}
-                                                                  {mpi && mpi.item_type === 'approval' && ar!.current_phase === 'approval' && (
-                                                                    <div className="flex gap-2 mt-1">
-                                                                      <button onClick={() => handleApprove(ar!.id, 'pin', pin.id)} className="px-2 py-0.5 bg-green-600 text-white rounded hover:bg-green-700">审批通过</button>
-                                                                      <button onClick={() => handleReject(ar!.id, 'pin', pin.id)} className="px-2 py-0.5 bg-red-600 text-white rounded hover:bg-red-700">拒绝</button>
-                                                                    </div>
-                                                                  )}
+                                                                  {(() => {
+                                                                    const actionLabels: Record<string, string> = {
+                                                                      create_pin: '新建针孔', edit_pin: '修改针孔', delete_pin: '删除针孔',
+                                                                    };
+                                                                    const actionLabel = actionLabels[ar.action_type] || ar.action_type;
+                                                                    return <div className="font-semibold text-gray-600 mb-1">针孔 {pin.针孔号} — {actionLabel}</div>;
+                                                                  })()}
+                                                                  {/* 变更内容 */}
+                                                                  {ar.action_type === 'edit_pin' && ar.old_payload && ar.payload && (() => {
+                                                                    try {
+                                                                      const oldObj = JSON.parse(ar.old_payload);
+                                                                      const newObj = JSON.parse(ar.payload);
+                                                                      const diffs = Object.keys(newObj).filter(k => String(oldObj[k] || '') !== String(newObj[k] || ''));
+                                                                      if (diffs.length === 0) return null;
+                                                                      return (
+                                                                        <div className="mb-1 text-gray-500">
+                                                                          {diffs.map(k => <div key={k}>{k}：{String(oldObj[k] || '（空）')} → {String(newObj[k] || '（空）')}</div>)}
+                                                                        </div>
+                                                                      );
+                                                                    } catch { return null; }
+                                                                  })()}
+                                                                  {ar.action_type === 'delete_pin' && (() => {
+                                                                    try {
+                                                                      const payload = JSON.parse(ar.payload || '{}');
+                                                                      const impact = payload._deleteImpact;
+                                                                      if (!impact) return <div className="mb-1 text-red-600 text-xs">删除此针孔将影响关联信号</div>;
+                                                                      return (
+                                                                        <div className="mb-1 text-red-600 text-xs">
+                                                                          <div className="font-medium">删除此针孔将影响关联信号：</div>
+                                                                          {impact.signalsDeleted?.length > 0 && (
+                                                                            <div>整体删除 {impact.signalsDeleted.length} 条：{impact.signalsDeleted.map((s: any) => s.unique_id || `#${s.id}`).join('、')}</div>
+                                                                          )}
+                                                                          {impact.signalsModified?.length > 0 && (
+                                                                            <div>移除端点 {impact.signalsModified.length} 条：{impact.signalsModified.map((s: any) => `${s.unique_id || '#' + s.id}（减少${s.removedEndpoints}个端点）`).join('、')}</div>
+                                                                          )}
+                                                                        </div>
+                                                                      );
+                                                                    } catch { return <div className="mb-1 text-red-600 text-xs">删除此针孔将影响关联信号</div>; }
+                                                                  })()}
+                                                                  {/* 审批阶段 */}
+                                                                  {(() => {
+                                                                    const completionItems = ais.filter((it: any) => it.item_type === 'completion');
+                                                                    const approvalItems = ais.filter((it: any) => it.item_type === 'approval');
+                                                                    return (<>
+                                                                      {completionItems.length > 0 && (
+                                                                        <div className="mb-1">
+                                                                          <div className="text-gray-400 mb-0.5">阶段一：设备负责人审批</div>
+                                                                          {completionItems.map((it: any) => (
+                                                                            <div key={it.id} className="flex items-center gap-1.5 mb-0.5">
+                                                                              <span>{it.status === 'done' && !it.rejection_reason ? '✅' : it.status === 'cancelled' ? '❌' : '⏳'}</span>
+                                                                              <span className="font-medium">{it.recipient_username}</span>
+                                                                              <span className="text-gray-500">{it.status === 'done' && !it.rejection_reason ? '已通过' : it.status === 'cancelled' ? '已取消' : '待审批'}</span>
+                                                                            </div>
+                                                                          ))}
+                                                                          {/* 阶段一审批按钮 */}
+                                                                          {mpi && mpi.item_type === 'completion' && ar!.current_phase === 'completion' && (
+                                                                            <div className="flex gap-2 mt-1">
+                                                                              <button onClick={() => handleApprove(ar!.id, 'pin', pin.id, 'completion')} className="px-2 py-0.5 bg-green-600 text-white rounded hover:bg-green-700">审批通过</button>
+                                                                              <button onClick={() => handleReject(ar!.id, 'pin', pin.id)} className="px-2 py-0.5 bg-red-600 text-white rounded hover:bg-red-700">拒绝</button>
+                                                                            </div>
+                                                                          )}
+                                                                        </div>
+                                                                      )}
+                                                                      {approvalItems.length > 0 && (
+                                                                        <div className="mb-1">
+                                                                          <div className="text-gray-400 mb-0.5">
+                                                                            阶段二：总体组审批{ar!.current_phase === 'completion' && <span className="text-orange-500 ml-1">（等待阶段一审批完成）</span>}
+                                                                          </div>
+                                                                          {approvalItems.map((it: any) => (
+                                                                            <div key={it.id} className="flex items-center gap-1.5 mb-0.5">
+                                                                              <span>{it.status === 'done' && !it.rejection_reason ? '✅' : it.status === 'cancelled' ? '❌' : '⏳'}</span>
+                                                                              <span className="font-medium">{it.recipient_username}</span>
+                                                                              <span className="text-gray-500">{it.status === 'done' && !it.rejection_reason ? '已通过' : it.status === 'cancelled' ? '已取消' : '待审批'}</span>
+                                                                            </div>
+                                                                          ))}
+                                                                          {/* 阶段二审批按钮 */}
+                                                                          {mpi && mpi.item_type === 'approval' && ar!.current_phase === 'approval' && (
+                                                                            <div className="flex gap-2 mt-1">
+                                                                              <button onClick={() => handleApprove(ar!.id, 'pin', pin.id, 'approval')} className="px-2 py-0.5 bg-green-600 text-white rounded hover:bg-green-700">审批通过</button>
+                                                                              <button onClick={() => handleReject(ar!.id, 'pin', pin.id)} className="px-2 py-0.5 bg-red-600 text-white rounded hover:bg-red-700">拒绝</button>
+                                                                            </div>
+                                                                          )}
+                                                                        </div>
+                                                                      )}
+                                                                    </>);
+                                                                  })()}
                                                                 </div>
                                                               </td>
                                                             </tr>
@@ -2956,10 +3113,10 @@ export default function ProjectDataView() {
                                   ))}
                                 </div>
                               )}
-                              {my_pending_item && my_pending_item.item_type === 'approval' && request.current_phase === 'approval' && (
+                              {my_pending_item && ((my_pending_item.item_type === 'completion' && request.current_phase === 'completion') || (my_pending_item.item_type === 'approval' && request.current_phase === 'approval')) && (
                                 <div className="flex gap-2 mt-2">
                                   <button
-                                    onClick={() => handleApprove(request.id, 'signal', signal.id)}
+                                    onClick={() => handleApprove(request.id, 'signal', signal.id, request.current_phase)}
                                     className="px-2 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700"
                                   >审批通过</button>
                                   <button
@@ -3132,6 +3289,7 @@ export default function ProjectDataView() {
                                       <th className="px-2 py-1 text-left">端点</th>
                                       <th className="px-2 py-1 text-left">设备编号</th>
                                       <th className="px-2 py-1 text-left">元器件编号</th>
+                                      <th className="px-2 py-1 text-left">设备负责人</th>
                                       <th className="px-2 py-1 text-left">针孔号</th>
                                       <th className="px-2 py-1 text-left">端接尺寸</th>
                                       <th className="px-2 py-1 text-left">屏蔽类型</th>
@@ -3159,6 +3317,7 @@ export default function ProjectDataView() {
                                             : <span className="text-orange-500 italic">待完善</span>
                                           }
                                         </td>
+                                        <td className="px-2 py-1 text-gray-600">{(ep as any).设备负责人 || '-'}</td>
                                         <td className="px-2 py-1">
                                           {ep.pin_id ? ep.针孔号 : <span className="text-orange-500 italic">待完善</span>}
                                         </td>
@@ -3197,7 +3356,7 @@ export default function ProjectDataView() {
                                       </tr>
                                       {isEdgeExpanded && myEdges.length > 0 && (
                                         <tr>
-                                          <td colSpan={11} className="px-0 py-0">
+                                          <td colSpan={12} className="px-0 py-0">
                                             <div className="ml-8 mr-4 my-1 bg-blue-50 border border-blue-200 rounded p-2">
                                               {myEdges.map(edge => {
                                                 const isFrom = edge.from_endpoint_id === epId;
@@ -3315,13 +3474,15 @@ export default function ProjectDataView() {
             >
               {activeView === 'signals' ? '全部信号' : '全部设备'}
             </button>
-            <button
-              onClick={() => setFilterMode('my')}
-              className={`px-3 py-1 rounded text-sm ${filterMode === 'my' ? 'bg-white shadow text-blue-600 font-medium' : 'text-gray-600'}`}
-            >
-              {activeView === 'signals' ? '与我有关的信号' : '己方设备'}
-            </button>
-            {activeView === 'devices' && (
+            {(isAdmin || myProjectRole === '系统组') && (
+              <button
+                onClick={() => setFilterMode('my')}
+                className={`px-3 py-1 rounded text-sm ${filterMode === 'my' ? 'bg-white shadow text-blue-600 font-medium' : 'text-gray-600'}`}
+              >
+                {activeView === 'signals' ? '与我有关的信号' : '己方设备'}
+              </button>
+            )}
+            {activeView === 'devices' && (isAdmin || myProjectRole === '系统组') && (
               <button
                 onClick={() => setFilterMode('related')}
                 className={`px-3 py-1 rounded text-sm ${filterMode === 'related' ? 'bg-white shadow text-teal-600 font-medium' : 'text-gray-600'}`}
@@ -3329,12 +3490,14 @@ export default function ProjectDataView() {
                 对端设备
               </button>
             )}
-            <button
-              onClick={() => setFilterMode('my_tasks')}
-              className={`px-3 py-1 rounded text-sm ${filterMode === 'my_tasks' ? 'bg-white shadow text-orange-600 font-medium' : 'text-gray-600'}`}
-            >
-              我的任务
-            </button>
+            {myProjectRole !== '总体PMO组' && myProjectRole !== '其他组' && (
+              <button
+                onClick={() => setFilterMode('my_tasks')}
+                className={`px-3 py-1 rounded text-sm ${filterMode === 'my_tasks' ? 'bg-white shadow text-orange-600 font-medium' : 'text-gray-600'}`}
+              >
+                我的任务
+              </button>
+            )}
             {activeView === 'signals' && (
               <button
                 onClick={() => setFilterMode('networking')}
@@ -4805,29 +4968,44 @@ export default function ProjectDataView() {
                           <option value="双层屏蔽">双层屏蔽</option>
                         </select>
                       </div>
-                      {/* 信号方向 */}
-                      <div>
-                        <label className="block text-xs text-gray-500 mb-0.5">信号方向</label>
-                        <select
-                          value={ep.input === 1 && ep.output === 1 ? 'BI-DIR' : ep.input === 1 ? 'INPUT' : ep.output === 1 ? 'OUTPUT' : 'N/A'}
-                          onChange={e => {
-                            const val = e.target.value;
-                            const newEp = [...signalEndpoints];
-                            newEp[idx] = {
-                              ...newEp[idx],
-                              input: val === 'INPUT' || val === 'BI-DIR' ? 1 : 0,
-                              output: val === 'OUTPUT' || val === 'BI-DIR' ? 1 : 0,
-                            };
-                            setSignalEndpoints(newEp);
-                          }}
-                          className="w-full border border-gray-300 rounded px-2 py-1 text-xs"
-                        >
-                          <option value="N/A">N/A</option>
-                          <option value="INPUT">INPUT</option>
-                          <option value="OUTPUT">OUTPUT</option>
-                          <option value="BI-DIR">BI-DIR</option>
-                        </select>
-                      </div>
+                      {/* 连接关系（从第2个端点开始） */}
+                      {idx > 0 && (
+                        <>
+                          <div>
+                            <label className="block text-xs text-gray-500 mb-0.5">传输方向</label>
+                            <select
+                              value={(ep as any)._edgeDirection || 'N/A'}
+                              onChange={e => {
+                                const newEp = [...signalEndpoints];
+                                (newEp[idx] as any)._edgeDirection = e.target.value;
+                                setSignalEndpoints(newEp);
+                              }}
+                              className="w-full border border-gray-300 rounded px-2 py-1 text-xs"
+                            >
+                              <option value="N/A">N/A</option>
+                              <option value="INPUT">INPUT</option>
+                              <option value="OUTPUT">OUTPUT</option>
+                              <option value="BI-DIR">BI-DIR</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-500 mb-0.5">目标端点</label>
+                            <select
+                              value={(ep as any)._edgeTarget ?? 0}
+                              onChange={e => {
+                                const newEp = [...signalEndpoints];
+                                (newEp[idx] as any)._edgeTarget = parseInt(e.target.value);
+                                setSignalEndpoints(newEp);
+                              }}
+                              className="w-full border border-gray-300 rounded px-2 py-1 text-xs"
+                            >
+                              {signalEndpoints.map((other, oi) => oi !== idx ? (
+                                <option key={oi} value={oi}>端点{oi + 1}{other.设备编号 ? ` (${other.设备编号})` : ''}</option>
+                              ) : null)}
+                            </select>
+                          </div>
+                        </>
+                      )}
                       {/* 信号名称 */}
                       <div className="col-span-5">
                         <label className="block text-xs text-gray-500 mb-0.5">端点信号名称</label>

@@ -213,6 +213,53 @@ async function revalidateDevice(db: Database, deviceId: number, projectId: numbe
   await db.run(`UPDATE devices SET validation_errors = ? WHERE id = ?`, [JSON.stringify(veErrors), deviceId]);
 }
 
+/**
+ * 当设备 LIN 号变更时，自动重命名该设备下所有连接器的前缀。
+ * 返回被重命名的连接器列表 [{ id, old, new }]。
+ */
+export async function renameConnectorsForLINChange(
+  db: Database, deviceId: number, oldLIN: string, newLIN: string
+): Promise<Array<{ id: number; old: string; new: string }>> {
+  if (!oldLIN || !newLIN || oldLIN === newLIN) return [];
+  const connectors: any[] = await db.query(
+    `SELECT id, "设备端元器件编号" FROM connectors WHERE device_id = ?`, [deviceId]
+  );
+  const renamed: Array<{ id: number; old: string; new: string }> = [];
+  for (const c of connectors) {
+    const compId = c['设备端元器件编号'] || '';
+    if (compId.startsWith(oldLIN + '-')) {
+      const newCompId = newLIN + compId.slice(oldLIN.length);
+      await db.run(
+        `UPDATE connectors SET "设备端元器件编号" = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+        [newCompId, c.id]
+      );
+      renamed.push({ id: c.id, old: compId, new: newCompId });
+    }
+  }
+  return renamed;
+}
+
+/** 获取实体描述文本，用于通知消息 */
+export async function getEntityDescription(db: Database, entityType: string, entityId: number): Promise<string> {
+  if (entityType === 'device') {
+    const d = await db.get('SELECT "设备编号", "设备中文名称" FROM devices WHERE id = ?', [entityId]);
+    return d ? `设备「${d['设备编号']}${d['设备中文名称'] ? '（' + d['设备中文名称'] + '）' : ''}」` : `设备#${entityId}`;
+  }
+  if (entityType === 'connector') {
+    const c = await db.get('SELECT c."设备端元器件编号", d."设备编号" FROM connectors c JOIN devices d ON c.device_id = d.id WHERE c.id = ?', [entityId]);
+    return c ? `连接器「${c['设备端元器件编号']}」（设备 ${c['设备编号']}）` : `连接器#${entityId}`;
+  }
+  if (entityType === 'pin') {
+    const p = await db.get('SELECT p."针孔号", c."设备端元器件编号", d."设备编号" FROM pins p JOIN connectors c ON p.connector_id = c.id JOIN devices d ON c.device_id = d.id WHERE p.id = ?', [entityId]);
+    return p ? `针孔「${p['设备端元器件编号']}-${p['针孔号']}」（设备 ${p['设备编号']}）` : `针孔#${entityId}`;
+  }
+  if (entityType === 'signal') {
+    const s = await db.get('SELECT unique_id FROM signals WHERE id = ?', [entityId]);
+    return s ? `信号「${s.unique_id || '#' + entityId}」` : `信号#${entityId}`;
+  }
+  return `${entityType}#${entityId}`;
+}
+
 // ── 审批请求 ──────────────────────────────────────────────────────────────────
 
 export interface ApprovalItemSpec {
@@ -284,18 +331,19 @@ export async function submitChangeRequest(db: Database, params: SubmitChangeRequ
   };
   const label = actionLabels[actionType] || actionType;
 
-  // 查询项目名称
+  // 查询项目名称和实体描述
   const project = await db.get('SELECT name FROM projects WHERE id = ?', [projectId]);
   const projectName = project?.name || `项目#${projectId}`;
+  const entityDesc = await getEntityDescription(db, entityType, entityId);
 
   for (const item of notifyItems) {
     const type = item.item_type === 'completion' ? 'completion_request' : 'approval_request';
     const title = item.item_type === 'completion'
-      ? `待完善：[${projectName}] ${label}`
+      ? `待审批：[${projectName}] ${label}`
       : `待审批：[${projectName}] ${label}`;
     const message = item.item_type === 'completion'
-      ? `用户 ${requesterUsername} 在项目「${projectName}」中提交了「${label}」请求，需要您补全相关字段。`
-      : `用户 ${requesterUsername} 在项目「${projectName}」中提交了「${label}」请求，请进行审批。`;
+      ? `用户 ${requesterUsername} 在项目「${projectName}」中提交了${entityDesc}的「${label}」请求，需要您审批。`
+      : `用户 ${requesterUsername} 在项目「${projectName}」中提交了${entityDesc}的「${label}」请求，请进行审批。`;
     await db.run(
       `INSERT INTO notifications (recipient_username, type, title, message) VALUES (?, ?, ?, ?)`,
       [item.recipient_username, type, title, message]
@@ -339,10 +387,11 @@ export async function checkAndAdvancePhase(db: Database, approvalRequestId: numb
     const label = actionLabels[req.action_type] || req.action_type;
     const proj = await db.get('SELECT name FROM projects WHERE id = ?', [req.project_id]);
     const projName = proj?.name || `项目#${req.project_id}`;
+    const entDesc = await getEntityDescription(db, req.entity_type, req.entity_id);
     for (const item of approvalItems) {
       await db.run(
         `INSERT INTO notifications (recipient_username, type, title, message) VALUES (?, 'approval_request', ?, ?)`,
-        [item.recipient_username, `待审批：[${projName}] ${label}`, `项目「${projName}」中完善阶段已完成，请对「${label}」进行审批。`]
+        [item.recipient_username, `待审批：[${projName}] ${label}`, `项目「${projName}」中${entDesc}的「${label}」请求已完成阶段一审批，请进行审批。`]
       );
     }
     // 继续检查approval阶段
@@ -425,6 +474,11 @@ export async function checkAndAdvancePhase(db: Database, approvalRequestId: numb
         // 编辑操作：将 payload 中的新值应用到实体
         const newFields = (() => { try { return JSON.parse(req.payload); } catch { return {}; } })();
         const oldFields = (() => { try { return JSON.parse(req.old_payload); } catch { return {}; } })();
+
+        // 提取连接器重命名信息（非DB列，审批通过时执行）
+        const connRenames = newFields._connector_renames;
+        delete newFields._connector_renames;
+
         if (Object.keys(newFields).length > 0) {
           const setClauses = Object.keys(newFields).map(k => `"${k}" = ?`).join(', ');
           await db.run(
@@ -434,29 +488,49 @@ export async function checkAndAdvancePhase(db: Database, approvalRequestId: numb
         } else {
           await db.run(`UPDATE ${entityTable} SET status = 'normal' WHERE id = ?`, [req.entity_id]);
         }
-        // 设备审批通过后重新校验
+        // 设备审批通过后重新校验 + LIN号变更连接器重命名
         if (req.entity_type === 'device') {
+          // LIN 号变更 → 执行连接器前缀重命名
+          const oldLIN = String(oldFields['设备LIN号（DOORS）'] || '').trim();
+          const newLIN = String(newFields['设备LIN号（DOORS）'] ?? '').trim();
+          if (oldLIN && newLIN && oldLIN !== newLIN) {
+            const renames = await renameConnectorsForLINChange(db, req.entity_id, oldLIN, newLIN);
+            if (renames.length > 0) {
+              await db.run(
+                `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, new_values, reason, status)
+                 VALUES ('devices', ?, ?, 'devices', ?, ?, ?, 'approved')`,
+                [req.entity_id, req.entity_id, req.requester_id,
+                 JSON.stringify({ connector_renames: renames }),
+                 `审批通过：设备LIN号变更(${oldLIN}→${newLIN})，自动重命名 ${renames.length} 个连接器前缀`]
+              );
+            }
+          }
           await revalidateDevice(db, req.entity_id, req.project_id);
           // 设备负责人变更通知
-          const oldOwner = oldFields['设备负责人'] || null;
+          // newFields 是用户提交的修改字段，oldFields 是提交前的完整设备对象
           const newOwner = newFields['设备负责人'] || null;
+          // 从数据库重新读取当前设备负责人（因为审批通过时已经 apply 了新值，所以需要用 oldFields）
+          const oldOwner = oldFields['设备负责人'] || null;
           if (newOwner && oldOwner !== newOwner) {
-            const deviceRow = await db.get('SELECT "设备编号" FROM devices WHERE id = ?', [req.entity_id]);
+            const deviceRow = await db.get('SELECT "设备编号", "设备中文名称" FROM devices WHERE id = ?', [req.entity_id]);
             const devLabel = deviceRow?.['设备编号'] || `设备#${req.entity_id}`;
+            const devName = deviceRow?.['设备中文名称'] ? `（${deviceRow['设备中文名称']}）` : '';
             const proj = await db.get('SELECT name FROM projects WHERE id = ?', [req.project_id]);
             const projName = proj?.name || '';
             if (oldOwner) {
               await db.run(
                 `INSERT INTO notifications (recipient_username, type, title, message) VALUES (?, 'device_owner_changed', ?, ?)`,
                 [oldOwner, `[${projName}] 设备负责人变更`,
-                 `设备「${devLabel}」不再由您负责，已被 ${req.requester_username} 变更为 ${newOwner} 负责。`]
+                 `设备「${devLabel}」${devName}不再由您负责，已被 ${req.requester_username} 变更为 ${newOwner} 负责。`]
               );
             }
-            await db.run(
-              `INSERT INTO notifications (recipient_username, type, title, message) VALUES (?, 'device_owner_changed', ?, ?)`,
-              [newOwner, `[${projName}] 设备负责人变更`,
-               `设备「${devLabel}」已被 ${req.requester_username} 指定由您负责${oldOwner ? `（原负责人为 ${oldOwner}）` : ''}。`]
-            );
+            if (newOwner !== req.requester_username) {
+              await db.run(
+                `INSERT INTO notifications (recipient_username, type, title, message) VALUES (?, 'device_owner_changed', ?, ?)`,
+                [newOwner, `[${projName}] 设备负责人变更`,
+                 `设备「${devLabel}」${devName}已被 ${req.requester_username} 变更为由您负责${oldOwner ? `（原负责人：${oldOwner}）` : ''}。`]
+              );
+            }
           }
         }
       } else {
@@ -487,8 +561,27 @@ export async function checkAndAdvancePhase(db: Database, approvalRequestId: numb
     request_device_management: '申请设备管理',
   };
   const label2 = actionLabels2[req.action_type] || req.action_type;
+  const entDesc2 = await getEntityDescription(db, req.entity_type, req.entity_id);
+
+  // 删除操作：从 payload 中读取级联影响信息
+  let cascadeInfo = '';
+  if (req.action_type.startsWith('delete_')) {
+    try {
+      const payload = JSON.parse(req.payload || '{}');
+      const impact = payload._deleteImpact;
+      if (impact) {
+        const parts: string[] = [];
+        if (impact.connectors?.length > 0) parts.push(`${impact.connectors.length} 个连接器`);
+        if (impact.pins?.length > 0) parts.push(`${impact.pins.length} 个针孔`);
+        if (impact.signalsDeleted?.length > 0) parts.push(`整体删除 ${impact.signalsDeleted.length} 条信号（${impact.signalsDeleted.slice(0, 3).map((s: any) => s.unique_id || '#' + s.id).join('、')}${impact.signalsDeleted.length > 3 ? '...' : ''}）`);
+        if (impact.signalsModified?.length > 0) parts.push(`${impact.signalsModified.length} 条信号移除端点`);
+        if (parts.length > 0) cascadeInfo = `\n级联影响：${parts.join('，')}`;
+      }
+    } catch {}
+  }
+
   await db.run(
     `INSERT INTO notifications (recipient_username, type, title, message) VALUES (?, 'approval_approved', ?, ?)`,
-    [req.requester_username, `审批通过：${label2}`, `您提交的「${label2}」请求已获所有审批人通过，记录已生效。`]
+    [req.requester_username, `审批通过：${label2} — ${entDesc2}`, `您提交的${entDesc2}的「${label2}」请求已审批通过，记录已生效。${cascadeInfo}`]
   );
 }
