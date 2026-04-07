@@ -460,21 +460,31 @@ export default function UserManagement() {
         {/* 添加/编辑用户对话框 */}
         {showModal && (
           <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full p-6">
-              <div className="flex justify-between items-center mb-4">
+            <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] flex flex-col">
+              <div className="flex justify-between items-center px-6 pt-6 pb-4 shrink-0">
                 <h3 className="text-xl font-bold">
                   {editingUser ? '编辑用户' : '添加用户'}
                 </h3>
-                <button
-                  onClick={handleCloseModal}
-                  className="text-gray-500 hover:text-gray-700"
-                >
-                  ✕
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleCloseModal}
+                    className="px-4 py-1.5 border border-gray-300 rounded-lg text-sm hover:bg-gray-50"
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="submit"
+                    form="user-form"
+                    className="px-4 py-1.5 bg-blue-500 text-white rounded-lg text-sm hover:bg-blue-600"
+                  >
+                    {editingUser ? '更新' : '创建'}
+                  </button>
+                </div>
               </div>
 
-              <form onSubmit={handleSubmit}>
-                <div className="space-y-4">
+              <form id="user-form" onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
+                <div className="space-y-4 flex-1 overflow-y-auto px-6">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">用户名（EID）</label>
                     <input
@@ -698,21 +708,7 @@ export default function UserManagement() {
                   )}
                 </div>
 
-                <div className="flex space-x-3 mt-6">
-                  <button
-                    type="button"
-                    onClick={handleCloseModal}
-                    className="flex-1 border border-gray-300 rounded-lg px-4 py-2 hover:bg-gray-50"
-                  >
-                    取消
-                  </button>
-                  <button
-                    type="submit"
-                    className="flex-1 bg-blue-500 text-white rounded-lg px-4 py-2 hover:bg-blue-600"
-                  >
-                    {editingUser ? '更新' : '创建'}
-                  </button>
-                </div>
+                {/* 按钮已移至右上角 */}
               </form>
             </div>
           </div>
