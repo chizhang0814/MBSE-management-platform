@@ -1229,6 +1229,204 @@ export function signalRoutes(db: Database) {
   // 连接类型 → 线类型 映射
   const POWER_CONN_TYPES = new Set(['电源（低压）', '电源（高压）']);
 
+  // ── 智能分组推断函数 ─────────────────────────────────────
+
+  function inferConnType(sigNames: string[]): string | null {
+    const all = sigNames.join(' ').toUpperCase();
+    if (/\bA429\b|(?<!\w)429(?!\d)/.test(all) && !/RS429/.test(all)) return 'ARINC 429';
+    if (/CAN[_\s]?H|CAN[_\s]?L|CANH|CANL|CAN\d?_GND|CAN\d?_H|CAN\d?_L/.test(all)) return 'CAN Bus';
+    if (/RS[-_]?422|(?<!\w)422_/.test(all) && /_(HI|LO|POSITIVE|NEGATIVE|SIGNALGND|A\b|B\b)/i.test(all)) return 'RS-422';
+    if (/RS[-_]?485|(?<!\w)485_/.test(all)) return 'RS-485';
+    if (/RS[-_]?232|(?<!\w)232_/.test(all) && /_(TX|RX)\b/.test(all)) return 'RS-232';
+    if (/\bETH/.test(all) && /_(TH|TL|RH|RL|0P|0N|1P|1N|2P|2N|3P|3N)\b/.test(all)) return '以太网';
+    if (/270V|115VAC/.test(all)) return '电源（高压）';
+    if (/28V|\+28VDC/.test(all) && /_(PWR|RTN|POWER|RETURN)\b|[+-]$/.test(all)) return '电源（低压）';
+    return null;
+  }
+
+  function inferProtocol(connType: string, sigNames: string[]): string | null {
+    for (const sigName of sigNames) {
+      const n = sigName.toUpperCase().trim();
+      let result: string | null = null;
+      if (connType === 'ARINC 429') {
+        if (/[+]$|_P\b|_P\d|_HI_|_HI\b|_RH\b|_POSITIVE|DATA\s*\+|CH\d?\s*A\b|\bA\s*$/.test(n)) result = 'A429_Positive';
+        else if (/[-]$|_N\b|_N\d|_LO_|_LO\b|_RL\b|_NEGATIVE|DATA\s*-|CH\d?\s*B\b|\bB\s*$/.test(n)) result = 'A429_Negative';
+      } else if (connType === 'CAN Bus') {
+        if (/_H\b|_CANH|CAN\d?_H|CAN\s+HIGH/.test(n)) result = 'CAN_High';
+        else if (/_L\b|_CANL|CAN\d?_L|CAN\s+LOW/.test(n)) result = 'CAN_Low';
+        else if (/_GND|CAN\d?_GND/.test(n)) result = 'CAN_Gnd';
+      } else if (connType === 'RS-422') {
+        if (/_HI_|_HI\b|_A\b|_POSITIVE/.test(n)) result = 'RS-422_A';
+        else if (/_LO_|_LO\b|_B\b|_NEGATIVE/.test(n)) result = 'RS-422_B';
+        else if (/_GND|_SIGNALGND/.test(n)) result = 'RS-422_Gnd';
+      } else if (connType === 'RS-485') {
+        if (/_A\b|_A\d/.test(n)) result = 'RS-485_A';
+        else if (/_B\b|_B\d/.test(n)) result = 'RS-485_B';
+        else if (/_GND/.test(n)) result = 'RS-485_Gnd';
+      } else if (connType === '电源（高压）') {
+        if (/_POS\b|_P\b|[+]$|_L\b|火线|正极/.test(n)) result = '电源（高压）正极';
+        else if (/_NEG\b|_N\b|[-]$|_RETURN|零线|负极|地线/.test(n)) result = '电源（高压）负极';
+      } else if (connType === '电源（低压）') {
+        if (/[+]$|_PWR\b|_POWER\b|_P\b|_POS\b|正极|火线/.test(n)) result = '电源（低压）正极';
+        else if (/[-]$|_RTN\b|_RETURN\b|_N\b|_NEG\b|_GND\b|负极|零线|地线/.test(n)) result = '电源（低压）负极';
+      }
+      if (result) return result;
+    }
+    return null;
+  }
+
+  function inferLineType(connType: string): string {
+    return POWER_CONN_TYPES.has(connType) ? '功率线' : '信号线';
+  }
+
+  function extractStem(name: string): string {
+    return name.toUpperCase()
+      .replace(/[_\s]*(CAN[_\s]?GND|CAN[_\s]?HIGH|CAN[_\s]?LOW|CANH|CANL|CAN\d?_H|CAN\d?_L|CAN\d?_GND)$/i, '')
+      .replace(/[_\s]*(POSITIVE|NEGATIVE|HIGH|LOW|HI|LO|GND|SIGNALGND\d*|_H|_L|_A|_B|[+-])$/i, '')
+      .replace(/(正极|负极|火线|零线|地线|屏蔽|正|负)$/, '')
+      .replace(/[_\s]+$/, '');
+  }
+
+  // ── POST /api/signals/group/auto — 智能分组 ──────────────
+  router.post('/group/auto', authenticate, async (req: AuthRequest, res) => {
+    try {
+      const { project_id } = req.body;
+      if (!project_id) return res.status(400).json({ error: '缺少 project_id' });
+
+      // 查询所有信号及端点
+      const epRows: any[] = await db.query(`
+        SELECT s.id as sig_id, s.unique_id, s."连接类型" as conn_type, s."协议标识" as proto,
+               s."线类型" as line_type, s.signal_group,
+               se."信号名称" as sig_name,
+               c.id as cid, c."设备端元器件编号" as conn_comp
+        FROM signals s
+        JOIN signal_endpoints se ON se.signal_id = s.id
+        LEFT JOIN pins p ON se.pin_id = p.id
+        LEFT JOIN connectors c ON p.connector_id = c.id
+        WHERE s.project_id = ? AND c.id IS NOT NULL
+        ORDER BY c."设备端元器件编号"
+      `, [project_id]);
+
+      // 按信号 ID 聚合所有端点名称
+      const sigNamesMap: Record<number, string[]> = {};
+      for (const ep of epRows) {
+        if (!sigNamesMap[ep.sig_id]) sigNamesMap[ep.sig_id] = [];
+        if (ep.sig_name) sigNamesMap[ep.sig_id].push(ep.sig_name);
+      }
+
+      // 推断每条信号的连接类型和协议标识
+      const inferredMap: Record<number, { conn_type: string; proto: string; line_type: string }> = {};
+      const sigMeta: Record<number, { conn_type: string; proto: string; unique_id: string; signal_group: string | null }> = {};
+
+      for (const ep of epRows) {
+        if (sigMeta[ep.sig_id]) continue;
+        const names = sigNamesMap[ep.sig_id] || [];
+        const ct = ep.conn_type || inferConnType(names);
+        const proto = ep.proto || (ct ? inferProtocol(ct, names) : null);
+        if (ct && proto) {
+          inferredMap[ep.sig_id] = { conn_type: ct, proto, line_type: inferLineType(ct) };
+        }
+        sigMeta[ep.sig_id] = { conn_type: ct || '', proto: proto || '', unique_id: ep.unique_id, signal_group: ep.signal_group };
+      }
+
+      // 按连接器+连接类型分桶
+      const buckets: Record<string, Array<{ sig_id: number; conn_type: string; proto: string; sig_name: string; conn_comp: string }>> = {};
+      for (const ep of epRows) {
+        const inf = inferredMap[ep.sig_id];
+        if (!inf) continue;
+        if (sigMeta[ep.sig_id]?.signal_group) continue; // 已分组跳过
+        const key = ep.conn_comp + '|' + inf.conn_type;
+        if (!buckets[key]) buckets[key] = [];
+        buckets[key].push({ sig_id: ep.sig_id, conn_type: inf.conn_type, proto: inf.proto, sig_name: ep.sig_name || '', conn_comp: ep.conn_comp });
+      }
+
+      // 找高置信度候选组（同连接器+名称共干+协议互补）
+      let groupsCreated = 0;
+      let signalsUpdated = 0;
+      const details: Array<{ group_name: string; conn_type: string; signals: string[] }> = [];
+
+      for (const [key, eps] of Object.entries(buckets)) {
+        const ct = key.split('|')[1];
+        const def = SIGNAL_GROUP_DEFS[ct];
+        if (!def) continue;
+
+        // 去重（同一信号多端点在同一连接器）
+        const sigMap: Record<number, typeof eps[0]> = {};
+        for (const ep of eps) {
+          if (!sigMap[ep.sig_id]) sigMap[ep.sig_id] = ep;
+        }
+        const uniqueSigs = Object.values(sigMap);
+        if (uniqueSigs.length < def.count) continue;
+
+        // 按共干分子组
+        const byStem: Record<string, typeof uniqueSigs> = {};
+        for (const sig of uniqueSigs) {
+          const stem = extractStem(sig.sig_name);
+          if (!byStem[stem]) byStem[stem] = [];
+          byStem[stem].push(sig);
+        }
+
+        for (const [stem, sigs] of Object.entries(byStem)) {
+          if (sigs.length !== def.count) continue;
+          const protos = sigs.map(s => s.proto);
+          const hasAll = def.protocols.every((p: string) => protos.includes(p));
+          if (!hasAll) continue;
+
+          // 高置信度！创建分组
+          // 生成编号
+          const existing = await db.query(
+            `SELECT signal_group FROM signals WHERE project_id = ? AND signal_group LIKE ?`,
+            [project_id, `${def.prefix}%`]
+          );
+          let maxNum = -1;
+          for (const row of existing) {
+            const num = parseInt(row.signal_group.slice(def.prefix.length));
+            if (!isNaN(num) && num > maxNum) maxNum = num;
+          }
+          const groupName = `${def.prefix}${maxNum + 1}`;
+
+          // 更新每条信号
+          for (const sig of sigs) {
+            const inf = inferredMap[sig.sig_id];
+            const updates: string[] = [];
+            const vals: any[] = [];
+
+            const meta = sigMeta[sig.sig_id];
+            if (!meta?.conn_type && inf.conn_type) { updates.push('"连接类型" = ?'); vals.push(inf.conn_type); }
+            if (!meta?.proto && inf.proto) { updates.push('"协议标识" = ?'); vals.push(inf.proto); }
+            if (inf.line_type) { updates.push('"线类型" = ?'); vals.push(inf.line_type); }
+            updates.push('signal_group = ?'); vals.push(groupName);
+
+            await db.run(
+              `UPDATE signals SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+              [...vals, sig.sig_id]
+            );
+            signalsUpdated++;
+            // 标记已分组，避免同一信号被多次分组
+            sigMeta[sig.sig_id] = { ...sigMeta[sig.sig_id]!, signal_group: groupName };
+          }
+
+          groupsCreated++;
+          details.push({
+            group_name: groupName,
+            conn_type: ct,
+            signals: sigs.map(s => `${sigMeta[s.sig_id]?.unique_id || s.sig_id} (${s.proto})`)
+          });
+        }
+      }
+
+      res.json({
+        success: true,
+        groups_created: groupsCreated,
+        signals_updated: signalsUpdated,
+        details,
+      });
+    } catch (error: any) {
+      console.error('智能分组失败:', error);
+      res.status(500).json({ error: error.message || '智能分组失败' });
+    }
+  });
+
   // ── POST /api/signals/group/blank — 创建空白分组 ─────────
   router.post('/group/blank', authenticate, async (req: AuthRequest, res) => {
     try {

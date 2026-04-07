@@ -2866,15 +2866,119 @@ export default function ProjectDataView() {
         </div>
       </div>
 
-      {/* 分组模式提示横条 */}
+      {/* 分组模式操作栏 */}
       {sgCheckMode && (
-        <div className="bg-indigo-50 border-b border-indigo-200 px-4 py-2 flex items-center justify-between shrink-0">
-          <span className="text-sm text-indigo-700">
-            <span className="font-semibold">分组模式</span> — 勾选未分组的信号，然后点击底部"创建信号组"
+        <div className="bg-indigo-50 border-b border-indigo-200 px-4 py-2 flex items-center gap-3 shrink-0">
+          {/* 左侧：状态 */}
+          <span className="text-sm text-indigo-700 shrink-0">
+            <span className="font-semibold">分组模式</span>
+            {sgCheckedIds.length > 0 && <span className="ml-1">· 已选 <span className="font-semibold">{sgCheckedIds.length}</span> 条</span>}
           </span>
+
+          <div className="w-px h-5 bg-indigo-200 shrink-0" />
+
+          {/* 中间左：创建空白分组 */}
+          <select
+            value={sgBlankType}
+            disabled={sgCheckedIds.length > 0}
+            onChange={e => setSgBlankType(e.target.value)}
+            className={`border rounded px-2 py-1 text-xs ${sgCheckedIds.length > 0 ? 'border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed' : 'border-indigo-300 bg-white'}`}
+          >
+            <option value="">选择组类型...</option>
+            {([
+              { type: 'ARINC 429', prefix: 'A_429_', bg: 'rgba(224,231,255,0.7)', text: '#4f46e5' },
+              { type: 'CAN Bus', prefix: 'CAN_Bus_', bg: 'rgba(254,243,199,0.7)', text: '#b45309' },
+              { type: '电源（低压）', prefix: 'PWR_LV_', bg: 'rgba(254,226,226,0.7)', text: '#dc2626' },
+              { type: '电源（高压）', prefix: 'PWR_HV_', bg: 'rgba(254,202,202,0.7)', text: '#991b1b' },
+              { type: 'RS-422', prefix: 'RS422_', bg: 'rgba(245,243,255,0.7)', text: '#6d28d9' },
+              { type: 'RS-422（全双工）', prefix: 'RS422_F_', bg: 'rgba(237,233,254,0.7)', text: '#7c3aed' },
+              { type: 'RS-485', prefix: 'RS485_', bg: 'rgba(204,251,241,0.7)', text: '#0f766e' },
+              { type: '以太网（百兆）', prefix: 'ETH100_', bg: 'rgba(220,252,231,0.7)', text: '#15803d' },
+              { type: '以太网（千兆）', prefix: 'ETH1000_', bg: 'rgba(224,242,254,0.7)', text: '#0369a1' },
+            ]).map(({ type, bg, text }) =>
+              <option key={type} value={type} style={{ backgroundColor: bg, color: text }}>{type}</option>
+            )}
+          </select>
+          <button
+            disabled={!sgBlankType || sgCreating || sgCheckedIds.length > 0}
+            onClick={async () => {
+              setSgCreating(true);
+              try {
+                const res = await fetch('/api/signals/group/blank', {
+                  method: 'POST',
+                  headers: { ...API_HEADERS(), 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ project_id: selectedProjectId, conn_type: sgBlankType }),
+                });
+                const data = await res.json();
+                if (res.ok) {
+                  alert(`空白分组「${data.group_name}」创建成功（${data.signal_ids.length}条Draft信号）`);
+                  setSgBlankType('');
+                  loadSignals();
+                } else { alert(data.error || '创建失败'); }
+              } catch { alert('操作失败'); }
+              finally { setSgCreating(false); }
+            }}
+            className={`px-2 py-1 rounded text-xs shrink-0 ${!sgBlankType || sgCheckedIds.length > 0 ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700'}`}
+          >创建空白分组</button>
+
+          {/* 中间右：已有信号建组（勾选后显示） */}
+          {sgCheckedIds.length > 0 && (
+            <>
+              <div className="w-px h-5 bg-indigo-200 shrink-0" />
+              <button
+                onClick={() => setSgCheckedIds([])}
+                className="px-2 py-1 border border-indigo-300 rounded text-xs text-indigo-700 hover:bg-indigo-100 shrink-0"
+              >取消选择</button>
+              <button
+                disabled={sgCreating}
+                onClick={async () => {
+                  setSgCreating(true);
+                  try {
+                    const res = await fetch('/api/signals/group', {
+                      method: 'POST',
+                      headers: { ...API_HEADERS(), 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ signal_ids: sgCheckedIds }),
+                    });
+                    const data = await res.json();
+                    if (res.ok) {
+                      alert(`信号组「${data.group_name}」创建成功`);
+                      setSgCheckedIds([]);
+                      loadSignals();
+                    } else { alert(data.error || '创建失败'); }
+                  } catch { alert('操作失败'); }
+                  finally { setSgCreating(false); }
+                }}
+                className="px-2 py-1 bg-indigo-600 text-white rounded text-xs hover:bg-indigo-700 disabled:bg-gray-400 shrink-0"
+              >{sgCreating ? '创建中...' : '已有信号建组'}</button>
+            </>
+          )}
+
+          {/* 右侧：智能分组 + 退出 */}
+          <div className="flex-1" />
+          <button
+            disabled={sgCreating}
+            onClick={async () => {
+              if (!confirm('将自动识别高置信度的信号分组（同连接器+名称共干+协议互补），并更新组内信号的连接类型/协议标识/线类型。\n\n是否继续？')) return;
+              setSgCreating(true);
+              try {
+                const res = await fetch('/api/signals/group/auto', {
+                  method: 'POST',
+                  headers: { ...API_HEADERS(), 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ project_id: selectedProjectId }),
+                });
+                const data = await res.json();
+                if (res.ok) {
+                  alert(`智能分组完成！\n\n创建 ${data.groups_created} 个分组\n更新 ${data.signals_updated} 条信号`);
+                  loadSignals();
+                } else { alert(data.error || '智能分组失败'); }
+              } catch { alert('操作失败'); }
+              finally { setSgCreating(false); }
+            }}
+            className="px-3 py-1 bg-amber-500 text-white rounded text-sm hover:bg-amber-600 disabled:bg-gray-400 shrink-0"
+          >{sgCreating ? '处理中...' : '智能分组'}</button>
           <button
             onClick={() => { setSgCheckMode(false); setSgCheckedIds([]); }}
-            className="px-3 py-1 border border-indigo-300 rounded text-sm text-indigo-700 hover:bg-indigo-100"
+            className="px-3 py-1 border border-indigo-300 rounded text-sm text-indigo-700 hover:bg-indigo-100 shrink-0"
           >退出分组模式</button>
         </div>
       )}
@@ -2977,13 +3081,13 @@ export default function ProjectDataView() {
         const hasMore = !isFiltering && reorderedSignals.length > signalDisplayCount;
         return (
         <div className="bg-white rounded-lg shadow">
-          <div className="px-4 py-1.5 text-xs text-gray-500 bg-gray-50 border-b">
+          <div className="px-4 py-1.5 text-xs text-gray-500 bg-gray-50 border-b sticky top-0 z-20">
             {isFiltering
               ? `显示 ${filteredSignals.length} / ${signals.length} 条信号`
               : `已载入 ${Math.min(signalDisplayCount, filteredSignals.length)} / ${signalTotal} 条信号`}
           </div>
           <table className="min-w-full text-sm">
-            <thead className="bg-gray-50 sticky top-0 z-10">
+            <thead className="bg-gray-50 sticky top-[29px] z-10">
               <tr>
                 <th className="px-2 py-2 text-left text-xs text-gray-500 w-8">#</th>
                 {sgCheckMode && <th className="px-1 py-2 text-center text-xs text-gray-500 w-8"></th>}
@@ -3619,106 +3723,7 @@ export default function ProjectDataView() {
         );
       })()}
 
-      {/* 信号分组底部操作栏 */}
-      {sgCheckMode && (
-        <div className="sticky bottom-0 bg-white border-t border-gray-200 shadow-lg px-4 py-3 flex items-center justify-between z-30">
-          <div className="flex items-center gap-3">
-            {sgCheckedIds.length > 0 && (
-              <span className="text-sm text-gray-600">已选择 <span className="font-semibold text-indigo-600">{sgCheckedIds.length}</span> 条信号</span>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            {/* 创建空白分组 */}
-            <select
-              value={sgBlankType}
-              disabled={sgCheckedIds.length > 0}
-              onChange={e => setSgBlankType(e.target.value)}
-              className={`border rounded px-2 py-1.5 text-sm min-w-[160px] ${sgCheckedIds.length > 0 ? 'border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed' : 'border-gray-300'}`}
-            >
-              <option value="">选择组类型...</option>
-              {([
-                { type: 'ARINC 429',      prefix: 'A_429_' },
-                { type: 'CAN Bus',        prefix: 'CAN_Bus_' },
-                { type: '电源（低压）',    prefix: 'PWR_LV_' },
-                { type: '电源（高压）',    prefix: 'PWR_HV_' },
-                { type: 'RS-422',         prefix: 'RS422_' },
-                { type: 'RS-422（全双工）', prefix: 'RS422_F_' },
-                { type: 'RS-485',         prefix: 'RS485_' },
-                { type: '以太网（百兆）',  prefix: 'ETH100_' },
-                { type: '以太网（千兆）',  prefix: 'ETH1000_' },
-              ] as const).map(({ type, prefix }) => {
-                const OPT_COLORS: Record<string, { bg: string; text: string }> = {
-                  'A_429_': { bg: 'rgba(224,231,255,0.7)', text: '#4f46e5' },
-                  'CAN_Bus_': { bg: 'rgba(254,243,199,0.7)', text: '#b45309' },
-                  'PWR_LV_': { bg: 'rgba(254,226,226,0.7)', text: '#dc2626' },
-                  'PWR_HV_': { bg: 'rgba(254,202,202,0.7)', text: '#991b1b' },
-                  'RS422_F_': { bg: 'rgba(237,233,254,0.7)', text: '#7c3aed' },
-                  'RS422_': { bg: 'rgba(245,243,255,0.7)', text: '#6d28d9' },
-                  'RS485_': { bg: 'rgba(204,251,241,0.7)', text: '#0f766e' },
-                  'ETH100_': { bg: 'rgba(220,252,231,0.7)', text: '#15803d' },
-                  'ETH1000_': { bg: 'rgba(224,242,254,0.7)', text: '#0369a1' },
-                };
-                const c = OPT_COLORS[prefix];
-                return <option key={type} value={type} style={c ? { backgroundColor: c.bg, color: c.text } : undefined}>{type}</option>;
-              })}
-            </select>
-            <button
-              disabled={!sgBlankType || sgCreating || sgCheckedIds.length > 0}
-              onClick={async () => {
-                setSgCreating(true);
-                try {
-                  const res = await fetch('/api/signals/group/blank', {
-                    method: 'POST',
-                    headers: { ...API_HEADERS(), 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ project_id: selectedProjectId, conn_type: sgBlankType }),
-                  });
-                  const data = await res.json();
-                  if (res.ok) {
-                    alert(`空白分组「${data.group_name}」创建成功（${data.signal_ids.length}条Draft信号）`);
-                    setSgBlankType('');
-                    loadSignals();
-                  } else { alert(data.error || '创建失败'); }
-                } catch { alert('操作失败'); }
-                finally { setSgCreating(false); }
-              }}
-              className="px-3 py-1.5 bg-green-600 text-white rounded text-sm hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed whitespace-nowrap"
-            >{sgCreating ? '创建中...' : '创建空白分组'}</button>
-
-            <div className="w-px h-6 bg-gray-300 mx-1" />
-
-            {/* 已有信号建组 */}
-            {sgCheckedIds.length > 0 && (
-              <>
-                <button
-                  onClick={() => setSgCheckedIds([])}
-                  className="px-3 py-1.5 border border-gray-300 rounded text-sm text-gray-600 hover:bg-gray-50"
-                >取消选择</button>
-                <button
-                  disabled={sgCreating}
-                  onClick={async () => {
-                    setSgCreating(true);
-                    try {
-                      const res = await fetch('/api/signals/group', {
-                        method: 'POST',
-                        headers: { ...API_HEADERS(), 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ signal_ids: sgCheckedIds }),
-                      });
-                      const data = await res.json();
-                      if (res.ok) {
-                        alert(`信号组「${data.group_name}」创建成功`);
-                        setSgCheckedIds([]);
-                        loadSignals();
-                      } else { alert(data.error || '创建失败'); }
-                    } catch { alert('操作失败'); }
-                    finally { setSgCreating(false); }
-                  }}
-                  className="px-4 py-1.5 bg-indigo-600 text-white rounded text-sm hover:bg-indigo-700 disabled:bg-gray-400 whitespace-nowrap"
-                >{sgCreating ? '创建中...' : '已有信号建组'}</button>
-              </>
-            )}
-          </div>
-        </div>
-      )}
+      {/* 底部操作栏已合并到顶部分组模式操作栏 */}
 
       </div>
     </div>
