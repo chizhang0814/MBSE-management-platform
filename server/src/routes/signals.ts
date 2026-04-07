@@ -1214,16 +1214,18 @@ export function signalRoutes(db: Database) {
   });
 
   // ── 信号分组定义 ─────────────────────────────────────────
-  const SIGNAL_GROUP_DEFS: Record<string, { prefix: string; count: number; protocols: string[] }> = {
+  // required: 必须包含的协议标识, optional: 可选的协议标识
+  // count: 固定数量（required + optional 全部），minCount: 最少数量（仅 required）
+  const SIGNAL_GROUP_DEFS: Record<string, { prefix: string; count: number; protocols: string[]; required?: string[]; optional?: string[] }> = {
     'ARINC 429':      { prefix: 'A_429_',    count: 2, protocols: ['A429_Positive', 'A429_Negative'] },
     'CAN Bus':        { prefix: 'CAN_Bus_',  count: 3, protocols: ['CAN_High', 'CAN_Low', 'CAN_Gnd'] },
     '电源（低压）':    { prefix: 'PWR_LV_',   count: 2, protocols: ['电源（低压）正极', '电源（低压）负极'] },
     '电源（高压）':    { prefix: 'PWR_HV_',   count: 2, protocols: ['电源（高压）正极', '电源（高压）负极'] },
-    'RS-422':         { prefix: 'RS422_',    count: 3, protocols: ['RS-422_A', 'RS-422_B', 'RS-422_Gnd'] },
-    'RS-422（全双工）': { prefix: 'RS422_F_',  count: 5, protocols: ['RS-422_TX_A', 'RS-422_TX_B', 'RS-422_RX_A', 'RS-422_RX_B', 'RS-422_Gnd'] },
-    'RS-485':         { prefix: 'RS485_',    count: 3, protocols: ['RS-485_A', 'RS-485_B', 'RS-485_Gnd'] },
-    '以太网（百兆）':  { prefix: 'ETH100_',   count: 5, protocols: ['ETH_TX+', 'ETH_TX-', 'ETH_RX+', 'ETH_RX-', 'ETH_Gnd'] },
-    '以太网（千兆）':  { prefix: 'ETH1000_',  count: 9, protocols: ['ETH_A+', 'ETH_A-', 'ETH_B+', 'ETH_B-', 'ETH_C+', 'ETH_C-', 'ETH_D+', 'ETH_D-', 'ETH_Gnd'] },
+    'RS-422':         { prefix: 'RS422_',    count: 3, protocols: ['RS-422_A', 'RS-422_B', 'RS-422_Gnd'], required: ['RS-422_A', 'RS-422_B'], optional: ['RS-422_Gnd'] },
+    'RS-422（全双工）': { prefix: 'RS422_F_',  count: 5, protocols: ['RS-422_TX_A', 'RS-422_TX_B', 'RS-422_RX_A', 'RS-422_RX_B', 'RS-422_Gnd'], required: ['RS-422_TX_A', 'RS-422_TX_B', 'RS-422_RX_A', 'RS-422_RX_B'], optional: ['RS-422_Gnd'] },
+    'RS-485':         { prefix: 'RS485_',    count: 3, protocols: ['RS-485_A', 'RS-485_B', 'RS-485_Gnd'], required: ['RS-485_A', 'RS-485_B'], optional: ['RS-485_Gnd'] },
+    '以太网（百兆）':  { prefix: 'ETH100_',   count: 5, protocols: ['ETH_TX+', 'ETH_TX-', 'ETH_RX+', 'ETH_RX-', 'ETH_Gnd'], required: ['ETH_TX+', 'ETH_TX-', 'ETH_RX+', 'ETH_RX-'], optional: ['ETH_Gnd'] },
+    '以太网（千兆）':  { prefix: 'ETH1000_',  count: 9, protocols: ['ETH_A+', 'ETH_A-', 'ETH_B+', 'ETH_B-', 'ETH_C+', 'ETH_C-', 'ETH_D+', 'ETH_D-', 'ETH_Gnd'], required: ['ETH_A+', 'ETH_A-', 'ETH_B+', 'ETH_B-', 'ETH_C+', 'ETH_C-', 'ETH_D+', 'ETH_D-'], optional: ['ETH_Gnd'] },
   };
 
   // 连接类型 → 线类型 映射
@@ -1233,9 +1235,9 @@ export function signalRoutes(db: Database) {
 
   function inferConnType(sigNames: string[]): string | null {
     const all = sigNames.join(' ').toUpperCase();
-    if (/\bA429\b|(?<!\w)429(?!\d)/.test(all) && !/RS429/.test(all)) return 'ARINC 429';
+    if (/A429|ARINC\s*429|(?<!\w)429(?!\d)/.test(all) && !/RS429/.test(all)) return 'ARINC 429';
     if (/CAN[_\s]?H|CAN[_\s]?L|CANH|CANL|CAN\d?_GND|CAN\d?_H|CAN\d?_L/.test(all)) return 'CAN Bus';
-    if (/RS[-_]?422|(?<!\w)422_/.test(all) && /_(HI|LO|POSITIVE|NEGATIVE|SIGNALGND|A\b|B\b)/i.test(all)) return 'RS-422';
+    if (/RS[-_]?422|(?<!\w)422_/.test(all) && /_(HI|LO|POSITIVE|NEGATIVE|SIGNALGND|A\b|B\b)|TX[+-]|RX[+-]/i.test(all)) return 'RS-422';
     if (/RS[-_]?485|(?<!\w)485_/.test(all)) return 'RS-485';
     if (/RS[-_]?232|(?<!\w)232_/.test(all) && /_(TX|RX)\b/.test(all)) return 'RS-232';
     if (/\bETH/.test(all) && /_(TH|TL|RH|RL|0P|0N|1P|1N|2P|2N|3P|3N)\b/.test(all)) return '以太网';
@@ -1249,15 +1251,15 @@ export function signalRoutes(db: Database) {
       const n = sigName.toUpperCase().trim();
       let result: string | null = null;
       if (connType === 'ARINC 429') {
-        if (/[+]$|_P\b|_P\d|_HI_|_HI\b|_RH\b|_POSITIVE|DATA\s*\+|CH\d?\s*A\b|\bA\s*$/.test(n)) result = 'A429_Positive';
-        else if (/[-]$|_N\b|_N\d|_LO_|_LO\b|_RL\b|_NEGATIVE|DATA\s*-|CH\d?\s*B\b|\bB\s*$/.test(n)) result = 'A429_Negative';
+        if (/[+]$|_P\b|_P\d|_HI_|_HI\b|_RH\b|_H\b|_POSITIVE|DATA\s*\+|CH\d?\s*A\b|[_\s]A$|_\d+A$|[_\s]\d+A$/.test(n)) result = 'A429_Positive';
+        else if (/[-]$|_N\b|_N\d|_LO_|_LO\b|_RL\b|_L\b|_NEGATIVE|DATA\s*-|CH\d?\s*B\b|[_\s]B$|_\d+B$|[_\s]\d+B$/.test(n)) result = 'A429_Negative';
       } else if (connType === 'CAN Bus') {
         if (/_H\b|_CANH|CAN\d?_H|CAN\s+HIGH/.test(n)) result = 'CAN_High';
         else if (/_L\b|_CANL|CAN\d?_L|CAN\s+LOW/.test(n)) result = 'CAN_Low';
         else if (/_GND|CAN\d?_GND/.test(n)) result = 'CAN_Gnd';
       } else if (connType === 'RS-422') {
-        if (/_HI_|_HI\b|_A\b|_POSITIVE/.test(n)) result = 'RS-422_A';
-        else if (/_LO_|_LO\b|_B\b|_NEGATIVE/.test(n)) result = 'RS-422_B';
+        if (/_HI_|_HI\b|_A\b|_POSITIVE|[+]$/.test(n)) result = 'RS-422_A';
+        else if (/_LO_|_LO\b|_B\b|_NEGATIVE|[-]$/.test(n)) result = 'RS-422_B';
         else if (/_GND|_SIGNALGND/.test(n)) result = 'RS-422_Gnd';
       } else if (connType === 'RS-485') {
         if (/_A\b|_A\d/.test(n)) result = 'RS-485_A';
@@ -1282,7 +1284,9 @@ export function signalRoutes(db: Database) {
   function extractStem(name: string): string {
     return name.toUpperCase()
       .replace(/[_\s]*(CAN[_\s]?GND|CAN[_\s]?HIGH|CAN[_\s]?LOW|CANH|CANL|CAN\d?_H|CAN\d?_L|CAN\d?_GND)$/i, '')
-      .replace(/[_\s]*(POSITIVE|NEGATIVE|HIGH|LOW|HI|LO|GND|SIGNALGND\d*|_H|_L|_A|_B|[+-])$/i, '')
+      .replace(/[_\s]*(POSITIVE|NEGATIVE|HIGH|LOW|HI|LO|GND|SIGNALGND\d*|[+-])$/i, '')
+      .replace(/[_\s]+\d*[ABHL]$/i, '')  // 空格或下划线 + 可选数字 + 单字母 A/B/H/L 结尾（如 _1A, _1B）
+      .replace(/[_\s](HI|LO)[_\s].*$/i, '')  // _HI_xxx / _LO_xxx 中间位置（如 _HI_GNSS → 去掉 _HI 及后面）
       .replace(/(正极|负极|火线|零线|地线|屏蔽|正|负)$/, '')
       .replace(/[_\s]+$/, '');
   }
@@ -1356,7 +1360,11 @@ export function signalRoutes(db: Database) {
           if (!sigMap[ep.sig_id]) sigMap[ep.sig_id] = ep;
         }
         const uniqueSigs = Object.values(sigMap);
-        if (uniqueSigs.length < def.count) continue;
+        const autoRequired = def.required || def.protocols;
+        const autoAll = def.protocols;
+        const autoMinCount = autoRequired.length;
+        const autoMaxCount = autoAll.length;
+        if (uniqueSigs.length < autoMinCount) continue;
 
         // 按共干分子组
         const byStem: Record<string, typeof uniqueSigs> = {};
@@ -1367,10 +1375,11 @@ export function signalRoutes(db: Database) {
         }
 
         for (const [stem, sigs] of Object.entries(byStem)) {
-          if (sigs.length !== def.count) continue;
+          if (sigs.length < autoMinCount || sigs.length > autoMaxCount) continue;
           const protos = sigs.map(s => s.proto);
-          const hasAll = def.protocols.every((p: string) => protos.includes(p));
-          if (!hasAll) continue;
+          const hasAllRequired = autoRequired.every((p: string) => protos.includes(p));
+          const noExtra = protos.every((p: string) => autoAll.includes(p));
+          if (!hasAllRequired || !noExtra) continue;
 
           // 高置信度！创建分组
           // 生成编号
@@ -1512,18 +1521,22 @@ export function signalRoutes(db: Database) {
         return res.status(400).json({ error: `连接类型"${connType}"不支持信号分组` });
       }
 
-      // 检查：信号数量
-      if (signals.length !== groupDef.count) {
-        return res.status(400).json({ error: `${connType} 组需要恰好 ${groupDef.count} 条信号，当前选择了 ${signals.length} 条` });
+      // 检查：信号数量（支持可选协议标识时，数量在 required.length ~ protocols.length 之间）
+      const requiredProtos = groupDef.required || groupDef.protocols;
+      const allProtos = groupDef.protocols;
+      const minCount = requiredProtos.length;
+      const maxCount = allProtos.length;
+      if (signals.length < minCount || signals.length > maxCount) {
+        return res.status(400).json({ error: `${connType} 组需要 ${minCount === maxCount ? minCount : minCount + '~' + maxCount} 条信号，当前选择了 ${signals.length} 条` });
       }
 
-      // 检查：协议标识完整性
+      // 检查：协议标识完整性（必须包含所有 required，不能有 allProtos 之外的）
       const protocols = signals.map((s: any) => s['协议标识']);
-      const missing = groupDef.protocols.filter(p => !protocols.includes(p));
-      const extra = protocols.filter((p: string) => !groupDef.protocols.includes(p));
-      if (missing.length > 0 || extra.length > 0) {
-        let msg = `${connType} 组的协议标识要求：${groupDef.protocols.join('、')}。`;
-        if (missing.length > 0) msg += `\n缺少：${missing.join('、')}`;
+      const missingRequired = requiredProtos.filter(p => !protocols.includes(p));
+      const extra = protocols.filter((p: string) => !allProtos.includes(p));
+      if (missingRequired.length > 0 || extra.length > 0) {
+        let msg = `${connType} 组的协议标识要求：必须包含 ${requiredProtos.join('、')}${groupDef.optional ? `，可选 ${groupDef.optional.join('、')}` : ''}。`;
+        if (missingRequired.length > 0) msg += `\n缺少：${missingRequired.join('、')}`;
         if (extra.length > 0) msg += `\n多余：${extra.join('、')}`;
         return res.status(400).json({ error: msg });
       }
