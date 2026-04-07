@@ -1349,6 +1349,24 @@ export class Database {
       }
     } catch (e: any) { console.log('Migration: signal_edges:', e.message); }
 
+    // ── 信号分组列 + 连接类型重命名 ──
+    try {
+      const sigCols = await this.query('PRAGMA table_info(signals)');
+      if (!sigCols.some((c: any) => c.name === 'signal_group')) {
+        await this.run(`ALTER TABLE signals ADD COLUMN signal_group TEXT`);
+        console.log('Database migration: added signal_group column to signals');
+      }
+    } catch (e: any) { console.log('Migration: signal_group:', e.message); }
+
+    try {
+      // 连接类型重命名：普通以太网 → 以太网（百兆），千兆网 → 以太网（千兆）
+      const renamed1 = await this.run(`UPDATE signals SET "连接类型" = '以太网（百兆）' WHERE "连接类型" = '普通以太网'`);
+      const renamed2 = await this.run(`UPDATE signals SET "连接类型" = '以太网（千兆）' WHERE "连接类型" = '千兆网'`);
+      if (renamed1.changes > 0 || renamed2.changes > 0) {
+        console.log(`Database migration: renamed connection types (普通以太网→以太网（百兆）: ${renamed1.changes}, 千兆网→以太网（千兆）: ${renamed2.changes})`);
+      }
+    } catch (e: any) { console.log('Migration: rename connection types:', e.message); }
+
     // 初始化默认用户（不再创建示例数据）
     await this.initDefaultData();
   }
