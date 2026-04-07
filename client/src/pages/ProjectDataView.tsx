@@ -274,6 +274,12 @@ export default function ProjectDataView() {
   const [importSigLoading, setImportSigLoading] = useState(false);
   const [importSigResult, setImportSigResult] = useState<any>(null);
   const [downloading, setDownloading] = useState(false);
+  // ── 信号分组：列表勾选模式 ──
+  const [sgCheckMode, setSgCheckMode] = useState(false);
+  const [sgCheckedIds, setSgCheckedIds] = useState<number[]>([]);
+  const [sgCreating, setSgCreating] = useState(false);
+  const [sgBlankType, setSgBlankType] = useState('');
+  const [sgGroupFilter, setSgGroupFilter] = useState('');
   const DOWNLOAD_SHEETS = [
     { key: 'devices', name: 'ATA章节设备表', cols: [
       '设备编号', '设备编号（DOORS）', '设备LIN号（DOORS）', '设备中文名称', '设备英文名称', '设备英文缩写',
@@ -2809,6 +2815,7 @@ export default function ProjectDataView() {
         <div className="flex items-center gap-2">
           {isAdmin && (
             <button
+              disabled={sgCheckMode}
               onClick={async () => {
                 if (!selectedProjectId) return;
                 if (!confirm('确定要清空当前项目的全部信号及端点数据吗？此操作不可恢复！')) return;
@@ -2816,11 +2823,12 @@ export default function ProjectDataView() {
                 if (res.ok) { await loadSignals(); }
                 else { alert((await res.json()).error || '清空失败'); }
               }}
-              className="bg-red-500 text-white px-3 py-1.5 rounded text-sm hover:bg-red-600"
+              className={`px-3 py-1.5 rounded text-sm ${sgCheckMode ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-red-500 text-white hover:bg-red-600'}`}
             >清空信号视图数据</button>
           )}
           {canExport && (
           <button
+            disabled={sgCheckMode}
             onClick={async () => {
               if (!selectedProjectId) return;
               setAtaExportFilter('');
@@ -2830,22 +2838,150 @@ export default function ProjectDataView() {
               const data = await res.json();
               setAtaExportDevices(data.devices || []);
             }}
-            className="bg-teal-600 text-white px-3 py-1.5 rounded text-sm hover:bg-teal-700"
+            className={`px-3 py-1.5 rounded text-sm ${sgCheckMode ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-teal-600 text-white hover:bg-teal-700'}`}
           >WB导出</button>
           )}
           {canManageSignals && (
             <>
               <button
+                disabled={sgCheckMode}
                 onClick={() => { setImportSigFile(null); setImportSigResult(null); setImportSigType('import'); setShowImportSigModal(true); }}
-                className="bg-purple-600 text-white px-3 py-1.5 rounded text-sm hover:bg-purple-700"
+                className={`px-3 py-1.5 rounded text-sm ${sgCheckMode ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-purple-600 text-white hover:bg-purple-700'}`}
               >导入信号及针孔数据</button>
-              <button onClick={openAddSignal} className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700">
+              {!sgCheckMode && (
+                <button
+                  onClick={() => { setSgCheckMode(true); setSgCheckedIds([]); }}
+                  className="bg-indigo-600 text-white px-3 py-1.5 rounded text-sm hover:bg-indigo-700"
+                >信号分组</button>
+              )}
+              <button
+                disabled={sgCheckMode}
+                onClick={openAddSignal}
+                className={`px-3 py-1.5 rounded text-sm ${sgCheckMode ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
+              >
                 + 添加信号
               </button>
             </>
           )}
         </div>
       </div>
+
+      {/* 分组模式操作栏 */}
+      {sgCheckMode && (
+        <div className="bg-indigo-50 border-b border-indigo-200 px-4 py-2 flex items-center gap-3 shrink-0">
+          {/* 左侧：状态 */}
+          <span className="text-sm text-indigo-700 shrink-0">
+            <span className="font-semibold">分组模式</span>
+            {sgCheckedIds.length > 0 && <span className="ml-1">· 已选 <span className="font-semibold">{sgCheckedIds.length}</span> 条</span>}
+          </span>
+
+          <div className="w-px h-5 bg-indigo-200 shrink-0" />
+
+          {/* 中间左：创建空白分组 */}
+          <select
+            value={sgBlankType}
+            disabled={sgCheckedIds.length > 0}
+            onChange={e => setSgBlankType(e.target.value)}
+            className={`border rounded px-2 py-1 text-xs ${sgCheckedIds.length > 0 ? 'border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed' : 'border-indigo-300 bg-white'}`}
+          >
+            <option value="">选择组类型...</option>
+            {([
+              { type: 'ARINC 429', prefix: 'A_429_', bg: 'rgba(224,231,255,0.7)', text: '#4f46e5' },
+              { type: 'CAN Bus', prefix: 'CAN_Bus_', bg: 'rgba(254,243,199,0.7)', text: '#b45309' },
+              { type: '电源（低压）', prefix: 'PWR_LV_', bg: 'rgba(254,226,226,0.7)', text: '#dc2626' },
+              { type: '电源（高压）', prefix: 'PWR_HV_', bg: 'rgba(254,202,202,0.7)', text: '#991b1b' },
+              { type: 'RS-422', prefix: 'RS422_', bg: 'rgba(245,243,255,0.7)', text: '#6d28d9' },
+              { type: 'RS-422（全双工）', prefix: 'RS422_F_', bg: 'rgba(237,233,254,0.7)', text: '#7c3aed' },
+              { type: 'RS-485', prefix: 'RS485_', bg: 'rgba(204,251,241,0.7)', text: '#0f766e' },
+              { type: '以太网（百兆）', prefix: 'ETH100_', bg: 'rgba(220,252,231,0.7)', text: '#15803d' },
+              { type: '以太网（千兆）', prefix: 'ETH1000_', bg: 'rgba(224,242,254,0.7)', text: '#0369a1' },
+            ]).map(({ type, bg, text }) =>
+              <option key={type} value={type} style={{ backgroundColor: bg, color: text }}>{type}</option>
+            )}
+          </select>
+          <button
+            disabled={!sgBlankType || sgCreating || sgCheckedIds.length > 0}
+            onClick={async () => {
+              setSgCreating(true);
+              try {
+                const res = await fetch('/api/signals/group/blank', {
+                  method: 'POST',
+                  headers: { ...API_HEADERS(), 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ project_id: selectedProjectId, conn_type: sgBlankType }),
+                });
+                const data = await res.json();
+                if (res.ok) {
+                  alert(`空白分组「${data.group_name}」创建成功（${data.signal_ids.length}条Draft信号）`);
+                  setSgBlankType('');
+                  loadSignals();
+                } else { alert(data.error || '创建失败'); }
+              } catch { alert('操作失败'); }
+              finally { setSgCreating(false); }
+            }}
+            className={`px-2 py-1 rounded text-xs shrink-0 ${!sgBlankType || sgCheckedIds.length > 0 ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700'}`}
+          >创建空白分组</button>
+
+          {/* 中间右：已有信号建组（勾选后显示） */}
+          {sgCheckedIds.length > 0 && (
+            <>
+              <div className="w-px h-5 bg-indigo-200 shrink-0" />
+              <button
+                onClick={() => setSgCheckedIds([])}
+                className="px-2 py-1 border border-indigo-300 rounded text-xs text-indigo-700 hover:bg-indigo-100 shrink-0"
+              >取消选择</button>
+              <button
+                disabled={sgCreating}
+                onClick={async () => {
+                  setSgCreating(true);
+                  try {
+                    const res = await fetch('/api/signals/group', {
+                      method: 'POST',
+                      headers: { ...API_HEADERS(), 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ signal_ids: sgCheckedIds }),
+                    });
+                    const data = await res.json();
+                    if (res.ok) {
+                      alert(`信号组「${data.group_name}」创建成功`);
+                      setSgCheckedIds([]);
+                      loadSignals();
+                    } else { alert(data.error || '创建失败'); }
+                  } catch { alert('操作失败'); }
+                  finally { setSgCreating(false); }
+                }}
+                className="px-2 py-1 bg-indigo-600 text-white rounded text-xs hover:bg-indigo-700 disabled:bg-gray-400 shrink-0"
+              >{sgCreating ? '创建中...' : '已有信号建组'}</button>
+            </>
+          )}
+
+          {/* 右侧：智能分组 + 退出 */}
+          <div className="flex-1" />
+          <button
+            disabled={sgCreating}
+            onClick={async () => {
+              if (!confirm('将自动识别高置信度的信号分组（同连接器+名称共干+协议互补），并更新组内信号的连接类型/协议标识/线类型。\n\n是否继续？')) return;
+              setSgCreating(true);
+              try {
+                const res = await fetch('/api/signals/group/auto', {
+                  method: 'POST',
+                  headers: { ...API_HEADERS(), 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ project_id: selectedProjectId }),
+                });
+                const data = await res.json();
+                if (res.ok) {
+                  alert(`智能分组完成！\n\n创建 ${data.groups_created} 个分组\n更新 ${data.signals_updated} 条信号`);
+                  loadSignals();
+                } else { alert(data.error || '智能分组失败'); }
+              } catch { alert('操作失败'); }
+              finally { setSgCreating(false); }
+            }}
+            className="px-3 py-1 bg-amber-500 text-white rounded text-sm hover:bg-amber-600 disabled:bg-gray-400 shrink-0"
+          >{sgCreating ? '处理中...' : '智能分组'}</button>
+          <button
+            onClick={() => { setSgCheckMode(false); setSgCheckedIds([]); }}
+            className="px-3 py-1 border border-indigo-300 rounded text-sm text-indigo-700 hover:bg-indigo-100 shrink-0"
+          >退出分组模式</button>
+        </div>
+      )}
 
       <div className="flex-1 min-h-0 overflow-y-auto">
       {loading ? (
@@ -2859,6 +2995,13 @@ export default function ProjectDataView() {
           if (filterMode === 'my_completion' && !(s.status === 'Pending' && s.pending_item_type === 'completion')) return false;
           if (filterMode === 'my_tasks' && !(s.status === 'Pending' && (s.pending_item_type === 'approval' || s.pending_item_type === 'completion'))) return false;
           if (filterMode === 'networking' && (s.endpoint_count ?? 0) <= 2) return false;
+          // 分组筛选
+          if (sgGroupFilter) {
+            const sg = (s as any).signal_group || '';
+            if (sgGroupFilter === '_grouped' && !sg) return false;
+            if (sgGroupFilter === '_ungrouped' && sg) return false;
+            if (sgGroupFilter !== '_grouped' && sgGroupFilter !== '_ungrouped' && !sg.startsWith(sgGroupFilter)) return false;
+          }
           // 列过滤
           for (const [key, val] of Object.entries(signalFilters)) {
             if (!val) continue;
@@ -2875,22 +3018,80 @@ export default function ProjectDataView() {
           }
           return true;
         });
+        // 同组信号排序挨着：组的位置由组内首条信号决定，组内按协议标识固定顺序
+        const GROUP_PROTOCOL_ORDER: Record<string, string[]> = {
+          'A_429_': ['A429_Positive', 'A429_Negative'],
+          'CAN_Bus_': ['CAN_High', 'CAN_Low', 'CAN_Gnd'],
+          'PWR_LV_': ['电源（低压）正极', '电源（低压）负极'],
+          'PWR_HV_': ['电源（高压）正极', '电源（高压）负极'],
+          'RS422_F_': ['RS-422_TX_A', 'RS-422_TX_B', 'RS-422_RX_A', 'RS-422_RX_B', 'RS-422_Gnd'],
+          'RS422_': ['RS-422_A', 'RS-422_B', 'RS-422_Gnd'],
+          'RS485_': ['RS-485_A', 'RS-485_B', 'RS-485_Gnd'],
+          'ETH100_': ['ETH_TX+', 'ETH_TX-', 'ETH_RX+', 'ETH_RX-', 'ETH_Gnd'],
+          'ETH1000_': ['ETH_A+', 'ETH_A-', 'ETH_B+', 'ETH_B-', 'ETH_C+', 'ETH_C-', 'ETH_D+', 'ETH_D-', 'ETH_Gnd'],
+        };
+        const reorderedSignals = (() => {
+          const grouped = new Map<string, typeof filteredSignals>();
+          const ungrouped: typeof filteredSignals = [];
+          const groupFirstIdx = new Map<string, number>();
+          filteredSignals.forEach((s, idx) => {
+            const g = (s as any).signal_group;
+            if (g) {
+              if (!grouped.has(g)) { grouped.set(g, []); groupFirstIdx.set(g, idx); }
+              grouped.get(g)!.push(s);
+            } else {
+              ungrouped.push(s);
+            }
+          });
+          // 无分组信号直接按原序
+          if (grouped.size === 0) return filteredSignals;
+          // 按组内协议标识排序
+          for (const [gName, members] of grouped) {
+            const prefix = Object.keys(GROUP_PROTOCOL_ORDER).find(p => gName.startsWith(p));
+            if (prefix) {
+              const order = GROUP_PROTOCOL_ORDER[prefix];
+              members.sort((a, b) => {
+                const ai = order.indexOf((a as any)['协议标识'] || '');
+                const bi = order.indexOf((b as any)['协议标识'] || '');
+                return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+              });
+            }
+          }
+          // 重建列表：遇到组的首个位置时插入整组
+          const result: typeof filteredSignals = [];
+          const insertedGroups = new Set<string>();
+          filteredSignals.forEach((s, idx) => {
+            const g = (s as any).signal_group;
+            if (g) {
+              if (!insertedGroups.has(g)) {
+                insertedGroups.add(g);
+                result.push(...grouped.get(g)!);
+              }
+            } else {
+              result.push(s);
+            }
+          });
+          return result;
+        })();
+
         const hasAnySignalFilter = Object.values(signalFilters).some(v => v);
         // 有筛选条件时显示全部过滤结果，否则按 displayCount 渐进渲染
-        const isFiltering = hasAnySignalFilter || filterMode !== 'all';
-        const displayedSignals = isFiltering ? filteredSignals : filteredSignals.slice(0, signalDisplayCount);
-        const hasMore = !isFiltering && filteredSignals.length > signalDisplayCount;
+        const isFiltering = hasAnySignalFilter || filterMode !== 'all' || !!sgGroupFilter;
+        const displayedSignals = isFiltering ? reorderedSignals : reorderedSignals.slice(0, signalDisplayCount);
+        const hasMore = !isFiltering && reorderedSignals.length > signalDisplayCount;
         return (
         <div className="bg-white rounded-lg shadow">
-          <div className="px-4 py-1.5 text-xs text-gray-500 bg-gray-50 border-b">
+          <div className="px-4 py-1.5 text-xs text-gray-500 bg-gray-50 border-b sticky top-0 z-20">
             {isFiltering
               ? `显示 ${filteredSignals.length} / ${signals.length} 条信号`
               : `已载入 ${Math.min(signalDisplayCount, filteredSignals.length)} / ${signalTotal} 条信号`}
           </div>
           <table className="min-w-full text-sm">
-            <thead className="bg-gray-50 sticky top-0 z-10">
+            <thead className="bg-gray-50 sticky top-[29px] z-10">
               <tr>
                 <th className="px-2 py-2 text-left text-xs text-gray-500 w-8">#</th>
+                {sgCheckMode && <th className="px-1 py-2 text-center text-xs text-gray-500 w-8"></th>}
+                <th className="py-2 text-xs text-gray-500 w-5">组</th>
                 <th className="px-2 py-2 text-left text-xs text-gray-500 w-8"></th>
                 <th className="px-4 py-2 text-left text-xs text-gray-500 max-w-[120px]">Unique ID</th>
                 <th className="px-4 py-2 text-left text-xs text-gray-500 w-[200px]">状态</th>
@@ -2907,6 +3108,32 @@ export default function ProjectDataView() {
               </tr>
               <tr className="bg-white border-b">
                 <th className="px-2 py-1"></th>
+                {sgCheckMode && <th className="px-1 py-1"></th>}
+                <th className="p-0 w-5">
+                  <select
+                    value={sgGroupFilter}
+                    onChange={e => setSgGroupFilter(e.target.value)}
+                    className="w-full text-xs border border-gray-300 rounded py-0.5 px-0 focus:outline-none focus:border-blue-400"
+                    title="按分组类型筛选"
+                  >
+                    <option value="">全部</option>
+                    <option value="_grouped">已分组</option>
+                    <option value="_ungrouped">未分组</option>
+                    {([
+                      { type: 'ARINC 429', prefix: 'A_429_', bg: 'rgba(224,231,255,0.7)', text: '#4f46e5' },
+                      { type: 'CAN Bus', prefix: 'CAN_Bus_', bg: 'rgba(254,243,199,0.7)', text: '#b45309' },
+                      { type: '电源（低压）', prefix: 'PWR_LV_', bg: 'rgba(254,226,226,0.7)', text: '#dc2626' },
+                      { type: '电源（高压）', prefix: 'PWR_HV_', bg: 'rgba(254,202,202,0.7)', text: '#991b1b' },
+                      { type: 'RS-422', prefix: 'RS422_', bg: 'rgba(245,243,255,0.7)', text: '#6d28d9' },
+                      { type: 'RS-422（全双工）', prefix: 'RS422_F_', bg: 'rgba(237,233,254,0.7)', text: '#7c3aed' },
+                      { type: 'RS-485', prefix: 'RS485_', bg: 'rgba(204,251,241,0.7)', text: '#0f766e' },
+                      { type: '以太网（百兆）', prefix: 'ETH100_', bg: 'rgba(220,252,231,0.7)', text: '#15803d' },
+                      { type: '以太网（千兆）', prefix: 'ETH1000_', bg: 'rgba(224,242,254,0.7)', text: '#0369a1' },
+                    ]).map(({ type, prefix, bg, text }) =>
+                      <option key={type} value={prefix} style={{ backgroundColor: bg, color: text }}>{type}</option>
+                    )}
+                  </select>
+                </th>
                 <th className="px-2 py-1"></th>
                 {/* Unique ID */}
                 <th className="px-4 py-1 max-w-[120px]">
@@ -2982,17 +3209,38 @@ export default function ProjectDataView() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {displayedSignals.map((signal, displayIndex) => {
+              {/* 预计算分组位置信息 */}
+              {(() => {
+                const groupPosMap = new Map<number, { pos: 'first' | 'middle' | 'last' | 'solo'; groupSize: number }>();
+                const groupIdxs = new Map<string, number[]>();
+                displayedSignals.forEach((s, i) => {
+                  const g = (s as any).signal_group;
+                  if (g) {
+                    if (!groupIdxs.has(g)) groupIdxs.set(g, []);
+                    groupIdxs.get(g)!.push(i);
+                  }
+                });
+                groupIdxs.forEach((idxs) => {
+                  idxs.forEach((idx, i) => {
+                    const pos = idxs.length === 1 ? 'solo' : i === 0 ? 'first' : i === idxs.length - 1 ? 'last' : 'middle';
+                    groupPosMap.set(idx, { pos, groupSize: idxs.length });
+                  });
+                });
+                return displayedSignals.map((signal, displayIndex) => {
                 const isExpanded = expandedSignalId === signal.id;
+                const groupInfo = groupPosMap.get(displayIndex);
                 const detail = signalDetails[signal.id];
                 return (
                   <React.Fragment key={signal.id}>
+                    {groupInfo?.pos === 'first' && displayIndex > 0 && (
+                      <tr><td colSpan={99} className="h-2 bg-transparent p-0 border-none" /></tr>
+                    )}
                     <tr
                       className={`hover:bg-gray-50 ${
                         hasTodo(signal) || signalDetails[signal.id]?.endpoints?.some(ep => hasTodo(ep))
                           ? 'bg-orange-100'
                           : isExpanded ? 'bg-green-50' : ''
-                      } cursor-pointer`}
+                      } cursor-pointer${groupInfo && groupInfo.pos !== 'last' && groupInfo.pos !== 'solo' ? ' !border-b-0' : ''}`}
                       onDoubleClick={async () => {
                         if (!isExpanded) {
                           setExpandedSignalId(signal.id);
@@ -3002,7 +3250,91 @@ export default function ProjectDataView() {
                         else { setExpandedSignalId(null); }
                       }}
                     >
-                      <td className="px-2 py-2 text-center text-xs text-gray-400">{displayIndex + 1}</td>
+                      <td className="text-center text-xs p-0 relative">
+                        {groupInfo ? (() => {
+                          const GROUP_COLORS: Record<string, { border: string; text: string; bg: string }> = {
+                            'A_429_':   { border: '#818cf8', text: '#4f46e5', bg: 'rgba(224,231,255,0.45)' },   // indigo
+                            'CAN_Bus_': { border: '#f59e0b', text: '#b45309', bg: 'rgba(254,243,199,0.45)' },   // amber
+                            'PWR_LV_':  { border: '#ef4444', text: '#dc2626', bg: 'rgba(254,226,226,0.45)' },   // red
+                            'PWR_HV_':  { border: '#dc2626', text: '#991b1b', bg: 'rgba(254,202,202,0.45)' },   // red-dark
+                            'RS422_F_': { border: '#8b5cf6', text: '#7c3aed', bg: 'rgba(237,233,254,0.45)' },   // violet
+                            'RS422_':   { border: '#a78bfa', text: '#6d28d9', bg: 'rgba(245,243,255,0.45)' },   // violet-light
+                            'RS485_':   { border: '#14b8a6', text: '#0f766e', bg: 'rgba(204,251,241,0.45)' },   // teal
+                            'ETH100_':  { border: '#22c55e', text: '#15803d', bg: 'rgba(220,252,231,0.45)' },   // green
+                            'ETH1000_': { border: '#0ea5e9', text: '#0369a1', bg: 'rgba(224,242,254,0.45)' },   // sky
+                          };
+                          const gName = (signal as any).signal_group || '';
+                          const prefix = Object.keys(GROUP_COLORS).find(p => gName.startsWith(p));
+                          const colors = prefix ? GROUP_COLORS[prefix] : { border: '#818cf8', text: '#4f46e5', bg: 'rgba(224,231,255,0.45)' };
+                          return (
+                          <>
+                            <span className="block py-2 font-medium relative z-0" style={{ color: colors.text }}>{displayIndex + 1}</span>
+                            <div
+                              className={`absolute inset-0 pointer-events-none z-10 border-solid ${
+                                groupInfo.pos === 'solo' ? 'border-2 rounded-md m-0.5' :
+                                groupInfo.pos === 'first' ? 'border-l-2 border-r-2 border-t-2 rounded-t-md mx-0.5 mt-0.5' :
+                                groupInfo.pos === 'last' ? 'border-l-2 border-r-2 border-b-2 rounded-b-md mx-0.5 mb-0.5' :
+                                'border-l-2 border-r-2 mx-0.5'
+                              }`}
+                              style={{ borderColor: colors.border, backgroundColor: colors.bg }}
+                            />
+                          </>
+                          );
+                        })() : (
+                          <span className="text-gray-400 block py-2">{displayIndex + 1}</span>
+                        )}
+                      </td>
+                      {sgCheckMode && (
+                        <td className="px-1 py-2 text-center">
+                          {!(signal as any).signal_group && (
+                            <input
+                              type="checkbox"
+                              checked={sgCheckedIds.includes(signal.id)}
+                              onChange={e => {
+                                e.stopPropagation();
+                                if (e.target.checked) setSgCheckedIds(prev => [...prev, signal.id]);
+                                else setSgCheckedIds(prev => prev.filter(id => id !== signal.id));
+                              }}
+                              className="rounded border-gray-300"
+                            />
+                          )}
+                        </td>
+                      )}
+                      {/* 组名跨行竖排显示 */}
+                      {groupInfo?.pos === 'first' && (() => {
+                        const gName = (signal as any).signal_group || '';
+                        const prefix = Object.keys({
+                          'A_429_': '#4f46e5', 'CAN_Bus_': '#b45309', 'PWR_LV_': '#dc2626', 'PWR_HV_': '#991b1b',
+                          'RS422_F_': '#7c3aed', 'RS422_': '#6d28d9', 'RS485_': '#0f766e', 'ETH100_': '#15803d', 'ETH1000_': '#0369a1',
+                        }).find(p => gName.startsWith(p));
+                        const color = prefix ? ({
+                          'A_429_': '#4f46e5', 'CAN_Bus_': '#b45309', 'PWR_LV_': '#dc2626', 'PWR_HV_': '#991b1b',
+                          'RS422_F_': '#7c3aed', 'RS422_': '#6d28d9', 'RS485_': '#0f766e', 'ETH100_': '#15803d', 'ETH1000_': '#0369a1',
+                        } as any)[prefix] : '#4f46e5';
+                        return (
+                          <td rowSpan={groupInfo.groupSize} className="p-0 w-5 relative">
+                            <button
+                              className="absolute inset-0 flex items-center justify-center cursor-pointer hover:opacity-80"
+                              style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
+                              title="点击解散该信号组"
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                if (!confirm(`确定解散信号组「${gName}」吗？`)) return;
+                                try {
+                                  const res = await fetch(`/api/signals/group/${encodeURIComponent(gName)}?project_id=${selectedProjectId}`, {
+                                    method: 'DELETE', headers: API_HEADERS(),
+                                  });
+                                  if (res.ok) { loadSignals(); }
+                                  else { alert((await res.json()).error || '解散失败'); }
+                                } catch { alert('操作失败'); }
+                              }}
+                            >
+                              <span className="font-mono text-xs font-medium whitespace-nowrap" style={{ color, fontSize: '10px' }}>{gName}</span>
+                            </button>
+                          </td>
+                        );
+                      })()}
+                      {!groupInfo && <td className="w-0 p-0" />}
                       <td className="px-2 py-2 text-center">
                         <button
                           onClick={async () => {
@@ -3210,7 +3542,7 @@ export default function ProjectDataView() {
                               )}
 
                               {/* 协议标识（仅ARINC 429 / CAN Bus时显示） */}
-                              {((detail as any)['连接类型'] === 'ARINC 429' || (detail as any)['连接类型'] === 'CAN Bus') && (detail as any)['协议标识'] && (
+                              {(detail as any)['协议标识'] && (
                                 <div className="flex gap-2">
                                   <span className="text-gray-500 w-36 flex-shrink-0">协议标识:</span>
                                   <span className="text-gray-800">{(detail as any)['协议标识']}</span>
@@ -3377,18 +3709,22 @@ export default function ProjectDataView() {
                     )}
                   </React.Fragment>
                 );
-              })}
+              });
+              })()}
             </tbody>
           </table>
           {/* 渐进加载哨兵 */}
           {hasMore && (
             <div ref={signalSentinelRef} className="py-3 text-center text-xs text-gray-400">
-              滚动加载更多... （已显示 {Math.min(signalDisplayCount, filteredSignals.length)} / {filteredSignals.length} 条）
+              滚动加载更多... （已显示 {Math.min(signalDisplayCount, reorderedSignals.length)} / {reorderedSignals.length} 条）
             </div>
           )}
         </div>
         );
       })()}
+
+      {/* 底部操作栏已合并到顶部分组模式操作栏 */}
+
       </div>
     </div>
   );
@@ -3404,8 +3740,9 @@ export default function ProjectDataView() {
             {selectedProjectId ? projects.find(p => p.id === selectedProjectId)?.name ?? '（未知项目）' : '请选择项目'}
           </span>
           <button
+            disabled={sgCheckMode}
             onClick={() => { setSwitchProjectTargetId(selectedProjectId ?? ''); setShowSwitchProjectModal(true); }}
-            className="ml-3 px-2 py-1 text-xs border border-gray-300 rounded hover:bg-gray-50 text-gray-600"
+            className={`ml-3 px-2 py-1 text-xs border rounded ${sgCheckMode ? 'border-gray-200 text-gray-300 cursor-not-allowed' : 'border-gray-300 hover:bg-gray-50 text-gray-600'}`}
           >
             切换项目
           </button>
@@ -3426,7 +3763,7 @@ export default function ProjectDataView() {
         </div>
 
         {/* 视图切换 */}
-        <div className="flex flex-wrap items-center gap-3 mb-3">
+        <div className={`flex flex-wrap items-center gap-3 mb-3 ${sgCheckMode ? 'opacity-50 pointer-events-none' : ''}`}>
           <div className="flex bg-gray-100 rounded-md p-0.5">
             <button
               onClick={() => setActiveView('devices')}
@@ -3450,7 +3787,7 @@ export default function ProjectDataView() {
         </div>
 
         {/* 筛选按钮 */}
-        <div id="tour-filter-tabs" className="flex flex-wrap items-center gap-3 mb-4 justify-between">
+        <div id="tour-filter-tabs" className={`flex flex-wrap items-center gap-3 mb-4 justify-between ${sgCheckMode ? 'opacity-50 pointer-events-none' : ''}`}>
           <div className="flex bg-gray-100 rounded-md p-0.5">
             <button
               onClick={() => setFilterMode('all')}
@@ -3791,6 +4128,8 @@ export default function ProjectDataView() {
             </div>
           </div>
         )}
+
+        {/* 管理信号组弹窗已移除，改为列表内联勾选模式 */}
 
         {/* ── 下载配置弹窗 ── */}
         {showDownloadModal && (
@@ -4618,7 +4957,21 @@ export default function ProjectDataView() {
                   const isY = (signalForm as any)['是否成品线'] === 'Y';
                   const is信号线 = (signalForm as any)['线类型'] === '信号线';
                   const connType = (signalForm as any)['连接类型'] || '';
-                  const show协议标识 = connType === 'ARINC 429' || connType === 'CAN Bus';
+                  const POWER_CONN_TYPES = new Set(['电源（低压）', '电源（高压）']);
+                  const SIGNAL_CONN_TYPES = new Set(['ARINC 429', 'Discrete', 'CAN Bus', 'RS-422', 'RS-422（全双工）', 'RS-485', 'RS-232', '模拟量', '以太网（百兆）', '以太网（千兆）', '光纤', '射频']);
+                  const FREE_CONN_TYPES = new Set(['其他（在备注中说明）']);
+                  const PROTOCOL_CONN_TYPES: Record<string, string[]> = {
+                    'ARINC 429': ['A429_Positive', 'A429_Negative'],
+                    'CAN Bus': ['CAN_High', 'CAN_Low', 'CAN_Gnd'],
+                    '电源（低压）': ['电源（低压）正极', '电源（低压）负极'],
+                    '电源（高压）': ['电源（高压）正极', '电源（高压）负极'],
+                    'RS-422': ['RS-422_A', 'RS-422_B', 'RS-422_Gnd'],
+                    'RS-422（全双工）': ['RS-422_TX_A', 'RS-422_TX_B', 'RS-422_RX_A', 'RS-422_RX_B', 'RS-422_Gnd'],
+                    'RS-485': ['RS-485_A', 'RS-485_B', 'RS-485_Gnd'],
+                    '以太网（百兆）': ['ETH_TX+', 'ETH_TX-', 'ETH_RX+', 'ETH_RX-', 'ETH_Gnd'],
+                    '以太网（千兆）': ['ETH_A+', 'ETH_A-', 'ETH_B+', 'ETH_B-', 'ETH_C+', 'ETH_C-', 'ETH_D+', 'ETH_D-', 'ETH_Gnd'],
+                  };
+                  const show协议标识 = connType in PROTOCOL_CONN_TYPES;
                   return SIGNAL_FIELDS.filter(f => {
                     if (f.key === 'unique_id') return false;
                     if (f.key === '协议标识' && !show协议标识) return false;
@@ -4630,17 +4983,29 @@ export default function ProjectDataView() {
                       <label className="block text-xs text-gray-600 mb-1">
                         {f.label}{(f.key === '连接类型' || f.key === '是否成品线') ? <span className="text-red-500"> *</span> : ''}
                       </label>
-                      {f.key === '连接类型' ? (
+                      {f.key === '连接类型' ? (() => {
+                        const curLineType = (signalForm as any)['线类型'] || '';
+                        const allConnTypes = ['ARINC 429', 'Discrete', 'CAN Bus', 'RS-422', 'RS-422（全双工）', 'RS-485', 'RS-232', '模拟量', '电源（低压）', '电源（高压）', '以太网（百兆）', '以太网（千兆）', '光纤', '射频', '其他（在备注中说明）'];
+                        const filteredConnTypes = curLineType === '功率线'
+                          ? allConnTypes.filter(v => POWER_CONN_TYPES.has(v) || FREE_CONN_TYPES.has(v))
+                          : curLineType === '信号线'
+                          ? allConnTypes.filter(v => SIGNAL_CONN_TYPES.has(v) || FREE_CONN_TYPES.has(v))
+                          : allConnTypes;
+                        return (
                         <select value={(signalForm as any)[f.key] || ''} onChange={e => {
                           const newType = e.target.value;
                           const updates: any = { ...signalForm, 连接类型: newType };
-                          if (newType !== 'ARINC 429' && newType !== 'CAN Bus') updates['协议标识'] = '';
+                          if (!(newType in PROTOCOL_CONN_TYPES)) updates['协议标识'] = '';
+                          // 自动设置线类型
+                          if (POWER_CONN_TYPES.has(newType)) updates['线类型'] = '功率线';
+                          else if (SIGNAL_CONN_TYPES.has(newType)) updates['线类型'] = '信号线';
                           setSignalForm(updates);
                         }} className="w-full border border-gray-300 rounded px-2 py-1 text-sm">
                           <option value="">请选择</option>
-                          {['ARINC 429', 'Discrete', 'CAN Bus', 'RS-422', 'RS-485', 'RS-232', '模拟量', '电源（低压）', '电源（高压）', '千兆网', '普通以太网', '光纤', '射频', '其他（在备注中说明）'].map(v => <option key={v} value={v}>{v}</option>)}
+                          {filteredConnTypes.map(v => <option key={v} value={v}>{v}</option>)}
                         </select>
-                      ) : f.key === '是否成品线' ? (
+                        );
+                      })() : f.key === '是否成品线' ? (
                         <select value={(signalForm as any)[f.key] || ''} onChange={e => setSignalForm({ ...signalForm, [f.key]: e.target.value })} className="w-full border border-gray-300 rounded px-2 py-1 text-sm">
                           <option value="">请选择</option>
                           {['Y', 'N'].map(v => <option key={v} value={v}>{v}</option>)}
@@ -4650,6 +5015,16 @@ export default function ProjectDataView() {
                           value={(signalForm as any)[f.key] || ''}
                           onChange={e => {
                             const newType = e.target.value;
+                            const curConn = (signalForm as any)['连接类型'] || '';
+                            // 校验：功率线连接类型不能选信号线，反之亦然
+                            if (newType === '信号线' && POWER_CONN_TYPES.has(curConn)) {
+                              alert(`连接类型"${curConn}"属于功率类型，线类型不能选择"信号线"`);
+                              return;
+                            }
+                            if (newType === '功率线' && SIGNAL_CONN_TYPES.has(curConn)) {
+                              alert(`连接类型"${curConn}"属于信号类型，线类型不能选择"功率线"`);
+                              return;
+                            }
                             const updates: any = { ...signalForm, 线类型: newType };
                             if (newType === '信号线') {
                               updates['极性'] = '';
@@ -4668,10 +5043,7 @@ export default function ProjectDataView() {
                       ) : f.key === '协议标识' ? (
                         <select value={(signalForm as any)['协议标识'] || ''} onChange={e => setSignalForm({ ...signalForm, '协议标识': e.target.value })} className="w-full border border-gray-300 rounded px-2 py-1 text-sm">
                           <option value="">请选择</option>
-                          {connType === 'ARINC 429'
-                            ? [<option key="A429_Positive" value="A429_Positive">A429_Positive</option>, <option key="A429_Negative" value="A429_Negative">A429_Negative</option>]
-                            : [<option key="CAN_High" value="CAN_High">CAN_High</option>, <option key="CAN_Low" value="CAN_Low">CAN_Low</option>, <option key="CAN_Gnd" value="CAN_Gnd">CAN_Gnd</option>]
-                          }
+                          {(PROTOCOL_CONN_TYPES[connType] || []).map(v => <option key={v} value={v}>{v}</option>)}
                         </select>
                       ) : f.key === '极性' ? (
                         <select value={(signalForm as any)[f.key] || ''} onChange={e => setSignalForm({ ...signalForm, [f.key]: e.target.value })} className="w-full border border-gray-300 rounded px-2 py-1 text-sm">
