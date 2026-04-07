@@ -345,10 +345,11 @@ export function deviceRoutes(db: Database) {
       // 获取当前用户在各 Pending 设备上的 pending_item_type
       const pendingDeviceIds = devices.filter((d: any) => d.status === 'Pending').map((d: any) => d.id);
       const pendingItemMap: Record<number, string | null> = {};
+      let pendingReqMap: Record<number, number> = {};
       if (pendingDeviceIds.length > 0) {
         const ph2 = pendingDeviceIds.map(() => '?').join(',');
         const pendingItems = await db.query(
-          `SELECT ar.entity_id, ai.item_type
+          `SELECT ar.entity_id, ai.item_type, ar.id as approval_request_id
            FROM approval_requests ar
            JOIN approval_items ai ON ai.approval_request_id = ar.id
            WHERE ar.entity_type = 'device'
@@ -359,12 +360,14 @@ export function deviceRoutes(db: Database) {
           [...pendingDeviceIds, username]
         );
         for (const pi of pendingItems) pendingItemMap[pi.entity_id] = pi.item_type;
+        for (const pi of pendingItems) pendingReqMap[pi.entity_id] = pi.approval_request_id;
         for (const id of pendingDeviceIds) {
           if (pendingItemMap[id] === undefined) pendingItemMap[id] = null;
         }
       }
       for (const d of devices) {
         (d as any).pending_item_type = d.status === 'Pending' ? (pendingItemMap[d.id] ?? null) : null;
+        (d as any).approval_request_id = d.status === 'Pending' ? (pendingReqMap?.[d.id] ?? null) : null;
       }
 
       // 查询各设备子项（连接器/针孔）是否有待审批/完善项

@@ -280,6 +280,9 @@ export default function ProjectDataView() {
   const [sgCreating, setSgCreating] = useState(false);
   const [sgBlankType, setSgBlankType] = useState('');
   const [sgGroupFilter, setSgGroupFilter] = useState('');
+  // ── 一键审批 ──
+  const [batchApprovalIds, setBatchApprovalIds] = useState<number[]>([]);
+  const [batchApproving, setBatchApproving] = useState(false);
   const DOWNLOAD_SHEETS = [
     { key: 'devices', name: 'ATA章节设备表', cols: [
       '设备编号', '设备编号（DOORS）', '设备LIN号（DOORS）', '设备中文名称', '设备英文名称', '设备英文缩写',
@@ -1853,6 +1856,23 @@ export default function ProjectDataView() {
                         else { setExpandedDeviceId(null); }
                       }}
                     >
+                      {filterMode === 'my_tasks' && (
+                        <td className="px-1 py-2 text-center w-8">
+                          {device.pending_item_type === 'approval' && (device as any).approval_request_id && (
+                            <input
+                              type="checkbox"
+                              checked={batchApprovalIds.includes((device as any).approval_request_id)}
+                              onChange={e => {
+                                e.stopPropagation();
+                                const rid = (device as any).approval_request_id;
+                                if (e.target.checked) setBatchApprovalIds(prev => [...prev, rid]);
+                                else setBatchApprovalIds(prev => prev.filter(id => id !== rid));
+                              }}
+                              className="rounded border-gray-300"
+                            />
+                          )}
+                        </td>
+                      )}
                       <td className="px-4 py-2 text-center">
                         <button
                           id={index === 0 ? 'tour-device-expand' : undefined}
@@ -3091,6 +3111,7 @@ export default function ProjectDataView() {
               <tr>
                 <th className="px-2 py-2 text-left text-xs text-gray-500 w-8">#</th>
                 {sgCheckMode && <th className="px-1 py-2 text-center text-xs text-gray-500 w-8"></th>}
+                {!sgCheckMode && filterMode === 'my_tasks' && <th className="px-1 py-2 text-center text-xs text-gray-500 w-8"></th>}
                 <th className="py-2 text-xs text-gray-500 w-5">组</th>
                 <th className="px-2 py-2 text-left text-xs text-gray-500 w-8"></th>
                 <th className="px-4 py-2 text-left text-xs text-gray-500 max-w-[120px]">Unique ID</th>
@@ -3109,6 +3130,7 @@ export default function ProjectDataView() {
               <tr className="bg-white border-b">
                 <th className="px-2 py-1"></th>
                 {sgCheckMode && <th className="px-1 py-1"></th>}
+                {!sgCheckMode && filterMode === 'my_tasks' && <th className="px-1 py-1 w-8"></th>}
                 <th className="p-0 w-5">
                   <select
                     value={sgGroupFilter}
@@ -3294,6 +3316,23 @@ export default function ProjectDataView() {
                                 e.stopPropagation();
                                 if (e.target.checked) setSgCheckedIds(prev => [...prev, signal.id]);
                                 else setSgCheckedIds(prev => prev.filter(id => id !== signal.id));
+                              }}
+                              className="rounded border-gray-300"
+                            />
+                          )}
+                        </td>
+                      )}
+                      {!sgCheckMode && filterMode === 'my_tasks' && (
+                        <td className="px-1 py-2 text-center">
+                          {signal.pending_item_type === 'approval' && (signal as any).approval_request_id && (
+                            <input
+                              type="checkbox"
+                              checked={batchApprovalIds.includes((signal as any).approval_request_id)}
+                              onChange={e => {
+                                e.stopPropagation();
+                                const rid = (signal as any).approval_request_id;
+                                if (e.target.checked) setBatchApprovalIds(prev => [...prev, rid]);
+                                else setBatchApprovalIds(prev => prev.filter(id => id !== rid));
                               }}
                               className="rounded border-gray-300"
                             />
@@ -3813,7 +3852,7 @@ export default function ProjectDataView() {
             )}
             {myProjectRole !== '总体PMO组' && myProjectRole !== '其他组' && (
               <button
-                onClick={() => setFilterMode('my_tasks')}
+                onClick={() => { setFilterMode('my_tasks'); setBatchApprovalIds([]); }}
                 className={`px-3 py-1 rounded text-sm ${filterMode === 'my_tasks' ? 'bg-white shadow text-orange-600 font-medium' : 'text-gray-600'}`}
               >
                 我的任务
@@ -3828,6 +3867,61 @@ export default function ProjectDataView() {
               </button>
             )}
           </div>
+
+          {/* 一键审批 */}
+          {filterMode === 'my_tasks' && (() => {
+            // 收集当前视图所有可审批的 approval_request_id
+            const allApprovalIds: number[] = activeView === 'devices'
+              ? devices.filter((d: any) => d.pending_item_type === 'approval' && d.approval_request_id).map((d: any) => d.approval_request_id)
+              : signals.filter((s: any) => s.pending_item_type === 'approval' && s.approval_request_id).map((s: any) => s.approval_request_id);
+            const allChecked = allApprovalIds.length > 0 && allApprovalIds.every(id => batchApprovalIds.includes(id));
+            return (
+            <div className="flex items-center gap-2 ml-4">
+              <label className="flex items-center gap-1 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={allChecked}
+                  onChange={e => {
+                    if (e.target.checked) setBatchApprovalIds([...new Set([...batchApprovalIds, ...allApprovalIds])]);
+                    else setBatchApprovalIds(batchApprovalIds.filter(id => !allApprovalIds.includes(id)));
+                  }}
+                  className="rounded border-gray-300"
+                  disabled={allApprovalIds.length === 0}
+                />
+                <span className="text-xs text-gray-500">全选</span>
+              </label>
+              {batchApprovalIds.length > 0 && (
+                <span className="text-xs text-gray-500">已选 <span className="font-semibold text-orange-600">{batchApprovalIds.length}</span> 条</span>
+              )}
+              <button
+                onClick={() => setBatchApprovalIds([])}
+                className={`px-2 py-1 text-xs rounded ${batchApprovalIds.length > 0 ? 'border border-gray-300 text-gray-600 hover:bg-gray-50' : 'hidden'}`}
+              >取消选择</button>
+              <button
+                disabled={batchApprovalIds.length === 0 || batchApproving}
+                onClick={async () => {
+                  if (!confirm(`确定批量审批通过 ${batchApprovalIds.length} 条待审批任务？`)) return;
+                  setBatchApproving(true);
+                  try {
+                    const res = await fetch('/api/approvals/batch-approve', {
+                      method: 'POST',
+                      headers: { ...API_HEADERS(), 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ request_ids: batchApprovalIds }),
+                    });
+                    const data = await res.json();
+                    if (res.ok) {
+                      alert(data.message);
+                      setBatchApprovalIds([]);
+                      if (activeView === 'devices') loadDevices(); else loadSignals();
+                    } else { alert(data.error || '批量审批失败'); }
+                  } catch { alert('操作失败'); }
+                  finally { setBatchApproving(false); }
+                }}
+                className={`px-3 py-1 rounded text-xs ${batchApprovalIds.length > 0 && !batchApproving ? 'bg-orange-500 text-white hover:bg-orange-600' : 'bg-gray-300 text-gray-500 cursor-not-allowed'}`}
+              >{batchApproving ? '审批中...' : '一键审批'}</button>
+            </div>
+            );
+          })()}
 
           {/* 智能助手按钮 */}
           <button

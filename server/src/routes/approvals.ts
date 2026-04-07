@@ -303,5 +303,70 @@ export function approvalRoutes(db: Database) {
     }
   });
 
+  // ── POST /api/approvals/batch-approve — 批量审批通过 ───────
+  router.post('/batch-approve', authenticate, async (req: AuthRequest, res) => {
+    try {
+      const { request_ids } = req.body;
+      if (!Array.isArray(request_ids) || request_ids.length === 0) {
+        return res.status(400).json({ error: '请选择至少一条待审批任务' });
+      }
+
+      const username = req.user!.username;
+      const results: Array<{ id: number; success: boolean; error?: string }> = [];
+
+      for (const requestId of request_ids) {
+        try {
+          const approvalReq = await db.get('SELECT * FROM approval_requests WHERE id = ?', [requestId]);
+          if (!approvalReq || approvalReq.status !== 'pending' || approvalReq.current_phase !== 'approval') {
+            results.push({ id: requestId, success: false, error: '不在审批阶段或已结束' });
+            continue;
+          }
+
+          const myItem = await db.get(
+            `SELECT * FROM approval_items WHERE approval_request_id = ? AND recipient_username = ? AND item_type = 'approval' AND status = 'pending'`,
+            [requestId, username]
+          );
+          if (!myItem) {
+            results.push({ id: requestId, success: false, error: '无待审批项' });
+            continue;
+          }
+
+          await db.run(
+            `UPDATE approval_items SET status = 'done', responded_at = CURRENT_TIMESTAMP WHERE id = ?`,
+            [myItem.id]
+          );
+
+          // 记录 change_log
+          const entityTable = approvalReq.entity_type === 'device' ? 'devices'
+            : approvalReq.entity_type === 'signal' ? 'signals'
+            : approvalReq.entity_type === 'connector' ? 'connectors'
+            : approvalReq.entity_type === 'pin' ? 'pins' : null;
+          if (entityTable) {
+            await db.run(
+              `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, reason, status)
+               VALUES (?, ?, ?, ?, ?, ?, 'approved')`,
+              [entityTable, approvalReq.entity_id, approvalReq.entity_id, entityTable, req.user!.id, `批量审批通过（${approvalReq.action_type}）`]
+            );
+          }
+
+          await checkAndAdvancePhase(db, requestId);
+          results.push({ id: requestId, success: true });
+        } catch (err: any) {
+          results.push({ id: requestId, success: false, error: err.message });
+        }
+      }
+
+      const succeeded = results.filter(r => r.success).length;
+      const failed = results.filter(r => !r.success).length;
+      res.json({
+        success: true,
+        message: `批量审批完成：${succeeded} 条通过${failed > 0 ? `，${failed} 条跳过` : ''}`,
+        results,
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || '批量审批失败' });
+    }
+  });
+
   return router;
 }

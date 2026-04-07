@@ -281,10 +281,11 @@ export function signalRoutes(db: Database) {
       // 获取当前用户在 Pending 信号上的 pending_item_type
       const pendingSignalIds = signals.filter((s: any) => s.status === 'Pending').map((s: any) => s.id);
       const pendingItemMap: Record<number, string | null> = {};
+      const pendingReqMap: Record<number, number> = {};
       if (pendingSignalIds.length > 0) {
         const ph = pendingSignalIds.map(() => '?').join(',');
         const pendingItems = await db.query(
-          `SELECT ar.entity_id, ai.item_type
+          `SELECT ar.entity_id, ai.item_type, ar.id as approval_request_id
            FROM approval_requests ar
            JOIN approval_items ai ON ai.approval_request_id = ar.id
            WHERE ar.entity_type = 'signal'
@@ -294,7 +295,7 @@ export function signalRoutes(db: Database) {
              AND ai.status = 'pending'`,
           [...pendingSignalIds, username]
         );
-        for (const pi of pendingItems) pendingItemMap[pi.entity_id] = pi.item_type;
+        for (const pi of pendingItems) { pendingItemMap[pi.entity_id] = pi.item_type; pendingReqMap[pi.entity_id] = pi.approval_request_id; }
         for (const id of pendingSignalIds) {
           if (pendingItemMap[id] === undefined) pendingItemMap[id] = null;
         }
@@ -362,7 +363,8 @@ export function signalRoutes(db: Database) {
       const result = signals.map((s: any) => {
         const can_edit = projectLevelEdit || ownSignalIds.has(s.id);
         const pending_item_type = s.status === 'Pending' ? (pendingItemMap[s.id] ?? null) : null;
-        return { ...s, ...(summaryMap[s.id] ?? { endpoint_summary: '', 信号名称摘要: '' }), can_edit, pending_item_type };
+        const approval_request_id = s.status === 'Pending' ? (pendingReqMap[s.id] ?? null) : null;
+        return { ...s, ...(summaryMap[s.id] ?? { endpoint_summary: '', 信号名称摘要: '' }), can_edit, pending_item_type, approval_request_id };
       });
 
       res.json({ signals: result, total, offset: offsetParam });
