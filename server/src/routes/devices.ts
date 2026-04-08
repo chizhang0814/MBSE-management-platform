@@ -713,6 +713,7 @@ export function deviceRoutes(db: Database) {
       delete fields.pending_sub_item_type;
       delete fields.has_pending_sub;
       delete fields.management_claim_requester;
+      delete fields.approval_request_id;
       delete fields.import_status;
 
       // 校验 设备LIN号（DOORS）不能为空（若本次提交了该字段）

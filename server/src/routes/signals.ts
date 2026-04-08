@@ -786,7 +786,7 @@ export function signalRoutes(db: Database) {
 
       const { endpoints, version, submit: shouldSubmit, forceDraft, draft: _draft, ...fields } = req.body;
       delete fields.id; delete fields.project_id; delete fields.created_at; delete fields.status;
-      delete fields.pending_item_type; delete fields['导线等级']; delete fields.edges; delete fields.signal_group;
+      delete fields.pending_item_type; delete fields['导线等级']; delete fields.edges; delete fields.signal_group; delete fields.approval_request_id;
       if (!PROTOCOL_CONNECTION_TYPES.has(fields['连接类型'])) {
         fields['协议标识'] = null;
       }

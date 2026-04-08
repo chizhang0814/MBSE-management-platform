@@ -485,9 +485,13 @@ export async function checkAndAdvancePhase(db: Database, approvalRequestId: numb
         const newFields = (() => { try { return JSON.parse(req.payload); } catch { return {}; } })();
         const oldFields = (() => { try { return JSON.parse(req.old_payload); } catch { return {}; } })();
 
-        // 提取连接器重命名信息（非DB列，审批通过时执行）
+        // 提取非DB列字段（审批通过时执行或忽略）
         const connRenames = newFields._connector_renames;
         delete newFields._connector_renames;
+        delete newFields.approval_request_id;
+        delete newFields.pending_item_type;
+        delete newFields.pending_sub_item_type;
+        delete newFields.has_pending_sub;
 
         if (Object.keys(newFields).length > 0) {
           const setClauses = Object.keys(newFields).map(k => `"${k}" = ?`).join(', ');
