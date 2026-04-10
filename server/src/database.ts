@@ -1373,6 +1373,7 @@ export class Database {
         ['非屏蔽', '无屏蔽'],
         ['单芯非屏蔽', '无屏蔽'],
         ['双层屏蔽', '360°屏蔽'],
+        ['单层屏蔽', '360°屏蔽'],
       ];
       let pinChanged = 0;
       for (const [from, to] of pinUpdates) {

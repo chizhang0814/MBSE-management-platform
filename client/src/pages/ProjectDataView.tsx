@@ -5254,7 +5254,8 @@ export default function ProjectDataView() {
                               onChange={e => {
                                 if (e.target.value === '__other__') {
                                   const detail = prompt('请输入具体线型说明：', curVal.startsWith('其他（') ? curVal.slice(3, -1) : '');
-                                  if (detail !== null) setSignalForm({ ...signalForm, [f.key]: `其他（${detail}）` });
+                                  if (detail !== null && detail.trim()) setSignalForm({ ...signalForm, [f.key]: `其他（${detail.trim()}）` });
+                                  else if (detail !== null) alert('说明内容不能为空');
                                 } else {
                                   setSignalForm({ ...signalForm, [f.key]: e.target.value });
                                 }
