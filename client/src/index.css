@@ -34,6 +34,20 @@
     outline-color: #ffffff;
   }
 
+  /* Dark mode: 所有输入框/下拉框/文本域的默认文字和背景色 */
+  .dark input, .dark textarea, .dark select {
+    color: #ffffff;
+    background-color: #000000;
+    border-color: rgba(255, 255, 255, 0.2);
+  }
+  .dark input::placeholder, .dark textarea::placeholder {
+    color: rgba(255, 255, 255, 0.3);
+  }
+  .dark option {
+    color: #ffffff;
+    background-color: #1a1a1a;
+  }
+
   /* Remove default blue focus rings */
   input:focus, textarea:focus, select:focus, button:focus {
     outline: none;

@@ -1637,7 +1637,7 @@ export default function ProjectDataView() {
           {(isAdmin || myProjectRole === '系统组') && (
             <button
               onClick={() => { setImportPinFile(null); setImportPinResult(null); setShowImportPinModal(true); }}
-              className="bg-teal-600 text-white px-3 py-1.5 rounded text-sm hover:bg-teal-700"
+              className="btn-secondary text-sm whitespace-nowrap"
             >导入针孔数据</button>
           )}
           {canManageDevices && (
@@ -1994,7 +1994,7 @@ export default function ProjectDataView() {
                             <span className="text-xs text-amber-600">🔒{lock.lockedBy}</span>
                           ) : (
                             <>
-                              <button id={index === 0 ? 'tour-device-edit' : undefined} onClick={() => openEditDevice(device)} className="text-black hover:text-black/60 dark:hover:text-white/60 text-xs">编辑</button>
+                              <button id={index === 0 ? 'tour-device-edit' : undefined} onClick={() => openEditDevice(device)} className="text-black dark:text-white hover:text-black/60 dark:hover:text-white/60 text-xs">编辑</button>
                               <button onClick={() => deleteDevice(device)} className="text-red-600 hover:text-red-800 text-xs">删除</button>
                             </>
                           ))}
@@ -2706,7 +2706,7 @@ export default function ProjectDataView() {
                       <td className="px-4 py-2 space-x-2 whitespace-nowrap">
                         {canEditSC(sc) && (
                           <>
-                            <button onClick={() => openEditSC(sc)} className="text-black hover:text-black/60 dark:hover:text-white/60 text-xs">编辑</button>
+                            <button onClick={() => openEditSC(sc)} className="text-black dark:text-white hover:text-black/60 dark:hover:text-white/60 text-xs">编辑</button>
                             <button onClick={() => deleteSC(sc)} className="text-red-600 hover:text-red-800 text-xs">删除</button>
                           </>
                         )}
@@ -3177,12 +3177,12 @@ export default function ProjectDataView() {
                   <select
                     value={sgGroupFilter}
                     onChange={e => setSgGroupFilter(e.target.value)}
-                    className="w-full text-xs border border-gray-300 dark:border-white/20 rounded py-0.5 px-0 focus:outline-none focus:border-black"
+                    className="w-full text-xs border border-gray-300 dark:border-white/20 rounded py-0.5 px-0 focus:outline-none focus:border-black bg-white dark:bg-black text-black dark:text-white"
                     title="按分组类型筛选"
                   >
-                    <option value="">全部</option>
-                    <option value="_grouped">已分组</option>
-                    <option value="_ungrouped">未分组</option>
+                    <option value="" className="bg-white dark:bg-neutral-900 text-black dark:text-white">全部</option>
+                    <option value="_grouped" className="bg-white dark:bg-neutral-900 text-black dark:text-white">已分组</option>
+                    <option value="_ungrouped" className="bg-white dark:bg-neutral-900 text-black dark:text-white">未分组</option>
                     {([
                       { type: 'ARINC 429', prefix: 'A_429_', bg: 'rgba(224,231,255,0.7)', text: '#4f46e5' },
                       { type: 'CAN Bus', prefix: 'CAN_Bus_', bg: 'rgba(254,243,199,0.7)', text: '#b45309' },
@@ -3463,7 +3463,7 @@ export default function ProjectDataView() {
                             {canManageSignals && (signalLockMap[signal.id] ? (
                               <span className="text-amber-600">🔒{signalLockMap[signal.id].lockedBy}</span>
                             ) : (
-                              <button onClick={() => openEditSignal(signal)} className="text-black hover:text-black/60 dark:hover:text-white/60">编辑</button>
+                              <button onClick={() => openEditSignal(signal)} className="text-black dark:text-white hover:text-black/60 dark:hover:text-white/60">编辑</button>
                             ))}
                             {canDeleteSignal(signal) && (
                               <button onClick={() => deleteSignal(signal)} className="text-red-600 hover:text-red-800">删除</button>
@@ -5240,7 +5240,7 @@ export default function ProjectDataView() {
                   const is信号线 = (signalForm as any)['线类型'] === '信号线';
                   const connType = (signalForm as any)['连接类型'] || '';
                   const POWER_CONN_TYPES = new Set(['电源（低压）', '电源（高压）']);
-                  const SIGNAL_CONN_TYPES = new Set(['ARINC 429', 'Discrete', 'CAN Bus', 'RS-422', 'RS-422（全双工）', 'RS-485', 'RS-232', '模拟量', '以太网（百兆）', '以太网（千兆）', '光纤', '射频']);
+                  const SIGNAL_CONN_TYPES = new Set(['ARINC 429', 'Discrete', 'CAN Bus', 'RS-422', 'RS-422（全双工）', 'RS-485', 'RS-232', '模拟量', '以太网（百兆）', '以太网（千兆）', '光纤', '射频', 'HDMI']);
                   const FREE_CONN_TYPES = new Set(['其他（在备注中说明）']);
                   const PROTOCOL_CONN_TYPES: Record<string, string[]> = {
                     'ARINC 429': ['A429_Positive', 'A429_Negative'],
@@ -5267,7 +5267,7 @@ export default function ProjectDataView() {
                       </label>
                       {f.key === '连接类型' ? (() => {
                         const curLineType = (signalForm as any)['线类型'] || '';
-                        const allConnTypes = ['ARINC 429', 'Discrete', 'CAN Bus', 'RS-422', 'RS-422（全双工）', 'RS-485', 'RS-232', '模拟量', '电源（低压）', '电源（高压）', '以太网（百兆）', '以太网（千兆）', '光纤', '射频', '其他（在备注中说明）'];
+                        const allConnTypes = ['ARINC 429', 'CAN Bus', 'Discrete', 'HDMI', 'RS-232', 'RS-422', 'RS-422（全双工）', 'RS-485', '光纤', '模拟量', '射频', '电源（低压）', '电源（高压）', '以太网（百兆）', '以太网（千兆）', '其他（在备注中说明）'];
                         const filteredConnTypes = curLineType === '功率线'
                           ? allConnTypes.filter(v => POWER_CONN_TYPES.has(v) || FREE_CONN_TYPES.has(v))
                           : curLineType === '信号线'
