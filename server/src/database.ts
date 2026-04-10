@@ -1367,6 +1367,132 @@ export class Database {
       }
     } catch (e: any) { console.log('Migration: rename connection types:', e.message); }
 
+    // ── 针孔屏蔽类型归一化 ──
+    try {
+      const pinUpdates: [string, string | null][] = [
+        ['非屏蔽', '无屏蔽'],
+        ['单芯非屏蔽', '无屏蔽'],
+        ['双层屏蔽', '360°屏蔽'],
+        ['单层屏蔽', '360°屏蔽'],
+      ];
+      let pinChanged = 0;
+      for (const [from, to] of pinUpdates) {
+        const r = await this.run(`UPDATE pins SET "屏蔽类型" = ? WHERE "屏蔽类型" = ?`, [to, from]);
+        pinChanged += r.changes;
+      }
+      // 360°屏蔽（长文本）→ 360°屏蔽
+      const r1 = await this.run(`UPDATE pins SET "屏蔽类型" = '360°屏蔽' WHERE "屏蔽类型" LIKE '360°屏蔽（%'`);
+      pinChanged += r1.changes;
+      // "1" → NULL
+      const r2 = await this.run(`UPDATE pins SET "屏蔽类型" = NULL WHERE "屏蔽类型" = '1'`);
+      pinChanged += r2.changes;
+      if (pinChanged > 0) console.log(`Database migration: 针孔屏蔽类型归一化 ${pinChanged} 条`);
+    } catch (e: any) { console.log('Migration: pin shield type:', e.message); }
+
+    // ── 推荐导线线型归一化 ──
+    try {
+      const sigUpdates: [string, string | null][] = [
+        ['三芯屏蔽线', '三绞屏蔽线'],
+        ['2TWSH双扭绞屏蔽线', '双绞屏蔽线'],
+        ['双芯屏蔽线', '双绞屏蔽线'],
+        ['双铰屏蔽线', '双绞屏蔽线'],
+        ['双扭绞屏蔽线', '双绞屏蔽线'],
+        ['双绞屏蔽', '双绞屏蔽线'],
+        ['三铰屏蔽线', '三绞屏蔽线'],
+        ['三绞屏蔽', '三绞屏蔽线'],
+        ['单芯线', '单芯非屏蔽线'],
+        ['非屏蔽单芯线', '单芯非屏蔽线'],
+        ['单芯无屏蔽线', '单芯非屏蔽线'],
+      ];
+      let sigChanged = 0;
+      for (const [from, to] of sigUpdates) {
+        const r = await this.run(`UPDATE signals SET "推荐导线线型" = ? WHERE "推荐导线线型" = ?`, [to, from]);
+        sigChanged += r.changes;
+      }
+      // 置空的
+      const nullUpdates = ['其他（CEC-RWC-18664的4芯差分线缆）', 'SW单线', '四芯屏蔽线'];
+      for (const v of nullUpdates) {
+        const r = await this.run(`UPDATE signals SET "推荐导线线型" = NULL WHERE "推荐导线线型" = ?`, [v]);
+        sigChanged += r.changes;
+      }
+      if (sigChanged > 0) console.log(`Database migration: 推荐导线线型归一化 ${sigChanged} 条`);
+    } catch (e: any) { console.log('Migration: wire type:', e.message); }
+
+    // ── 清理不必要的 edit_signal completion 项（V2 审批逻辑迁移）──
+    try {
+      // 找出 edit_signal 的 pending completion 项，其信号端点已全部完整
+      const staleCompletions: any[] = await this.query(`
+        SELECT ai.id as item_id, ar.id as req_id, ar.entity_id
+        FROM approval_items ai
+        JOIN approval_requests ar ON ai.approval_request_id = ar.id
+        WHERE ar.action_type = 'edit_signal'
+          AND ar.status = 'pending'
+          AND ar.current_phase = 'completion'
+          AND ai.item_type = 'completion'
+          AND ai.status = 'pending'
+          AND NOT EXISTS (
+            SELECT 1 FROM signal_endpoints se
+            WHERE se.signal_id = ar.entity_id AND (se.pin_id IS NULL OR se.confirmed = 0)
+          )
+      `);
+      if (staleCompletions.length > 0) {
+        // 标记为 done 并推进阶段
+        const reqIds = new Set<number>();
+        for (const sc of staleCompletions) {
+          await this.run(`UPDATE approval_items SET status = 'done', responded_at = CURRENT_TIMESTAMP WHERE id = ?`, [sc.item_id]);
+          reqIds.add(sc.req_id);
+        }
+        // 推进每个审批请求到 approval 阶段
+        for (const reqId of reqIds) {
+          const pendingCount = await this.get(`SELECT COUNT(*) as cnt FROM approval_items WHERE approval_request_id = ? AND item_type = 'completion' AND status = 'pending'`, [reqId]);
+          if (pendingCount?.cnt === 0) {
+            await this.run(`UPDATE approval_requests SET current_phase = 'approval' WHERE id = ?`, [reqId]);
+          }
+        }
+        console.log(`Database migration: 清理不必要的 edit_signal completion 项 ${staleCompletions.length} 条，推进 ${reqIds.size} 个审批请求到 approval 阶段`);
+      }
+      // delete_signal 也不需要 completion，直接推进
+      const deleteCompletions: any[] = await this.query(`
+        SELECT ai.id as item_id, ar.id as req_id
+        FROM approval_items ai
+        JOIN approval_requests ar ON ai.approval_request_id = ar.id
+        WHERE ar.action_type = 'delete_signal' AND ar.status = 'pending' AND ar.current_phase = 'completion'
+          AND ai.item_type = 'completion' AND ai.status = 'pending'
+      `);
+      if (deleteCompletions.length > 0) {
+        const delReqIds = new Set<number>();
+        for (const dc of deleteCompletions) {
+          await this.run(`UPDATE approval_items SET status = 'done', responded_at = CURRENT_TIMESTAMP WHERE id = ?`, [dc.item_id]);
+          delReqIds.add(dc.req_id);
+        }
+        for (const reqId of delReqIds) {
+          const pc = await this.get(`SELECT COUNT(*) as cnt FROM approval_items WHERE approval_request_id = ? AND item_type = 'completion' AND status = 'pending'`, [reqId]);
+          if (pc?.cnt === 0) await this.run(`UPDATE approval_requests SET current_phase = 'approval' WHERE id = ?`, [reqId]);
+        }
+        console.log(`Database migration: 清理 delete_signal completion 项 ${deleteCompletions.length} 条`);
+      }
+      // delete_pin 也不需要 completion
+      const pinDeleteCompletions: any[] = await this.query(`
+        SELECT ai.id as item_id, ar.id as req_id
+        FROM approval_items ai
+        JOIN approval_requests ar ON ai.approval_request_id = ar.id
+        WHERE ar.action_type = 'delete_pin' AND ar.status = 'pending' AND ar.current_phase = 'completion'
+          AND ai.item_type = 'completion' AND ai.status = 'pending'
+      `);
+      if (pinDeleteCompletions.length > 0) {
+        const pinReqIds = new Set<number>();
+        for (const pc of pinDeleteCompletions) {
+          await this.run(`UPDATE approval_items SET status = 'done', responded_at = CURRENT_TIMESTAMP WHERE id = ?`, [pc.item_id]);
+          pinReqIds.add(pc.req_id);
+        }
+        for (const reqId of pinReqIds) {
+          const cnt = await this.get(`SELECT COUNT(*) as cnt FROM approval_items WHERE approval_request_id = ? AND item_type = 'completion' AND status = 'pending'`, [reqId]);
+          if (cnt?.cnt === 0) await this.run(`UPDATE approval_requests SET current_phase = 'approval' WHERE id = ?`, [reqId]);
+        }
+        console.log(`Database migration: 清理 delete_pin completion 项 ${pinDeleteCompletions.length} 条`);
+      }
+    } catch (e: any) { console.log('Migration: cleanup stale completions:', e.message); }
+
     // 初始化默认用户（不再创建示例数据）
     await this.initDefaultData();
   }

@@ -1,4 +1,8 @@
 import express from 'express';
+import multer from 'multer';
+import xlsx from 'xlsx';
+import ExcelJS from 'exceljs';
+import fs from 'fs';
 import { Database } from '../database.js';
 import { authenticate, requireRole, AuthRequest } from '../middleware/auth.js';
 import {
@@ -501,6 +505,92 @@ export function deviceRoutes(db: Database) {
     } catch (error: any) {
       console.error('搜索设备失败:', error);
       res.status(500).json({ error: error.message || '搜索设备失败' });
+    }
+  });
+
+  // GET /api/devices/pin-import-template — 下载针孔导入模板（必须在 /:id 之前注册）
+  router.get('/pin-import-template', authenticate, async (req: AuthRequest, res) => {
+    try {
+      const projectId = parseInt(req.query.project_id as string);
+      const username = req.user!.username;
+      const role = req.user!.role;
+      const isAdmin = role === 'admin';
+
+      // 查询用户负责的设备及其连接器
+      let devices: any[];
+      if (isAdmin) {
+        devices = projectId
+          ? await db.query(`SELECT id, "设备LIN号（DOORS）" as lin, "设备编号", "设备中文名称" FROM devices WHERE project_id = ? ORDER BY "设备LIN号（DOORS）"`, [projectId])
+          : await db.query(`SELECT id, "设备LIN号（DOORS）" as lin, "设备编号", "设备中文名称" FROM devices ORDER BY "设备LIN号（DOORS）"`);
+      } else {
+        devices = projectId
+          ? await db.query(`SELECT id, "设备LIN号（DOORS）" as lin, "设备编号", "设备中文名称" FROM devices WHERE project_id = ? AND "设备负责人" = ? ORDER BY "设备LIN号（DOORS）"`, [projectId, username])
+          : await db.query(`SELECT id, "设备LIN号（DOORS）" as lin, "设备编号", "设备中文名称" FROM devices WHERE "设备负责人" = ? ORDER BY "设备LIN号（DOORS）"`, [username]);
+      }
+
+      const deviceConnMap: Record<string, string[]> = {};
+      const allConnectors: string[] = [];
+      for (const d of devices) {
+        const conns = await db.query(`SELECT "设备端元器件编号" FROM connectors WHERE device_id = ? ORDER BY "设备端元器件编号"`, [d.id]);
+        const connList = conns.map((c: any) => c['设备端元器件编号']).filter(Boolean);
+        deviceConnMap[d.lin] = connList;
+        connList.forEach((c: string) => { if (!allConnectors.includes(c)) allConnectors.push(c); });
+      }
+
+      const linList = devices.map((d: any) => d.lin).filter(Boolean);
+      const shieldOptions = ['无屏蔽', '非360°屏蔽', '360°屏蔽'];
+
+      // 使用 ExcelJS 生成（支持数据验证）
+      const ewb = new ExcelJS.Workbook();
+
+      // ── Sheet1: 针孔导入 ──
+      const ws1 = ewb.addWorksheet('针孔导入');
+      ws1.columns = [
+        { header: '设备LIN号（DOORS）', key: 'lin', width: 22 },
+        { header: '设备端元器件编号', key: 'conn', width: 24 },
+        { header: '针孔号', key: 'pin', width: 12 },
+        { header: '端接尺寸', key: 'size', width: 14 },
+        { header: '屏蔽类型', key: 'shield', width: 16 },
+        { header: '备注', key: 'remark', width: 22 },
+      ];
+
+      // 填写说明行
+      const instrRow = ws1.addRow(['填写说明：必填', '必填', '必填', '可选', '可选：无屏蔽 / 非360°屏蔽 / 360°屏蔽', '可选']);
+      instrRow.font = { color: { argb: 'FF888888' }, italic: true, size: 10 };
+
+      // 添加空行供填写
+      for (let r = 3; r <= 52; r++) ws1.addRow([]);
+
+      // 表头样式
+      ws1.getRow(1).font = { bold: true };
+      ws1.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8F0FE' } };
+
+      // ── Sheet2: 设备-连接器参考 ──
+      const ws2 = ewb.addWorksheet('设备-连接器参考');
+      ws2.columns = [
+        { header: '设备LIN号（DOORS）', key: 'lin', width: 20 },
+        { header: '设备编号', key: 'devNum', width: 15 },
+        { header: '设备中文名称', key: 'devName', width: 20 },
+        { header: '设备端元器件编号', key: 'conn', width: 24 },
+      ];
+      ws2.getRow(1).font = { bold: true };
+      ws2.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8F0FE' } };
+      for (const d of devices) {
+        const conns = deviceConnMap[d.lin] || [];
+        if (conns.length === 0) {
+          ws2.addRow({ lin: d.lin, devNum: d['设备编号'], devName: d['设备中文名称'], conn: '（无连接器）' });
+        } else {
+          conns.forEach((c: string) => ws2.addRow({ lin: d.lin, devNum: d['设备编号'], devName: d['设备中文名称'], conn: c }));
+        }
+      }
+
+      const buf = await ewb.xlsx.writeBuffer();
+      const fileName = encodeURIComponent(`针孔导入模板_${username}.xlsx`);
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${fileName}`);
+      res.send(buf);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || '生成模板失败' });
     }
   });
 
@@ -1692,26 +1782,12 @@ export function deviceRoutes(db: Database) {
         return res.json({ success: true });
       }
 
-      // 有关联信号 → 提交两阶段审批
+      // 有关联信号 → 直接提交总体组审批（V2：删除操作跳过 completion）
       await db.run(`UPDATE pins SET status = 'Pending' WHERE id = ?`, [pinId]);
 
       const items: ApprovalItemSpec[] = [];
-      const ownersSeen = new Set<string>();
-      for (const { signal_id } of relatedSignals) {
-        const eps = await db.query(
-          `SELECT d.设备负责人 FROM signal_endpoints se JOIN devices d ON se.device_id = d.id WHERE se.signal_id = ?`,
-          [signal_id]
-        );
-        for (const ep of eps) {
-          const owner = ep.设备负责人;
-          if (owner && owner !== username && !ownersSeen.has(owner)) {
-            ownersSeen.add(owner);
-            items.push({ recipient_username: owner, item_type: 'completion' });
-          }
-        }
-      }
       const zontiList = await getProjectRoleMembers(db, devRow.project_id, '总体组');
-      zontiList.forEach(u => items.push({ recipient_username: u, item_type: 'approval' }));
+      zontiList.filter(u => u !== username).forEach(u => items.push({ recipient_username: u, item_type: 'approval' }));
 
       if (items.length === 0) {
         const log: string[] = [];
@@ -1758,6 +1834,141 @@ export function deviceRoutes(db: Database) {
       res.json({ locks });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ── 针孔批量导入（模板下载路由已移至 /:id 之前）──────────
+
+  const pinUploadStorage = multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, 'uploads/'),
+    filename: (_req, file, cb) => cb(null, Date.now() + '-' + file.originalname),
+  });
+  const pinUpload = multer({ storage: pinUploadStorage });
+
+  // POST /api/devices/import-pins — 批量导入针孔
+  router.post('/import-pins', authenticate, pinUpload.single('file'), async (req: AuthRequest, res) => {
+    try {
+      const projectId = parseInt(req.query.project_id as string);
+      if (!projectId || !req.file) return res.status(400).json({ error: '缺少 project_id 或文件' });
+
+      const username = req.user!.username;
+      const role = req.user!.role;
+      const isAdmin = role === 'admin';
+
+      // 非admin需要是系统组
+      if (!isAdmin) {
+        const isDevMgr = await isDeviceManager(db, username, projectId);
+        if (!isDevMgr) {
+          fs.unlink(req.file.path, () => {});
+          return res.status(403).json({ error: '无权限，需要系统组角色' });
+        }
+      }
+
+      const workbook = xlsx.readFile(req.file.path);
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rows: any[] = xlsx.utils.sheet_to_json(sheet, { defval: '' });
+      const originalName = req.file.originalname;
+
+      let created = 0, skipped = 0, errorCount = 0;
+      const errors: string[] = [];
+      const skippedList: string[] = [];
+
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const rowNum = i + 2;
+        const firstCell = String(Object.values(row)[0] ?? '').trim();
+        if (firstCell.includes('填写说明') || firstCell.includes('示例')) continue;
+
+        try {
+          const lin = String(row['设备LIN号（DOORS）'] || '').trim();
+          const connComp = String(row['设备端元器件编号'] || '').trim();
+          const pinNum = String(row['针孔号'] || '').trim();
+          const termSize = String(row['端接尺寸'] || '').trim() || null;
+          const shieldType = String(row['屏蔽类型'] || '').trim() || null;
+          const remark = String(row['备注'] || '').trim() || null;
+
+          if (!lin) continue; // 空行跳过
+          if (!connComp) { errorCount++; errors.push(`第${rowNum}行: 设备端元器件编号为空`); continue; }
+          if (!pinNum) { errorCount++; errors.push(`第${rowNum}行: 针孔号为空`); continue; }
+
+          // 查找设备
+          const device = await db.get(
+            `SELECT id, "设备负责人" FROM devices WHERE project_id = ? AND "设备LIN号（DOORS）" = ?`,
+            [projectId, lin]
+          );
+          if (!device) { errorCount++; errors.push(`第${rowNum}行: 未找到设备（LIN=${lin}）`); continue; }
+
+          // 权限检查：系统组只能操作自己负责的设备
+          if (!isAdmin && device['设备负责人'] !== username) {
+            errorCount++; errors.push(`第${rowNum}行: 设备（LIN=${lin}）不是您负责的设备`); continue;
+          }
+
+          // 查找连接器
+          const connector = await db.get(
+            `SELECT id FROM connectors WHERE device_id = ? AND "设备端元器件编号" = ?`,
+            [device.id, connComp]
+          );
+          if (!connector) { errorCount++; errors.push(`第${rowNum}行: 设备（LIN=${lin}）下未找到连接器"${connComp}"`); continue; }
+
+          // 冻结检查：连接器或设备是否在待删除审批中
+          const connPending = await db.get(
+            `SELECT id FROM approval_requests WHERE entity_type = 'connector' AND entity_id = ? AND status = 'pending' AND action_type LIKE 'delete%'`,
+            [connector.id]
+          );
+          if (connPending) { errorCount++; errors.push(`第${rowNum}行: 连接器"${connComp}"正在审批删除中，无法添加针孔`); continue; }
+          const devPending = await db.get(
+            `SELECT id FROM approval_requests WHERE entity_type = 'device' AND entity_id = ? AND status = 'pending' AND action_type LIKE 'delete%'`,
+            [device.id]
+          );
+          if (devPending) { errorCount++; errors.push(`第${rowNum}行: 设备（LIN=${lin}）正在审批删除中，无法添加针孔`); continue; }
+
+          // 屏蔽类型校验
+          const VALID_SHIELD_TYPES = ['无屏蔽', '非360°屏蔽', '360°屏蔽'];
+          if (shieldType && !VALID_SHIELD_TYPES.includes(shieldType)) {
+            errorCount++; errors.push(`第${rowNum}行: 屏蔽类型"${shieldType}"无效，只能填：${VALID_SHIELD_TYPES.join('、')}`); continue;
+          }
+
+          // 重复检查
+          const existing = await db.get(
+            `SELECT id FROM pins WHERE connector_id = ? AND "针孔号" = ?`,
+            [connector.id, pinNum]
+          );
+          if (existing) { skipped++; skippedList.push(`第${rowNum}行: 针孔"${pinNum}"已存在于连接器"${connComp}"`); continue; }
+
+          // 插入针孔
+          await db.run(
+            `INSERT INTO pins (connector_id, "针孔号", "端接尺寸", "屏蔽类型", "备注", status, import_status)
+             VALUES (?, ?, ?, ?, ?, 'normal', 'uploaded')`,
+            [connector.id, pinNum, termSize, shieldType, remark]
+          );
+          created++;
+        } catch (err: any) {
+          errorCount++;
+          errors.push(`第${rowNum}行: ${err.message}`);
+        }
+      }
+
+      // 记录上传文件
+      const fileSize = fs.statSync(req.file.path).size;
+      await db.run(
+        `INSERT INTO uploaded_files (filename, original_filename, table_name, table_type, uploaded_by, total_rows, success_count, skipped_count, error_count, file_size, status, error_details)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          req.file.filename, originalName,
+          `project_${projectId}`, 'pin_import',
+          req.user!.id,
+          created + skipped + errorCount,
+          created, skipped, errorCount, fileSize,
+          errorCount > 0 ? 'completed_with_errors' : 'completed',
+          JSON.stringify({ errors, skipped: skippedList })
+        ]
+      );
+
+      fs.unlink(req.file.path, () => {});
+      res.json({ success: true, created, skipped, errorCount, errors, skippedList });
+    } catch (error: any) {
+      if (req.file) fs.unlink(req.file.path, () => {});
+      res.status(500).json({ error: error.message || '导入针孔失败' });
     }
   });
 

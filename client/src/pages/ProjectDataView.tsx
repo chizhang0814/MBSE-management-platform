@@ -269,6 +269,11 @@ export default function ProjectDataView() {
   const [importDevType, setImportDevType] = useState<'import' | 'update'>('import');
   const [importDevLoading, setImportDevLoading] = useState(false);
   const [importDevResult, setImportDevResult] = useState<any>(null);
+  // ── 导入针孔弹窗 ──
+  const [showImportPinModal, setShowImportPinModal] = useState(false);
+  const [importPinFile, setImportPinFile] = useState<File | null>(null);
+  const [importPinLoading, setImportPinLoading] = useState(false);
+  const [importPinResult, setImportPinResult] = useState<any>(null);
   // ── 导入/更新信号数据弹窗 ──
   const [showImportSigModal, setShowImportSigModal] = useState(false);
   const [importSigType, setImportSigType] = useState<'import' | 'update'>('import');
@@ -1628,6 +1633,12 @@ export default function ProjectDataView() {
               }}
               className="bg-red-500 text-white px-3 py-1.5 rounded-pill text-sm hover:bg-red-600 whitespace-nowrap"
             >清空设备视图数据</button>
+          )}
+          {(isAdmin || myProjectRole === '系统组') && (
+            <button
+              onClick={() => { setImportPinFile(null); setImportPinResult(null); setShowImportPinModal(true); }}
+              className="bg-teal-600 text-white px-3 py-1.5 rounded text-sm hover:bg-teal-700"
+            >导入针孔数据</button>
           )}
           {canManageDevices && (
             <>
@@ -4073,6 +4084,98 @@ export default function ProjectDataView() {
           : renderSignalView()}
         </div>
 
+        {/* ── 导入针孔数据弹窗 ── */}
+        {showImportPinModal && selectedProjectId && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg max-w-lg w-full max-h-[80vh] flex flex-col">
+              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
+                <h2 className="text-xl font-bold">导入针孔数据</h2>
+                <button onClick={() => setShowImportPinModal(false)} className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 text-sm">关闭</button>
+              </div>
+              <div className="flex-1 overflow-y-auto px-6 py-4">
+                {!importPinResult ? (
+                  <>
+                    <div className="mb-4">
+                      <button
+                        onClick={async () => {
+                          try {
+                            const res = await fetch(`/api/devices/pin-import-template?project_id=${selectedProjectId}`, { headers: API_HEADERS() });
+                            if (!res.ok) throw new Error('下载失败');
+                            const blob = await res.blob();
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement('a'); a.href = url; a.download = `针孔导入模板_${user?.username || 'template'}.xlsx`; a.click();
+                            URL.revokeObjectURL(url);
+                          } catch { alert('模板下载失败'); }
+                        }}
+                        className="text-blue-600 hover:text-blue-800 text-sm underline cursor-pointer"
+                      >下载导入模板（Excel）</button>
+                    </div>
+                    <p className="mb-3 text-sm text-gray-600">
+                      上传包含针孔数据的 Excel 文件。需包含：设备LIN号（DOORS）、设备端元器件编号、针孔号。
+                      {myProjectRole === '系统组' && !isAdmin && <span className="text-orange-600">（仅能导入您负责的设备的针孔）</span>}
+                    </p>
+                    <input type="file" accept=".xlsx,.xls"
+                      onChange={e => setImportPinFile(e.target.files?.[0] || null)}
+                      className="w-full border border-gray-300 rounded px-3 py-2 text-sm mb-4"
+                    />
+                    <button
+                      onClick={async () => {
+                        if (!importPinFile || !selectedProjectId) return;
+                        setImportPinLoading(true);
+                        try {
+                          const formData = new FormData();
+                          formData.append('file', importPinFile);
+                          const res = await fetch(`/api/devices/import-pins?project_id=${selectedProjectId}`, {
+                            method: 'POST',
+                            headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+                            body: formData,
+                          });
+                          const data = await res.json();
+                          if (!res.ok) throw new Error(data.error || '导入失败');
+                          setImportPinResult(data);
+                          await loadDevices();
+                        } catch (err: any) {
+                          setImportPinResult({ error: err.message });
+                        } finally {
+                          setImportPinLoading(false);
+                        }
+                      }}
+                      disabled={importPinLoading || !importPinFile}
+                      className="w-full bg-teal-600 text-white px-4 py-2 rounded hover:bg-teal-700 disabled:bg-gray-400 text-sm"
+                    >{importPinLoading ? '导入中...' : '开始导入'}</button>
+                  </>
+                ) : importPinResult.error ? (
+                  <div>
+                    <p className="text-red-600 mb-3">{importPinResult.error}</p>
+                    <button onClick={() => setImportPinResult(null)} className="text-blue-600 text-sm">返回重试</button>
+                  </div>
+                ) : (
+                  <div>
+                    <div className="mb-3 space-y-1">
+                      <p className="text-green-700 font-medium">导入成功 {importPinResult.created} 条</p>
+                      {importPinResult.skipped > 0 && <p className="text-gray-500">跳过（已存在） {importPinResult.skipped} 条</p>}
+                      {importPinResult.errorCount > 0 && <p className="text-red-600">失败 {importPinResult.errorCount} 条</p>}
+                    </div>
+                    {importPinResult.errors?.length > 0 && (
+                      <div className="border border-red-200 rounded p-2 max-h-40 overflow-y-auto mb-3">
+                        <p className="text-xs text-red-600 font-medium mb-1">错误详情：</p>
+                        {importPinResult.errors.map((e: string, i: number) => <p key={i} className="text-xs text-red-500">{e}</p>)}
+                      </div>
+                    )}
+                    {importPinResult.skippedList?.length > 0 && (
+                      <div className="border border-gray-200 rounded p-2 max-h-32 overflow-y-auto mb-3">
+                        <p className="text-xs text-gray-500 font-medium mb-1">跳过详情：</p>
+                        {importPinResult.skippedList.map((e: string, i: number) => <p key={i} className="text-xs text-gray-400">{e}</p>)}
+                      </div>
+                    )}
+                    <button onClick={() => setImportPinResult(null)} className="text-blue-600 text-sm">继续导入</button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* ── 导入/更新设备数据弹窗 ── */}
         {showImportDevDataModal && selectedProjectId && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
@@ -5224,7 +5327,34 @@ export default function ProjectDataView() {
                           <option value="">请选择</option>
                           {(PROTOCOL_CONN_TYPES[connType] || []).map(v => <option key={v} value={v}>{v}</option>)}
                         </select>
-                      ) : f.key === '极性' ? (
+                      ) : f.key === '推荐导线线型' ? (() => {
+                        const curVal = (signalForm as any)[f.key] || '';
+                        const isOther = curVal.startsWith('其他');
+                        const stdOptions = ['单芯屏蔽线', '单芯非屏蔽线', '双绞屏蔽线', '双绞非屏蔽线', '三绞屏蔽线', '三绞非屏蔽线', '同轴'];
+                        const selectVal = stdOptions.includes(curVal) ? curVal : isOther ? '__other__' : curVal ? '__other__' : '';
+                        return (
+                          <div>
+                            <select
+                              value={selectVal}
+                              onChange={e => {
+                                if (e.target.value === '__other__') {
+                                  const detail = prompt('请输入具体线型说明：', curVal.startsWith('其他（') ? curVal.slice(3, -1) : '');
+                                  if (detail !== null && detail.trim()) setSignalForm({ ...signalForm, [f.key]: `其他（${detail.trim()}）` });
+                                  else if (detail !== null) alert('说明内容不能为空');
+                                } else {
+                                  setSignalForm({ ...signalForm, [f.key]: e.target.value });
+                                }
+                              }}
+                              className="w-full border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-sm"
+                            >
+                              <option value="">请选择</option>
+                              {stdOptions.map(v => <option key={v} value={v}>{v}</option>)}
+                              <option value="__other__">其他（详细说明）</option>
+                            </select>
+                            {isOther && <div className="mt-1 text-xs text-gray-500 dark:text-white/50">当前值：{curVal}</div>}
+                          </div>
+                        );
+                      })() : f.key === '极性' ? (
                         <select value={(signalForm as any)[f.key] || ''} onChange={e => setSignalForm({ ...signalForm, [f.key]: e.target.value })} className="w-full border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-sm">
                           <option value="">请选择</option>
                           <option value="正极">正极</option>
@@ -5471,7 +5601,16 @@ export default function ProjectDataView() {
                         <label className="block text-xs text-gray-500 dark:text-white/50 mb-0.5">针孔号</label>
                         <select
                           value={ep.针孔号}
-                          onChange={e => { const newEp = [...signalEndpoints]; newEp[idx] = { ...newEp[idx], 针孔号: e.target.value }; setSignalEndpoints(newEp); }}
+                          onChange={e => {
+                            const newEp = [...signalEndpoints];
+                            const selectedPin = (epPinOptions[idx] || []).find((p: any) => p.针孔号 === e.target.value);
+                            newEp[idx] = {
+                              ...newEp[idx],
+                              针孔号: e.target.value,
+                              ...(selectedPin ? { 端接尺寸: selectedPin.端接尺寸 || '', 屏蔽类型: selectedPin.屏蔽类型 || '' } : {}),
+                            };
+                            setSignalEndpoints(newEp);
+                          }}
                           className="w-full border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-xs"
                         >
                           <option value="">选择针孔</option>
@@ -5498,8 +5637,8 @@ export default function ProjectDataView() {
                         >
                           <option value="">选择</option>
                           <option value="无屏蔽">无屏蔽</option>
-                          <option value="单层屏蔽">单层屏蔽</option>
-                          <option value="双层屏蔽">双层屏蔽</option>
+                          <option value="非360°屏蔽">非360°屏蔽</option>
+                          <option value="360°屏蔽">360°屏蔽</option>
                         </select>
                       </div>
                       {/* 连接关系（从第2个端点开始） */}
