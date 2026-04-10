@@ -1782,26 +1782,12 @@ export function deviceRoutes(db: Database) {
         return res.json({ success: true });
       }
 
-      // 有关联信号 → 提交两阶段审批
+      // 有关联信号 → 直接提交总体组审批（V2：删除操作跳过 completion）
       await db.run(`UPDATE pins SET status = 'Pending' WHERE id = ?`, [pinId]);
 
       const items: ApprovalItemSpec[] = [];
-      const ownersSeen = new Set<string>();
-      for (const { signal_id } of relatedSignals) {
-        const eps = await db.query(
-          `SELECT d.设备负责人 FROM signal_endpoints se JOIN devices d ON se.device_id = d.id WHERE se.signal_id = ?`,
-          [signal_id]
-        );
-        for (const ep of eps) {
-          const owner = ep.设备负责人;
-          if (owner && owner !== username && !ownersSeen.has(owner)) {
-            ownersSeen.add(owner);
-            items.push({ recipient_username: owner, item_type: 'completion' });
-          }
-        }
-      }
       const zontiList = await getProjectRoleMembers(db, devRow.project_id, '总体组');
-      zontiList.forEach(u => items.push({ recipient_username: u, item_type: 'approval' }));
+      zontiList.filter(u => u !== username).forEach(u => items.push({ recipient_username: u, item_type: 'approval' }));
 
       if (items.length === 0) {
         const log: string[] = [];

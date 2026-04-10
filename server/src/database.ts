@@ -1471,6 +1471,26 @@ export class Database {
         }
         console.log(`Database migration: 清理 delete_signal completion 项 ${deleteCompletions.length} 条`);
       }
+      // delete_pin 也不需要 completion
+      const pinDeleteCompletions: any[] = await this.query(`
+        SELECT ai.id as item_id, ar.id as req_id
+        FROM approval_items ai
+        JOIN approval_requests ar ON ai.approval_request_id = ar.id
+        WHERE ar.action_type = 'delete_pin' AND ar.status = 'pending' AND ar.current_phase = 'completion'
+          AND ai.item_type = 'completion' AND ai.status = 'pending'
+      `);
+      if (pinDeleteCompletions.length > 0) {
+        const pinReqIds = new Set<number>();
+        for (const pc of pinDeleteCompletions) {
+          await this.run(`UPDATE approval_items SET status = 'done', responded_at = CURRENT_TIMESTAMP WHERE id = ?`, [pc.item_id]);
+          pinReqIds.add(pc.req_id);
+        }
+        for (const reqId of pinReqIds) {
+          const cnt = await this.get(`SELECT COUNT(*) as cnt FROM approval_items WHERE approval_request_id = ? AND item_type = 'completion' AND status = 'pending'`, [reqId]);
+          if (cnt?.cnt === 0) await this.run(`UPDATE approval_requests SET current_phase = 'approval' WHERE id = ?`, [reqId]);
+        }
+        console.log(`Database migration: 清理 delete_pin completion 项 ${pinDeleteCompletions.length} 条`);
+      }
     } catch (e: any) { console.log('Migration: cleanup stale completions:', e.message); }
 
     // 初始化默认用户（不再创建示例数据）
