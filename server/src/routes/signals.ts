@@ -184,23 +184,44 @@ export function signalRoutes(db: Database) {
 
   // ── 辅助：构建信号端点的审批项 ────────────────────────────
 
+  /**
+   * 构建信号审批项（V2 逻辑）
+   * @param options.endpointsChanged - 是否有端点变更
+   * @param options.newEndpointDeviceIds - 新增端点的设备ID列表（仅这些设备的负责人需要完善）
+   * @param options.allEndpoints - 所有端点（用于判断已有端点是否已确认）
+   */
   async function buildSignalApprovalItems(
     db: Database,
     projectId: number,
     operatorUsername: string,
-    resolvedEndpoints: Array<{ deviceId: number; pinId: number | null }>
+    resolvedEndpoints: Array<{ deviceId: number; pinId: number | null }>,
+    options?: { endpointsChanged?: boolean; newEndpointDeviceIds?: number[]; isNewSignal?: boolean }
   ): Promise<ApprovalItemSpec[]> {
     const items: ApprovalItemSpec[] = [];
+    const { endpointsChanged = true, newEndpointDeviceIds, isNewSignal = false } = options || {};
 
-    // 阶段一 completion：其他设备负责人（全部通过才进阶段二）
-    const ownersSeen = new Set<string>();
-    for (const { deviceId } of resolvedEndpoints) {
-      const ownerRow = await db.get('SELECT 设备负责人 FROM devices WHERE id = ?', [deviceId]);
-      const owner = ownerRow?.设备负责人;
-      if (!owner || owner === operatorUsername || ownersSeen.has(owner)) continue;
-      ownersSeen.add(owner);
-      items.push({ recipient_username: owner, item_type: 'completion' });
+    if (isNewSignal || (endpointsChanged && !newEndpointDeviceIds)) {
+      // 新建信号或端点全量变更：所有其他设备负责人需要完善
+      const ownersSeen = new Set<string>();
+      for (const { deviceId } of resolvedEndpoints) {
+        const ownerRow = await db.get('SELECT 设备负责人 FROM devices WHERE id = ?', [deviceId]);
+        const owner = ownerRow?.设备负责人;
+        if (!owner || owner === operatorUsername || ownersSeen.has(owner)) continue;
+        ownersSeen.add(owner);
+        items.push({ recipient_username: owner, item_type: 'completion' });
+      }
+    } else if (endpointsChanged && newEndpointDeviceIds && newEndpointDeviceIds.length > 0) {
+      // 添加新端点：仅新端点的设备负责人需要完善
+      const ownersSeen = new Set<string>();
+      for (const devId of newEndpointDeviceIds) {
+        const ownerRow = await db.get('SELECT 设备负责人 FROM devices WHERE id = ?', [devId]);
+        const owner = ownerRow?.设备负责人;
+        if (!owner || owner === operatorUsername || ownersSeen.has(owner)) continue;
+        ownersSeen.add(owner);
+        items.push({ recipient_username: owner, item_type: 'completion' });
+      }
     }
+    // else: 仅修改信号属性，不创建 completion 项，直接进入 approval
 
     // 阶段二 approval：总体组（一人通过即生效）
     const zontiList = await getProjectRoleMembers(db, projectId, '总体组');
@@ -728,7 +749,7 @@ export function signalRoutes(db: Database) {
 
       // 非管理员且非草稿 → 提交审批
       if (role !== 'admin' && !isDraft) {
-        const items = await buildSignalApprovalItems(db, project_id, username, resolved.map(r => ({ deviceId: r.deviceId, pinId: r.pinId })));
+        const items = await buildSignalApprovalItems(db, project_id, username, resolved.map(r => ({ deviceId: r.deviceId, pinId: r.pinId })), { isNewSignal: true });
         await submitChangeRequest(db, {
           projectId: project_id,
           requesterId: req.user!.id,
@@ -912,7 +933,22 @@ export function signalRoutes(db: Database) {
         return res.status(400).json({ error: '该信号正在审批中，无法重复提交修改。请等待审批完成后再编辑。' });
       }
 
-      // 非 admin、非 forceDraft → 提交审批
+      // ── V2 审批逻辑：根据端点变更情况决定审批流程 ──
+
+      // 获取当前端点（变更前）
+      const oldEndpoints: Array<{ device_id: number; pin_id: number | null; confirmed: number }> = await db.query(
+        'SELECT device_id, pin_id, confirmed FROM signal_endpoints WHERE signal_id = ?', [signalId]
+      );
+      const oldDeviceIds = new Set(oldEndpoints.map(e => e.device_id));
+      const hasUnconfirmedEndpoints = oldEndpoints.some(e => !e.confirmed);
+      const endpointsChanged = Array.isArray(endpoints);
+
+      // 检查：有未确认端点时，不允许仅修改信号属性
+      if (!endpointsChanged && hasUnconfirmedEndpoints) {
+        return res.status(400).json({ error: '该信号存在未确认的端点，请先完善所有端点信息后再修改信号属性。' });
+      }
+
+      // 更新信号字段
       if (Object.keys(fields).length > 0) {
         const setClauses = Object.keys(fields).map(k => `"${k}" = ?`).join(', ');
         await db.run(
@@ -923,11 +959,12 @@ export function signalRoutes(db: Database) {
         await db.run(`UPDATE signals SET status = 'Pending', import_status = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [signalId]);
       }
 
-      // 替换端点
+      // 替换端点并计算新增端点
       const resolvedForItems: Array<{ deviceId: number; pinId: number | null }> = [];
-      if (Array.isArray(endpoints)) {
-        const newEpByPin = await replaceEndpointsWithEdges(signalId, signal.project_id, endpoints);
-        // 收集 resolvedForItems 用于构建审批人
+      let newEndpointDeviceIds: number[] = [];
+
+      if (endpointsChanged) {
+        await replaceEndpointsWithEdges(signalId, signal.project_id, endpoints);
         for (const ep of endpoints) {
           if (!ep.设备编号) continue;
           const device = await db.get(`SELECT id FROM devices WHERE project_id = ? AND "设备编号" = ?`, [signal.project_id, ep.设备编号]);
@@ -938,16 +975,19 @@ export function signalRoutes(db: Database) {
             if (pin) pinId = pin.id;
           }
           resolvedForItems.push({ deviceId: device.id, pinId });
+          // 识别新增的端点设备
+          if (!oldDeviceIds.has(device.id)) {
+            newEndpointDeviceIds.push(device.id);
+          }
         }
       } else {
-        // No endpoint change: get current endpoints for approval items
-        const currentEps = await db.query(
-          'SELECT device_id, pin_id FROM signal_endpoints WHERE signal_id = ?', [signalId]
-        );
-        currentEps.forEach((e: any) => resolvedForItems.push({ deviceId: e.device_id, pinId: e.pin_id }));
+        oldEndpoints.forEach(e => resolvedForItems.push({ deviceId: e.device_id, pinId: e.pin_id }));
       }
 
-      const items = await buildSignalApprovalItems(db, signal.project_id, username, resolvedForItems);
+      const items = await buildSignalApprovalItems(db, signal.project_id, username, resolvedForItems, {
+        endpointsChanged,
+        newEndpointDeviceIds: newEndpointDeviceIds.length > 0 ? newEndpointDeviceIds : undefined,
+      });
 
       await submitChangeRequest(db, {
         projectId: signal.project_id,
@@ -1033,13 +1073,14 @@ export function signalRoutes(db: Database) {
         }
       }
 
-      // 构建审批项
+      // 构建审批项（删除信号跳过 completion，直接 approval）
       const currentEps = await db.query(
         'SELECT device_id, pin_id FROM signal_endpoints WHERE signal_id = ?', [signalId]
       );
       const items = await buildSignalApprovalItems(
         db, signal.project_id, username,
-        currentEps.map((e: any) => ({ deviceId: e.device_id, pinId: e.pin_id }))
+        currentEps.map((e: any) => ({ deviceId: e.device_id, pinId: e.pin_id })),
+        { endpointsChanged: false }  // 跳过 completion
       );
 
       await db.run(`UPDATE signals SET status = 'Pending', import_status = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [signalId]);
