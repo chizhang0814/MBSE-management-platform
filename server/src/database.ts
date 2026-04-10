@@ -1418,6 +1418,41 @@ export class Database {
       if (sigChanged > 0) console.log(`Database migration: 推荐导线线型归一化 ${sigChanged} 条`);
     } catch (e: any) { console.log('Migration: wire type:', e.message); }
 
+    // ── 清理不必要的 edit_signal completion 项（V2 审批逻辑迁移）──
+    try {
+      // 找出 edit_signal 的 pending completion 项，其信号端点已全部完整
+      const staleCompletions: any[] = await this.query(`
+        SELECT ai.id as item_id, ar.id as req_id, ar.entity_id
+        FROM approval_items ai
+        JOIN approval_requests ar ON ai.approval_request_id = ar.id
+        WHERE ar.action_type = 'edit_signal'
+          AND ar.status = 'pending'
+          AND ar.current_phase = 'completion'
+          AND ai.item_type = 'completion'
+          AND ai.status = 'pending'
+          AND NOT EXISTS (
+            SELECT 1 FROM signal_endpoints se
+            WHERE se.signal_id = ar.entity_id AND (se.pin_id IS NULL OR se.confirmed = 0)
+          )
+      `);
+      if (staleCompletions.length > 0) {
+        // 标记为 done 并推进阶段
+        const reqIds = new Set<number>();
+        for (const sc of staleCompletions) {
+          await this.run(`UPDATE approval_items SET status = 'done', responded_at = CURRENT_TIMESTAMP WHERE id = ?`, [sc.item_id]);
+          reqIds.add(sc.req_id);
+        }
+        // 推进每个审批请求到 approval 阶段
+        for (const reqId of reqIds) {
+          const pendingCount = await this.get(`SELECT COUNT(*) as cnt FROM approval_items WHERE approval_request_id = ? AND item_type = 'completion' AND status = 'pending'`, [reqId]);
+          if (pendingCount?.cnt === 0) {
+            await this.run(`UPDATE approval_requests SET current_phase = 'approval' WHERE id = ?`, [reqId]);
+          }
+        }
+        console.log(`Database migration: 清理不必要的 edit_signal completion 项 ${staleCompletions.length} 条，推进 ${reqIds.size} 个审批请求到 approval 阶段`);
+      }
+    } catch (e: any) { console.log('Migration: cleanup stale completions:', e.message); }
+
     // 初始化默认用户（不再创建示例数据）
     await this.initDefaultData();
   }
