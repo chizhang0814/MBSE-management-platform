@@ -65,13 +65,13 @@ function DiffView({ oldStr, newStr }: { oldStr: string | null; newStr: string | 
   // 新增：显示所有新字段
   if (!oldObj && newObj) {
     const entries = Object.entries(newObj).filter(([k]) => !HIDDEN_FIELDS.has(k) && newObj[k] != null && newObj[k] !== '');
-    if (entries.length === 0) return <div className="text-xs text-gray-400">无详细信息</div>;
+    if (entries.length === 0) return <div className="text-xs text-gray-400 dark:text-white/40">无详细信息</div>;
     return (
       <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-xs">
         {entries.map(([k, v]) => (
           <div key={k} className="flex gap-1">
-            <span className="text-gray-500 shrink-0">{k}:</span>
-            <span className="text-green-700 break-all">{String(v)}</span>
+            <span className="text-gray-500 dark:text-white/50 shrink-0">{k}:</span>
+            <span className="text-green-700 dark:text-green-400 break-all">{String(v)}</span>
           </div>
         ))}
       </div>
@@ -87,7 +87,7 @@ function DiffView({ oldStr, newStr }: { oldStr: string | null; newStr: string | 
         <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-xs">
           {entries.map(([k, v]) => (
             <div key={k} className="flex gap-1">
-              <span className="text-gray-500 shrink-0">{k}:</span>
+              <span className="text-gray-500 dark:text-white/50 shrink-0">{k}:</span>
               <span className="text-red-500 break-all">{String(v)}</span>
             </div>
           ))}
@@ -101,27 +101,27 @@ function DiffView({ oldStr, newStr }: { oldStr: string | null; newStr: string | 
     const changedKeys = Object.keys(newObj).filter(k =>
       !HIDDEN_FIELDS.has(k) && String(newObj[k] ?? '') !== String(oldObj[k] ?? '')
     );
-    if (changedKeys.length === 0) return <div className="text-xs text-gray-400">无字段变更</div>;
+    if (changedKeys.length === 0) return <div className="text-xs text-gray-400 dark:text-white/40">无字段变更</div>;
     return (
       <div className="space-y-1 text-xs">
         {changedKeys.map(k => (
           <div key={k}>
-            <span className="text-gray-600 font-medium">{k}: </span>
+            <span className="text-gray-600 dark:text-white/60 font-medium">{k}: </span>
             <span className="text-red-500 line-through">{String(oldObj[k] ?? '(空)')}</span>
             {' → '}
-            <span className="text-green-700">{String(newObj[k] ?? '(空)')}</span>
+            <span className="text-green-700 dark:text-green-400">{String(newObj[k] ?? '(空)')}</span>
           </div>
         ))}
       </div>
     );
   }
 
-  return <div className="text-xs text-gray-400">无详细信息</div>;
+  return <div className="text-xs text-gray-400 dark:text-white/40">无详细信息</div>;
 }
 
 const REASON_COLORS: Record<string, string> = {
   '新增': 'bg-green-100 text-green-800',
-  '修改': 'bg-blue-100 text-blue-800',
+  '修改': 'bg-black/[0.06] dark:bg-white/[0.1] text-black dark:text-white',
   '删除': 'bg-red-100 text-red-800',
   '审批通过': 'bg-purple-100 text-purple-800',
 };
@@ -130,7 +130,7 @@ function reasonBadgeClass(reason: string): string {
   for (const [key, cls] of Object.entries(REASON_COLORS)) {
     if (reason.includes(key)) return cls;
   }
-  return 'bg-gray-100 text-gray-700';
+  return 'bg-gray-100 dark:bg-neutral-800 text-gray-700 dark:text-white/70';
 }
 
 // entityTable → entity_type 映射
@@ -173,25 +173,25 @@ export default function HistoryModal({ entityTable, entityId, entityLabel, onClo
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[85vh] flex flex-col">
+      <div className="bg-white dark:bg-neutral-900 rounded-lg border border-gray-200 dark:border-white/10 w-full max-w-2xl max-h-[85vh] flex flex-col">
         {/* Header */}
         <div className="flex justify-between items-center px-6 py-4 border-b">
-          <h2 className="text-lg font-bold text-gray-800">{entityLabel} 的修改历史</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+          <h2 className="text-lg font-bold text-gray-800 dark:text-white">{entityLabel} 的修改历史</h2>
+          <button onClick={onClose} className="text-gray-400 dark:text-white/40 hover:text-gray-600 dark:hover:text-white/60 text-xl">✕</button>
         </div>
 
         {/* Tab 切换 */}
         <div className="flex border-b px-6">
           <button
             onClick={() => setTab('changes')}
-            className={`px-4 py-2 text-sm border-b-2 -mb-px ${tab === 'changes' ? 'border-blue-600 text-blue-600 font-medium' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+            className={`px-4 py-2 text-sm border-b-2 -mb-px ${tab === 'changes' ? 'border-black dark:border-white text-black dark:text-white font-medium' : 'border-transparent text-gray-500 dark:text-white/50 hover:text-gray-700 dark:hover:text-white/70'}`}
           >
             变更记录 ({logs.length})
           </button>
           {TABLE_TO_ENTITY_TYPE[entityTable] && (
             <button
               onClick={() => setTab('approvals')}
-              className={`px-4 py-2 text-sm border-b-2 -mb-px ${tab === 'approvals' ? 'border-blue-600 text-blue-600 font-medium' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+              className={`px-4 py-2 text-sm border-b-2 -mb-px ${tab === 'approvals' ? 'border-black dark:border-white text-black dark:text-white font-medium' : 'border-transparent text-gray-500 dark:text-white/50 hover:text-gray-700 dark:hover:text-white/70'}`}
             >
               审批流程 ({approvalHistory.length})
             </button>
@@ -201,22 +201,22 @@ export default function HistoryModal({ entityTable, entityId, entityLabel, onClo
         {/* Body */}
         <div className="overflow-y-auto flex-1 px-6 py-4">
           {loading ? (
-            <div className="text-center text-gray-400 text-sm py-8">加载中...</div>
+            <div className="text-center text-gray-400 dark:text-white/40 text-sm py-8">加载中...</div>
           ) : tab === 'changes' ? (
             logs.length === 0 ? (
-              <div className="text-center text-gray-400 text-sm py-8">暂无修改记录</div>
+              <div className="text-center text-gray-400 dark:text-white/40 text-sm py-8">暂无修改记录</div>
             ) : (
               <div className="space-y-4">
                 {logs.map(log => (
-                  <div key={log.id} className="border border-gray-200 rounded-lg p-4">
+                  <div key={log.id} className="border border-gray-200 dark:border-white/10 rounded-lg p-4">
                     <div className="flex items-center gap-2 mb-2">
                       <span className={`px-2 py-0.5 text-xs rounded-full font-medium ${reasonBadgeClass(log.reason)}`}>
                         {log.reason}
                       </span>
-                      <span className="text-xs text-gray-600">
+                      <span className="text-xs text-gray-600 dark:text-white/60">
                         {log.changed_by_display || log.changed_by_name || `用户#${log.changed_by}`}
                       </span>
-                      <span className="text-xs text-gray-400">
+                      <span className="text-xs text-gray-400 dark:text-white/40">
                         {parseUtcDate(log.created_at).toLocaleString('zh-CN')}
                       </span>
                     </div>
@@ -227,7 +227,7 @@ export default function HistoryModal({ entityTable, entityId, entityLabel, onClo
             )
           ) : (
             approvalHistory.length === 0 ? (
-              <div className="text-center text-gray-400 text-sm py-8">暂无审批记录</div>
+              <div className="text-center text-gray-400 dark:text-white/40 text-sm py-8">暂无审批记录</div>
             ) : (
               <div className="space-y-4">
                 {approvalHistory.map(req => {
@@ -238,13 +238,13 @@ export default function HistoryModal({ entityTable, entityId, entityLabel, onClo
                     : req.status === 'rejected' ? '已拒绝'
                     : '审批中';
                   return (
-                    <div key={req.id} className="border border-gray-200 rounded-lg p-4">
+                    <div key={req.id} className="border border-gray-200 dark:border-white/10 rounded-lg p-4">
                       {/* 审批请求头 */}
                       <div className="flex items-center gap-2 mb-3">
                         <span className={`px-2 py-0.5 text-xs rounded-full font-medium ${statusColor}`}>{statusLabel}</span>
-                        <span className="text-xs font-medium text-gray-800">{ACTION_LABELS[req.action_type] || req.action_type}</span>
-                        <span className="text-xs text-gray-500">提交人: {req.requester_display_name || req.requester_username}</span>
-                        <span className="text-xs text-gray-400">{parseUtcDate(req.created_at).toLocaleString('zh-CN')}</span>
+                        <span className="text-xs font-medium text-gray-800 dark:text-white">{ACTION_LABELS[req.action_type] || req.action_type}</span>
+                        <span className="text-xs text-gray-500 dark:text-white/50">提交人: {req.requester_display_name || req.requester_username}</span>
+                        <span className="text-xs text-gray-400 dark:text-white/40">{parseUtcDate(req.created_at).toLocaleString('zh-CN')}</span>
                       </div>
                       {/* 审批明细 */}
                       <div className="space-y-1.5">
@@ -264,12 +264,12 @@ export default function HistoryModal({ entityTable, entityId, entityLabel, onClo
                               <span className="mt-0.5">{icon}</span>
                               <div>
                                 <span className="font-medium">{item.recipient_display_name || item.recipient_username}</span>
-                                <span className={`ml-1.5 px-1.5 py-0.5 rounded text-xs ${item.item_type === 'completion' ? 'bg-purple-50 text-purple-700' : 'bg-blue-50 text-blue-700'}`}>
+                                <span className={`ml-1.5 px-1.5 py-0.5 rounded text-xs ${item.item_type === 'completion' ? 'bg-purple-50 text-purple-700' : 'bg-black/[0.03] dark:bg-white/[0.06] text-black dark:text-white'}`}>
                                   {typeLabel}
                                 </span>
-                                <span className="ml-1.5 text-gray-600">{statusText}</span>
+                                <span className="ml-1.5 text-gray-600 dark:text-white/60">{statusText}</span>
                                 {item.responded_at && (
-                                  <span className="ml-1.5 text-gray-400">{parseUtcDate(item.responded_at).toLocaleString('zh-CN')}</span>
+                                  <span className="ml-1.5 text-gray-400 dark:text-white/40">{parseUtcDate(item.responded_at).toLocaleString('zh-CN')}</span>
                                 )}
                                 {item.rejection_reason && (
                                   <div className="mt-0.5 text-red-600">理由: {item.rejection_reason}</div>
@@ -291,7 +291,7 @@ export default function HistoryModal({ entityTable, entityId, entityLabel, onClo
         <div className="px-6 py-3 border-t flex justify-end">
           <button
             onClick={onClose}
-            className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 text-sm"
+            className="btn-secondary text-sm"
           >
             关闭
           </button>

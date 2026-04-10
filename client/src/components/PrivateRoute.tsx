@@ -8,7 +8,7 @@ export default function PrivateRoute() {
   if (!isInitialized) {
     return (
       <div className="flex items-center justify-center min-h-screen">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-black dark:border-white"></div>
       </div>
     );
   }

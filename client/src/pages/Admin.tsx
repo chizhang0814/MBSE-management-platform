@@ -388,9 +388,9 @@ export default function Admin() {
 
   return (
     <Layout>
-      <div className="px-4 sm:px-0">
+      <div className="px-6 py-4">
         <div className="flex justify-between items-center mb-6">
-          <h1 className="text-3xl font-bold text-gray-900">数据管理</h1>
+          <h1 className="text-3xl font-bold text-gray-900 dark:text-white">数据管理</h1>
           <Link
             to="/files"
             className="bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600"
@@ -400,64 +400,64 @@ export default function Admin() {
         </div>
 
         {/* 创建空白表格 */}
-        <div className="bg-white shadow rounded-lg p-6 mb-6">
-          <h2 className="text-xl font-semibold mb-4">创建空白表格</h2>
-          <p className="text-gray-600 mb-4">
+        <div className="bg-white dark:bg-neutral-900 border border-gray-200 dark:border-white/10 rounded-lg p-6 mb-6">
+          <h2 className="text-xl font-semibold mb-4 dark:text-white">创建空白表格</h2>
+          <p className="text-gray-600 dark:text-white/60 mb-4">
             创建一个新的空白数据表格，可以手动添加列定义。创建后可以在"项目数据"页面查看和管理。
           </p>
 
           <div className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm font-medium text-gray-700 dark:text-white/70 mb-2">
                 表名 <span className="text-red-500">*</span>
-                <span className="text-xs text-gray-500 ml-2">（用于数据库存储）</span>
+                <span className="text-xs text-gray-500 dark:text-white/50 ml-2">（用于数据库存储）</span>
               </label>
               <input
                 type="text"
                 value={newTableName}
                 onChange={(e) => setNewTableName(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-blue-500"
+                className="w-full px-3 py-2 border border-gray-300 dark:border-white/20 rounded-lg focus:outline-none focus:border-black dark:bg-neutral-800 dark:text-white"
                 placeholder="例如：project_a_data 或 module_b_2024"
                 pattern="[a-zA-Z][a-zA-Z0-9_]*"
                 title="表名必须以字母开头，只能包含字母、数字和下划线"
               />
-              <p className="mt-1 text-xs text-gray-500">
+              <p className="mt-1 text-xs text-gray-500 dark:text-white/50">
                 表名必须以字母开头，只能包含字母、数字和下划线
               </p>
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                显示名称 <span className="text-xs text-gray-500">（可选）</span>
+              <label className="block text-sm font-medium text-gray-700 dark:text-white/70 mb-2">
+                显示名称 <span className="text-xs text-gray-500 dark:text-white/50">（可选）</span>
               </label>
               <input
                 type="text"
                 value={newTableDisplayName}
                 onChange={(e) => setNewTableDisplayName(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-blue-500"
+                className="w-full px-3 py-2 border border-gray-300 dark:border-white/20 rounded-lg focus:outline-none focus:border-black dark:bg-neutral-800 dark:text-white"
                 placeholder="例如：项目A数据表 或 模块B数据"
               />
-              <p className="mt-1 text-xs text-gray-500">
+              <p className="mt-1 text-xs text-gray-500 dark:text-white/50">
                 如果不填写，将使用表名作为显示名称
               </p>
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm font-medium text-gray-700 dark:text-white/70 mb-2">
                 列定义 <span className="text-red-500">*</span>
-                <span className="text-xs text-gray-500 ml-2">（至少需要一个列）</span>
+                <span className="text-xs text-gray-500 dark:text-white/50 ml-2">（至少需要一个列）</span>
               </label>
               
               {/* 从现有表格复制列定义 */}
-              <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                <p className="text-sm text-gray-700 mb-2">
+              <div className="mb-4 p-4 bg-black/[0.03] dark:bg-white/[0.06] border border-gray-200 dark:border-white/10 rounded-lg">
+                <p className="text-sm text-gray-700 dark:text-white/70 mb-2">
                   <strong>快速复制：</strong>从现有表格复制列定义，创建的表格将使用相同的列定义和跨行显示设置
                 </p>
                 <div className="flex items-center space-x-2">
                   <select
                     value={selectedSourceTable}
                     onChange={(e) => setSelectedSourceTable(e.target.value)}
-                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-blue-500"
+                    className="flex-1 px-3 py-2 border border-gray-300 dark:border-white/20 rounded-lg focus:outline-none focus:border-black dark:bg-neutral-800 dark:text-white"
                   >
                     <option value="">-- 选择要复制的表格 --</option>
                     {existingTables.map((table) => (
@@ -470,7 +470,7 @@ export default function Admin() {
                     type="button"
                     onClick={handleCopyColumnsFromTable}
                     disabled={!selectedSourceTable || loadingColumns}
-                    className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                    className="px-4 py-2 bg-black text-white rounded-[50px] hover:bg-gray-800 disabled:bg-gray-300 disabled:cursor-not-allowed"
                   >
                     {loadingColumns ? '加载中...' : '复制列定义'}
                   </button>
@@ -484,7 +484,7 @@ export default function Admin() {
                       type="text"
                       value={col}
                       onChange={(e) => handleColumnChange(index, e.target.value)}
-                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-blue-500"
+                      className="flex-1 px-3 py-2 border border-gray-300 dark:border-white/20 rounded-lg focus:outline-none focus:border-black dark:bg-neutral-800 dark:text-white"
                       placeholder={`列 ${index + 1} 名称`}
                     />
                     {newTableColumns.length > 1 && (
@@ -502,7 +502,7 @@ export default function Admin() {
               <button
                 type="button"
                 onClick={handleAddColumn}
-                className="mt-2 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
+                className="mt-2 px-4 py-2 border border-gray-300 dark:border-white/20 rounded-lg text-gray-700 dark:text-white/70 hover:bg-gray-50 dark:hover:bg-white/[0.04]"
               >
                 + 添加列
               </button>
@@ -519,7 +519,7 @@ export default function Admin() {
             </div>
 
             {createTableResult && (
-              <div className="mt-4 p-4 bg-gray-50 rounded-lg">
+              <div className="mt-4 p-4 bg-gray-50 dark:bg-neutral-800 rounded-lg">
                 <h3 className="font-semibold mb-2">
                   {createTableResult.success ? '创建成功' : '创建失败'}
                 </h3>
@@ -542,44 +542,44 @@ export default function Admin() {
           </div>
         </div>
 
-        <div className="bg-white shadow rounded-lg p-6 mb-6">
-          <h2 className="text-xl font-semibold mb-4">导入数据</h2>
-          <p className="text-gray-600 mb-4">
+        <div className="bg-white dark:bg-neutral-900 border border-gray-200 dark:border-white/10 rounded-lg p-6 mb-6">
+          <h2 className="text-xl font-semibold mb-4 dark:text-white">导入数据</h2>
+          <p className="text-gray-600 dark:text-white/60 mb-4">
             上传Excel文件(.xlsx)来批量导入数据。每个文件导入到一个独立的数据库表中。
           </p>
 
           <div className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm font-medium text-gray-700 dark:text-white/70 mb-2">
                 选择Excel文件
               </label>
               <input
                 type="file"
                 accept=".xlsx"
                 onChange={handleFileChange}
-                className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+                className="block w-full text-sm text-gray-500 dark:text-white/50 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-black/[0.03] dark:file:bg-white/[0.06] file:text-black dark:file:text-white hover:file:bg-black/[0.06] dark:hover:file:bg-white/[0.1]"
               />
               {file && (
-                <p className="mt-2 text-sm text-gray-600">已选择: {file.name}</p>
+                <p className="mt-2 text-sm text-gray-600 dark:text-white/60">已选择: {file.name}</p>
               )}
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm font-medium text-gray-700 dark:text-white/70 mb-2">
                 数据表名 <span className="text-red-500">*</span>
-                <span className="text-xs text-gray-500 ml-2">（用于存储导入的数据）</span>
+                <span className="text-xs text-gray-500 dark:text-white/50 ml-2">（用于存储导入的数据）</span>
               </label>
               <input
                 type="text"
                 value={tableName}
                 onChange={(e) => setTableName(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-blue-500"
+                className="w-full px-3 py-2 border border-gray-300 dark:border-white/20 rounded-lg focus:outline-none focus:border-black dark:bg-neutral-800 dark:text-white"
                 placeholder="例如：project_a_data 或 module_b_2024"
                 required
                 pattern="[a-zA-Z][a-zA-Z0-9_]*"
                 title="表名必须以字母开头，只能包含字母、数字和下划线"
               />
-              <p className="mt-1 text-xs text-gray-500">
+              <p className="mt-1 text-xs text-gray-500 dark:text-white/50">
                 重要：每个文件对应一个独立的表。如果表名已存在，上传将被拒绝。
               </p>
             </div>
@@ -587,14 +587,14 @@ export default function Admin() {
             <div className="flex space-x-3">
               <button
                 onClick={handleDownloadTemplate}
-                className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
+                className="px-4 py-2 border border-gray-300 dark:border-white/20 rounded-lg text-gray-700 dark:text-white/70 hover:bg-gray-50 dark:hover:bg-white/[0.04]"
               >
                 下载模板
               </button>
               <button
                 onClick={handleUpload}
                 disabled={!file || uploading}
-                className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                className="px-4 py-2 bg-black text-white rounded-[50px] hover:bg-gray-800 disabled:bg-gray-300 disabled:cursor-not-allowed"
               >
                 {uploading ? '上传中...' : '上传并导入'}
               </button>
@@ -602,7 +602,7 @@ export default function Admin() {
           </div>
 
           {result && (
-            <div className="mt-6 p-4 bg-gray-50 rounded-lg">
+            <div className="mt-6 p-4 bg-gray-50 dark:bg-neutral-800 rounded-lg">
               <h3 className="font-semibold mb-2">导入结果</h3>
               <div className="space-y-2">
                 <p className="text-sm">
@@ -629,8 +629,8 @@ export default function Admin() {
           
           {/* 显示警告信息 */}
           {tableName && (
-            <div className="mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-              <p className="text-sm text-yellow-800">
+            <div className="mt-4 p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800/30 rounded-lg">
+              <p className="text-sm text-yellow-800 dark:text-yellow-200">
                 <strong>重要提示：</strong>
                 <br />• <span className="font-bold">每个文件对应一个独立的数据库表</span>
                 <br />• 表名必须唯一，不能与现有表重复
@@ -642,9 +642,9 @@ export default function Admin() {
           )}
         </div>
 
-        <div className="bg-white shadow rounded-lg p-6">
-          <h2 className="text-xl font-semibold mb-4">Excel文件格式说明</h2>
-          <div className="text-sm text-gray-600 space-y-2">
+        <div className="bg-white dark:bg-neutral-900 border border-gray-200 dark:border-white/10 rounded-lg p-6">
+          <h2 className="text-xl font-semibold mb-4 dark:text-white">Excel文件格式说明</h2>
+          <div className="text-sm text-gray-600 dark:text-white/60 space-y-2">
             <p>系统支持电气接口数据（EICD）Excel文件导入，主要必填字段包括：</p>
             
             <h3 className="font-semibold mt-4 mb-2">必填字段：</h3>
@@ -662,7 +662,7 @@ export default function Admin() {
               <li>额定电流（A）→ price</li>
             </ul>
             
-            <p className="mt-3 text-gray-700">
+            <p className="mt-3 text-gray-700 dark:text-white/70">
               <strong>注意：</strong>系统支持智能列名识别，会自动匹配类似含义的列名。上传时会显示实际识别到的列名。
             </p>
           </div>

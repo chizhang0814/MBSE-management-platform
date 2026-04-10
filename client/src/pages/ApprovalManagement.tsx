@@ -134,14 +134,14 @@ export default function ApprovalManagement() {
   })() : {};
 
   const tabCls = (t: string) => t === activeTab
-    ? 'border-b-2 border-blue-500 text-blue-600 px-4 py-2 text-sm font-medium'
-    : 'text-gray-500 hover:text-gray-700 px-4 py-2 text-sm font-medium cursor-pointer';
+    ? 'border-b-2 border-black dark:border-white text-black dark:text-white px-4 py-2 text-sm font-medium'
+    : 'text-gray-500 dark:text-white/50 hover:text-gray-700 dark:hover:text-white/70 px-4 py-2 text-sm font-medium cursor-pointer';
 
   return (
     <Layout>
-      <div className="max-w-6xl mx-auto px-4 py-6">
+      <div className="max-w-6xl mx-auto px-6 py-4">
         {/* Tabs */}
-        <div className="flex border-b border-gray-200 mb-4">
+        <div className="flex border-b border-gray-200 dark:border-white/10 mb-4">
           <span className={tabCls('pending')} onClick={() => setActiveTab('pending')}>待审批</span>
           <span className={tabCls('all')} onClick={() => setActiveTab('all')}>全部记录</span>
           <span className={tabCls('my')} onClick={() => setActiveTab('my')}>我的申请</span>
@@ -149,27 +149,27 @@ export default function ApprovalManagement() {
 
         {/* List */}
         {loading ? (
-          <p className="text-gray-400 text-sm">加载中...</p>
+          <p className="text-gray-400 dark:text-white/40 text-sm">加载中...</p>
         ) : rows.length === 0 ? (
-          <p className="text-gray-400 text-sm">暂无记录</p>
+          <p className="text-gray-400 dark:text-white/40 text-sm">暂无记录</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm border-collapse">
               <thead>
-                <tr className="bg-gray-50 border-b">
-                  <th className="px-4 py-2 text-left text-gray-600">项目</th>
-                  <th className="px-4 py-2 text-left text-gray-600">操作类型</th>
-                  <th className="px-4 py-2 text-left text-gray-600">申请人</th>
-                  <th className="px-4 py-2 text-left text-gray-600">申请时间</th>
-                  <th className="px-4 py-2 text-left text-gray-600">状态</th>
-                  <th className="px-4 py-2 text-left text-gray-600">操作</th>
+                <tr className="bg-gray-50 dark:bg-neutral-800 border-b dark:border-white/10">
+                  <th className="px-4 py-2 text-left text-gray-600 dark:text-white/60">项目</th>
+                  <th className="px-4 py-2 text-left text-gray-600 dark:text-white/60">操作类型</th>
+                  <th className="px-4 py-2 text-left text-gray-600 dark:text-white/60">申请人</th>
+                  <th className="px-4 py-2 text-left text-gray-600 dark:text-white/60">申请时间</th>
+                  <th className="px-4 py-2 text-left text-gray-600 dark:text-white/60">状态</th>
+                  <th className="px-4 py-2 text-left text-gray-600 dark:text-white/60">操作</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map(r => {
                   const st = STATUS_LABELS[r.status] || { text: r.status, cls: 'bg-gray-100 text-gray-700' };
                   return (
-                    <tr key={r.id} className="border-b hover:bg-gray-50">
+                    <tr key={r.id} className="border-b dark:border-white/10 hover:bg-gray-50 dark:hover:bg-white/[0.04]">
                       <td className="px-4 py-2">{r.project_name}</td>
                       <td className="px-4 py-2">{ACTION_LABELS[r.action_type] || r.action_type}</td>
                       <td className="px-4 py-2">{r.requester_username}</td>
@@ -180,7 +180,7 @@ export default function ApprovalManagement() {
                       <td className="px-4 py-2">
                         <button
                           onClick={() => { setSelected(r); setShowRejectInput(false); setRejectReason(''); }}
-                          className="text-blue-600 hover:text-blue-800 text-xs"
+                          className="text-black dark:text-white hover:text-black/60 dark:hover:text-white/60 text-xs"
                         >
                           查看详情
                         </button>
@@ -197,28 +197,28 @@ export default function ApprovalManagement() {
       {/* Detail Modal */}
       {selected && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[85vh] flex flex-col">
-            <div className="flex justify-between items-center px-6 py-4 border-b">
+          <div className="bg-white dark:bg-neutral-900 rounded-lg border border-gray-200 dark:border-white/10 w-full max-w-2xl max-h-[85vh] flex flex-col">
+            <div className="flex justify-between items-center px-6 py-4 border-b dark:border-white/10">
               <div>
                 <h2 className="text-lg font-bold">
                   {ACTION_LABELS[selected.action_type] || selected.action_type} 审批详情
                 </h2>
-                <p className="text-xs text-gray-500 mt-0.5">
+                <p className="text-xs text-gray-500 dark:text-white/50 mt-0.5">
                   申请人：{selected.requester_username} · 项目：{selected.project_name} · {parseUtcDate(selected.created_at).toLocaleString()}
                 </p>
               </div>
-              <button onClick={() => setSelected(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+              <button onClick={() => setSelected(null)} className="text-gray-400 dark:text-white/40 hover:text-gray-600 dark:hover:text-white/60 text-xl">✕</button>
             </div>
 
             <div className="overflow-y-auto flex-1 px-6 py-4 space-y-4">
               {/* Payload */}
               <div>
-                <h3 className="text-sm font-semibold text-gray-700 mb-2">提交内容</h3>
-                <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm bg-gray-50 rounded p-3">
+                <h3 className="text-sm font-semibold text-gray-700 dark:text-white/70 mb-2">提交内容</h3>
+                <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm bg-gray-50 dark:bg-neutral-800 rounded p-3">
                   {Object.entries(payload).map(([k, v]) => (
                     <div key={k} className="flex gap-1">
-                      <span className="text-gray-500 shrink-0">{k}：</span>
-                      <span className="text-gray-800 break-all">{String(v) || '-'}</span>
+                      <span className="text-gray-500 dark:text-white/50 shrink-0">{k}：</span>
+                      <span className="text-gray-800 dark:text-white break-all">{String(v) || '-'}</span>
                     </div>
                   ))}
                 </div>
@@ -231,7 +231,7 @@ export default function ApprovalManagement() {
                     {STATUS_LABELS[selected.status]?.text}
                   </span>
                   {selected.reviewed_by_username && (
-                    <span className="ml-2 text-gray-500">
+                    <span className="ml-2 text-gray-500 dark:text-white/50">
                       由 {selected.reviewed_by_username} 于 {parseUtcDate(selected.reviewed_at!).toLocaleString()} 处理
                     </span>
                   )}
@@ -244,26 +244,26 @@ export default function ApprovalManagement() {
               {/* Reject input */}
               {showRejectInput && (
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">拒绝原因</label>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-white/70 mb-1">拒绝原因</label>
                   <textarea
                     value={rejectReason}
                     onChange={e => setRejectReason(e.target.value)}
                     rows={3}
-                    className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                    className="w-full border border-gray-300 dark:border-white/20 rounded px-3 py-2 text-sm dark:bg-neutral-800 dark:text-white"
                     placeholder="请填写拒绝原因..."
                   />
                 </div>
               )}
             </div>
 
-            <div className="px-6 py-4 border-t flex justify-end gap-3">
+            <div className="px-6 py-4 border-t dark:border-white/10 flex justify-end gap-3">
               {selected.status === 'pending' && canReview && (
                 <>
                   {showRejectInput ? (
                     <>
                       <button
                         onClick={() => { setShowRejectInput(false); setRejectReason(''); }}
-                        className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 text-sm"
+                        className="px-4 py-2 border border-gray-300 dark:border-white/20 rounded hover:bg-gray-50 dark:hover:bg-white/[0.04] text-sm dark:text-white"
                       >
                         取消
                       </button>
@@ -296,7 +296,7 @@ export default function ApprovalManagement() {
               )}
               <button
                 onClick={() => setSelected(null)}
-                className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 text-sm"
+                className="px-4 py-2 border border-gray-300 dark:border-white/20 rounded hover:bg-gray-50 dark:hover:bg-white/[0.04] text-sm dark:text-white"
               >
                 关闭
               </button>

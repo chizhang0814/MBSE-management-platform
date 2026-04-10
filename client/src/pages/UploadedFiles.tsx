@@ -166,7 +166,7 @@ export default function UploadedFiles() {
     if (status === 'completed') return 'bg-green-100 text-green-800';
     if (status === 'completed_with_errors') return 'bg-yellow-100 text-yellow-800';
     if (status === 'historical') return 'bg-gray-100 text-gray-800';
-    return 'bg-blue-100 text-blue-800';
+    return 'bg-black/[0.06] dark:bg-white/[0.1] text-black dark:text-white';
   };
 
   const getStatusText = (status: string) => {
@@ -188,7 +188,7 @@ export default function UploadedFiles() {
     return (
       <Layout>
         <div className="flex justify-center items-center h-64">
-          <div className="text-lg text-gray-600">加载中...</div>
+          <div className="text-lg text-gray-600 dark:text-white/60">加载中...</div>
         </div>
       </Layout>
     );
@@ -196,9 +196,9 @@ export default function UploadedFiles() {
 
   return (
     <Layout>
-      <div className="px-4 sm:px-0">
+      <div className="px-6 py-4">
         <div className="flex justify-between items-center mb-6">
-          <h1 className="text-3xl font-bold text-gray-900">上传文件管理</h1>
+          <h1 className="text-3xl font-bold text-gray-900 dark:text-white">上传文件管理</h1>
           <div className="flex gap-2">
           <button
             onClick={handleClearAll}
@@ -210,61 +210,61 @@ export default function UploadedFiles() {
           <button
             onClick={handleSync}
             disabled={syncing}
-            className="bg-purple-500 text-white px-4 py-2 rounded-lg hover:bg-purple-600 disabled:bg-gray-300"
+            className="btn-primary px-4 py-2 disabled:bg-gray-300"
           >
             {syncing ? '同步中...' : '同步现有文件'}
           </button>
           </div>
         </div>
         {files.length === 0 ? (
-          <div className="bg-white shadow rounded-lg p-8 text-center">
-            <p className="text-gray-500 text-lg">暂无上传文件</p>
-            <p className="text-gray-400 text-sm mt-2">上传的文件将显示在这里</p>
+          <div className="bg-white dark:bg-neutral-900 border border-gray-200 dark:border-white/10 rounded-lg p-8 text-center">
+            <p className="text-gray-500 dark:text-white/50 text-lg">暂无上传文件</p>
+            <p className="text-gray-400 dark:text-white/40 text-sm mt-2">上传的文件将显示在这里</p>
           </div>
         ) : (
-          <div className="bg-white shadow overflow-hidden sm:rounded-md">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
+          <div className="bg-white dark:bg-neutral-900 border border-gray-200 dark:border-white/10 overflow-hidden sm:rounded-md">
+            <table className="min-w-full divide-y divide-gray-200 dark:divide-white/10">
+              <thead className="bg-gray-50 dark:bg-neutral-800">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-white/50 uppercase tracking-wider">
                     ID
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-white/50 uppercase tracking-wider">
                     文件名
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-white/50 uppercase tracking-wider">
                     项目名称
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-white/50 uppercase tracking-wider">
                     导入类型
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-white/50 uppercase tracking-wider">
                     上传者
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-white/50 uppercase tracking-wider">
                     总行数
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-white/50 uppercase tracking-wider">
                     成功/跳过/失败
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-white/50 uppercase tracking-wider">
                     状态
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-white/50 uppercase tracking-wider">
                     上传时间
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-white/50 uppercase tracking-wider">
                     操作
                   </th>
                 </tr>
               </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
+              <tbody className="bg-white dark:bg-neutral-900 divide-y divide-gray-200 dark:divide-white/10">
                 {files.map((file) => (
                   <tr key={file.id}>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{file.id}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">{file.id}</td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm text-gray-900">{file.original_filename}</div>
-                      <div className="text-xs text-gray-500">{formatFileSize(file.file_size)}</div>
+                      <div className="text-sm text-gray-900 dark:text-white">{file.original_filename}</div>
+                      <div className="text-xs text-gray-500 dark:text-white/50">{formatFileSize(file.file_size)}</div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm">
                       {file.project_name ? (
@@ -272,20 +272,20 @@ export default function UploadedFiles() {
                           {file.project_name}
                         </span>
                       ) : (
-                        <span className="text-gray-400 italic text-xs">未关联项目</span>
+                        <span className="text-gray-400 dark:text-white/40 italic text-xs">未关联项目</span>
                       )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm">
-                      <span className="px-2 py-1 bg-blue-50 text-blue-700 rounded text-xs">
+                      <span className="px-2 py-1 bg-black/[0.03] dark:bg-white/[0.06] text-black dark:text-white rounded text-xs">
                         {getImportTypeLabel(file.table_type)}
                       </span>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{file.uploaded_by_name}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{file.total_rows}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">{file.uploaded_by_name}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">{file.total_rows}</td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm">
                         {file.status === 'historical' ? (
-                          <span className="text-gray-500 italic">统计未知</span>
+                          <span className="text-gray-500 dark:text-white/50 italic">统计未知</span>
                         ) : (
                           <>
                             <span className="text-green-600">{file.success_count}</span>
@@ -302,13 +302,13 @@ export default function UploadedFiles() {
                         {getStatusText(file.status)}
                       </span>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-white/50">
                       {parseUtcDate(file.uploaded_at).toLocaleString()}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
                       <button
                         onClick={() => handleViewDetail(file.id)}
-                        className="text-blue-600 hover:text-blue-900"
+                        className="text-black hover:text-black/60"
                       >
                         详情
                       </button>
@@ -377,9 +377,9 @@ export default function UploadedFiles() {
           })();
           return (
             <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50 p-4">
-              <div className="bg-white rounded-lg shadow-xl w-full max-w-3xl max-h-[90vh] flex flex-col">
+              <div className="bg-white dark:bg-neutral-900 rounded-lg shadow-xl w-full max-w-3xl max-h-[90vh] flex flex-col">
                 {/* Header */}
-                <div className="flex justify-between items-center px-6 py-4 border-b">
+                <div className="flex justify-between items-center px-6 py-4 border-b dark:border-white/10">
                   <h3 className="text-xl font-bold">导入详情</h3>
                   <div className="flex items-center gap-2">
                     <button
@@ -413,7 +413,7 @@ export default function UploadedFiles() {
                     >
                       导出详情
                     </button>
-                    <button onClick={() => setSelectedFile(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+                    <button onClick={() => setSelectedFile(null)} className="text-gray-400 dark:text-white/40 hover:text-gray-600 dark:hover:text-white/60 text-xl">✕</button>
                   </div>
                 </div>
 
@@ -423,37 +423,37 @@ export default function UploadedFiles() {
                   {/* 基本信息 */}
                   <div className="grid grid-cols-2 gap-x-8 gap-y-3 text-sm">
                     <div>
-                      <p className="text-gray-500">文件名</p>
+                      <p className="text-gray-500 dark:text-white/50">文件名</p>
                       <p className="font-medium break-all">{selectedFile.original_filename}</p>
                     </div>
                     <div>
-                      <p className="text-gray-500">文件大小</p>
+                      <p className="text-gray-500 dark:text-white/50">文件大小</p>
                       <p className="font-medium">{formatFileSize(selectedFile.file_size)}</p>
                     </div>
                     <div>
-                      <p className="text-gray-500">项目</p>
+                      <p className="text-gray-500 dark:text-white/50">项目</p>
                       <p className="font-medium text-green-700">{selectedFile.project_name || '未关联项目'}</p>
                     </div>
                     <div>
-                      <p className="text-gray-500">导入表类型</p>
+                      <p className="text-gray-500 dark:text-white/50">导入表类型</p>
                       <p className="font-medium">{tableTypeLabel}</p>
                     </div>
                     <div>
-                      <p className="text-gray-500">上传者</p>
+                      <p className="text-gray-500 dark:text-white/50">上传者</p>
                       <p className="font-medium">{selectedFile.uploaded_by_name}</p>
                     </div>
                     <div>
-                      <p className="text-gray-500">上传时间</p>
+                      <p className="text-gray-500 dark:text-white/50">上传时间</p>
                       <p className="font-medium">{parseUtcDate(selectedFile.uploaded_at).toLocaleString()}</p>
                     </div>
                     <div>
-                      <p className="text-gray-500">文件状态</p>
+                      <p className="text-gray-500 dark:text-white/50">文件状态</p>
                       <p className={`font-medium ${selectedFile.fileExists ? 'text-green-600' : 'text-red-500'}`}>
                         {selectedFile.fileExists ? '✓ 原文件存在' : '✗ 原文件已删除'}
                       </p>
                     </div>
                     <div>
-                      <p className="text-gray-500">状态</p>
+                      <p className="text-gray-500 dark:text-white/50">状态</p>
                       <span className={`inline-block px-2 py-0.5 text-xs font-semibold rounded-full ${getStatusColor(selectedFile.status)}`}>
                         {getStatusText(selectedFile.status)}
                       </span>
@@ -461,23 +461,23 @@ export default function UploadedFiles() {
                   </div>
 
                   {/* 导入统计 */}
-                  <div className="bg-gray-50 rounded-lg p-4 grid grid-cols-4 gap-4 text-center text-sm">
+                  <div className="bg-gray-50 dark:bg-neutral-800 rounded-lg p-4 grid grid-cols-4 gap-4 text-center text-sm">
                     <div>
-                      <p className="text-gray-500 mb-1">总行数</p>
-                      <p className="text-2xl font-bold text-gray-800">{selectedFile.total_rows}</p>
+                      <p className="text-gray-500 dark:text-white/50 mb-1">总行数</p>
+                      <p className="text-2xl font-bold text-gray-800 dark:text-white">{selectedFile.total_rows}</p>
                     </div>
                     <div>
-                      <p className="text-gray-500 mb-1">成功导入</p>
+                      <p className="text-gray-500 dark:text-white/50 mb-1">成功导入</p>
                       <p className="text-2xl font-bold text-green-600">
                         {selectedFile.success_count !== null ? selectedFile.success_count : '—'}
                       </p>
                     </div>
                     <div>
-                      <p className="text-gray-500 mb-1">跳过</p>
+                      <p className="text-gray-500 dark:text-white/50 mb-1">跳过</p>
                       <p className="text-2xl font-bold text-yellow-600">{selectedFile.skipped_count || 0}</p>
                     </div>
                     <div>
-                      <p className="text-gray-500 mb-1">导入失败</p>
+                      <p className="text-gray-500 dark:text-white/50 mb-1">导入失败</p>
                       <p className="text-2xl font-bold text-red-600">{selectedFile.error_count}</p>
                     </div>
                   </div>
@@ -485,7 +485,7 @@ export default function UploadedFiles() {
                   {/* 未匹配列 */}
                   {unmatchedList.length > 0 && (
                     <div>
-                      <h4 className="text-sm font-semibold text-gray-700 mb-2">
+                      <h4 className="text-sm font-semibold text-gray-700 dark:text-white/70 mb-2">
                         未匹配的列（{unmatchedList.length} 列，数据未导入）
                       </h4>
                       <div className="bg-orange-50 border border-orange-200 rounded-md px-4 py-3 flex flex-wrap gap-2">
@@ -504,9 +504,9 @@ export default function UploadedFiles() {
                       const hasDetail = (sr.skipped?.length || 0) + (sr.errors?.length || 0) + (sr.warnings?.length || 0) > 0;
                       return (
                         <div key={sheetKey}>
-                          <h4 className="text-sm font-semibold text-gray-700 mb-1">
+                          <h4 className="text-sm font-semibold text-gray-700 dark:text-white/70 mb-1">
                             Sheet：{sheetKey}
-                            <span className="ml-2 text-xs font-normal text-gray-500">
+                            <span className="ml-2 text-xs font-normal text-gray-500 dark:text-white/50">
                               新建 {sr.success} 条{(sr.merged || 0) > 0 ? ` / 合并 ${sr.merged} 条` : ''} / 跳过 {sr.skipped?.length || 0} 条 / 失败 {sr.errors?.length || 0} 条{(sr.warnings?.length || 0) > 0 ? ` / 校验警告 ${sr.warnings!.length} 条` : ''}
                             </span>
                           </h4>
@@ -538,7 +538,7 @@ export default function UploadedFiles() {
                               )}
                             </div>
                           ) : (
-                            <p className="text-xs text-gray-400 mb-3">无跳过/失败记录</p>
+                            <p className="text-xs text-gray-400 dark:text-white/40 mb-3">无跳过/失败记录</p>
                           )}
                         </div>
                       );
@@ -548,7 +548,7 @@ export default function UploadedFiles() {
                       {/* 旧格式兼容展示 */}
                       {skippedList.length > 0 && (
                         <div>
-                          <h4 className="text-sm font-semibold text-gray-700 mb-2">跳过详情（共 {skippedList.length} 条）</h4>
+                          <h4 className="text-sm font-semibold text-gray-700 dark:text-white/70 mb-2">跳过详情（共 {skippedList.length} 条）</h4>
                           <div className="border border-yellow-200 rounded-md overflow-hidden">
                             <div className="bg-yellow-50 px-3 py-1.5 text-xs text-yellow-700 border-b border-yellow-200 font-medium">行号 / 原因</div>
                             <ul className="max-h-48 overflow-y-auto divide-y divide-yellow-100 text-xs text-yellow-800">
@@ -559,7 +559,7 @@ export default function UploadedFiles() {
                       )}
                       {errorList.length > 0 && (
                         <div>
-                          <h4 className="text-sm font-semibold text-gray-700 mb-2">失败详情（共 {errorList.length} 条）</h4>
+                          <h4 className="text-sm font-semibold text-gray-700 dark:text-white/70 mb-2">失败详情（共 {errorList.length} 条）</h4>
                           <div className="border border-red-200 rounded-md overflow-hidden">
                             <div className="bg-red-50 px-3 py-1.5 text-xs text-red-600 border-b border-red-200 font-medium">行号 / 原因</div>
                             <ul className="max-h-48 overflow-y-auto divide-y divide-red-100 text-xs text-red-800">
@@ -569,7 +569,7 @@ export default function UploadedFiles() {
                         </div>
                       )}
                       {selectedFile.error_count > 0 && errorList.length === 0 && (
-                        <p className="text-sm text-gray-400 italic">该记录为旧版导入，未保存错误详情。</p>
+                        <p className="text-sm text-gray-400 dark:text-white/40 italic">该记录为旧版导入，未保存错误详情。</p>
                       )}
                     </>
                   )}
@@ -577,10 +577,10 @@ export default function UploadedFiles() {
                 </div>
 
                 {/* Footer */}
-                <div className="px-6 py-4 border-t flex justify-end">
+                <div className="px-6 py-4 border-t dark:border-white/10 flex justify-end">
                   <button
                     onClick={() => setSelectedFile(null)}
-                    className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm"
+                    className="px-4 py-2 border border-gray-300 dark:border-white/20 rounded-lg hover:bg-gray-50 dark:hover:bg-white/[0.04] text-sm dark:text-white"
                   >
                     关闭
                   </button>

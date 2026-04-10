@@ -28,50 +28,50 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100">
-      <div className="bg-white p-8 rounded-lg shadow-xl w-full max-w-md">
-        <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-gray-800">EICD综合管理平台</h1>
-          <p className="text-gray-600 mt-2">登录您的账户</p>
+    <div className="min-h-screen flex items-center justify-center bg-white dark:bg-black">
+      <div className="w-full max-w-sm px-6">
+        <div className="text-center mb-10">
+          <h1 className="text-3xl font-extrabold text-black dark:text-white tracking-tighter">EICD综合管理平台</h1>
+          <p className="text-black/40 dark:text-white/40 mt-2 text-sm tracking-snug">登录您的账户</p>
         </div>
 
         <form onSubmit={handleSubmit}>
-          <div className="mb-4">
-            <label className="block text-gray-700 text-sm font-bold mb-2">
+          <div className="mb-5">
+            <label className="block text-black dark:text-white text-xs font-bold mb-1.5 tracking-snug">
               用户名
             </label>
             <input
               type="text"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-blue-500"
+              className="input-field"
               placeholder="请输入用户名"
               required
             />
           </div>
 
           <div className="mb-6">
-            <label className="block text-gray-700 text-sm font-bold mb-2">
+            <label className="block text-black dark:text-white text-xs font-bold mb-1.5 tracking-snug">
               密码
             </label>
             <input
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-blue-500"
+              className="input-field"
               placeholder="请输入密码"
               required
             />
           </div>
 
           {registerMessage && (
-            <div className="mb-4 p-3 bg-green-100 border border-green-400 text-green-700 rounded">
+            <div className="mb-4 p-3 bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-700 text-green-800 dark:text-green-300 rounded-lg text-sm">
               {registerMessage}
             </div>
           )}
 
           {error && (
-            <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
+            <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-700 text-red-800 dark:text-red-300 rounded-lg text-sm">
               {error}
             </div>
           )}
@@ -79,15 +79,15 @@ export default function Login() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-blue-500 text-white py-2 rounded-lg font-semibold hover:bg-blue-600 focus:outline-none focus:shadow-outline disabled:bg-blue-300"
+            className="btn-primary w-full py-2.5"
           >
             {loading ? '登录中...' : '登录'}
           </button>
         </form>
 
-        <p className="mt-6 text-center text-sm text-gray-600">
+        <p className="mt-8 text-center text-sm text-black/40 dark:text-white/40">
           没有账户？
-          <Link to="/register" className="text-blue-500 hover:text-blue-700 font-medium ml-1">
+          <Link to="/register" className="text-black dark:text-white underline decoration-1 underline-offset-2 hover:text-black/70 dark:hover:text-white/70 ml-1 transition-colors">
             立即注册
           </Link>
         </p>
@@ -95,5 +95,3 @@ export default function Login() {
     </div>
   );
 }
-
-

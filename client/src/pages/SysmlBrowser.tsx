@@ -155,19 +155,19 @@ export default function SysmlBrowser() {
 
   return (
     <Layout>
-      <div className="px-4 py-6">
-        <h1 className="text-2xl font-bold text-gray-900 mb-6">SysML v2 模型浏览</h1>
+      <div className="px-6 py-4">
+        <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-6">SysML v2 模型浏览</h1>
 
         {loadingProjects ? (
-          <div className="flex items-center gap-2 text-gray-500">
-            <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600" />
+          <div className="flex items-center gap-2 text-gray-500 dark:text-white/50">
+            <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-black dark:border-white" />
             正在连接 SysML v2 API...
           </div>
         ) : apiError ? (
           <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
             <p className="font-medium text-yellow-800">SysML v2 API 暂时无法连接</p>
             <p className="text-sm mt-1 text-yellow-700">{apiError}</p>
-            <p className="text-sm mt-2 text-gray-500">
+            <p className="text-sm mt-2 text-gray-500 dark:text-white/50">
               sysml-api 启动时需要编译 Scala 源码，通常需要 2～5 分钟。请稍后重试。
             </p>
             <button
@@ -182,12 +182,12 @@ export default function SysmlBrowser() {
           <div className="grid grid-cols-12 gap-4">
 
             {/* 左栏：项目列表 */}
-            <div className="col-span-3 bg-white rounded-lg shadow p-4">
-              <h2 className="text-sm font-semibold text-gray-500 uppercase mb-3">
+            <div className="col-span-3 bg-white dark:bg-neutral-900 rounded-lg border border-gray-200 dark:border-white/10 p-4">
+              <h2 className="text-sm font-semibold text-gray-500 dark:text-white/50 uppercase mb-3">
                 项目 ({projects.length})
               </h2>
               {projects.length === 0 ? (
-                <p className="text-sm text-gray-400">暂无项目</p>
+                <p className="text-sm text-gray-400 dark:text-white/40">暂无项目</p>
               ) : (
                 <ul className="space-y-1">
                   {projects.map(p => (
@@ -196,16 +196,16 @@ export default function SysmlBrowser() {
                         onClick={() => selectProject(p)}
                         className={`w-full text-left px-3 py-2 rounded-md text-sm transition-colors ${
                           selectedProject?.['@id'] === p['@id']
-                            ? 'bg-blue-50 text-blue-700 font-medium'
-                            : 'hover:bg-gray-50 text-gray-700'
+                            ? 'bg-black/[0.03] dark:bg-white/[0.06] text-black dark:text-white font-medium'
+                            : 'hover:bg-gray-50 dark:hover:bg-white/[0.04] text-gray-700 dark:text-white/70'
                         }`}
                       >
                         <div className="font-medium truncate">{p.name}</div>
                         {p.description && (
-                          <div className="text-xs text-gray-400 truncate mt-0.5">{p.description}</div>
+                          <div className="text-xs text-gray-400 dark:text-white/40 truncate mt-0.5">{p.description}</div>
                         )}
                         {p.created && (
-                          <div className="text-xs text-gray-300 mt-0.5">
+                          <div className="text-xs text-gray-300 dark:text-white/30 mt-0.5">
                             {new Date(p.created).toLocaleDateString('zh-CN')}
                           </div>
                         )}
@@ -217,17 +217,17 @@ export default function SysmlBrowser() {
             </div>
 
             {/* 中栏：分支 */}
-            <div className="col-span-2 bg-white rounded-lg shadow p-4">
-              <h2 className="text-sm font-semibold text-gray-500 uppercase mb-3">分支</h2>
+            <div className="col-span-2 bg-white dark:bg-neutral-900 rounded-lg border border-gray-200 dark:border-white/10 p-4">
+              <h2 className="text-sm font-semibold text-gray-500 dark:text-white/50 uppercase mb-3">分支</h2>
               {!selectedProject ? (
-                <p className="text-sm text-gray-400">请先选择项目</p>
+                <p className="text-sm text-gray-400 dark:text-white/40">请先选择项目</p>
               ) : loadingBranches ? (
-                <div className="flex items-center gap-1 text-gray-400 text-sm">
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500" />
+                <div className="flex items-center gap-1 text-gray-400 dark:text-white/40 text-sm">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-black dark:border-white" />
                   加载中...
                 </div>
               ) : branches.length === 0 ? (
-                <p className="text-sm text-gray-400">暂无分支</p>
+                <p className="text-sm text-gray-400 dark:text-white/40">暂无分支</p>
               ) : (
                 <ul className="space-y-1">
                   {branches.map(b => (
@@ -236,16 +236,16 @@ export default function SysmlBrowser() {
                         onClick={() => selectBranch(b)}
                         className={`w-full text-left px-3 py-2 rounded-md text-sm transition-colors ${
                           selectedBranch?.['@id'] === b['@id']
-                            ? 'bg-blue-50 text-blue-700 font-medium'
-                            : 'hover:bg-gray-50 text-gray-700'
+                            ? 'bg-black/[0.03] dark:bg-white/[0.06] text-black dark:text-white font-medium'
+                            : 'hover:bg-gray-50 dark:hover:bg-white/[0.04] text-gray-700 dark:text-white/70'
                         }`}
                       >
                         <div className="flex items-center gap-1">
-                          <span className="text-gray-400">⎇</span>
+                          <span className="text-gray-400 dark:text-white/40">⎇</span>
                           {b.name}
                         </div>
                         {b.referencedCommit && (
-                          <div className="text-xs text-gray-300 font-mono mt-0.5">
+                          <div className="text-xs text-gray-300 dark:text-white/30 font-mono mt-0.5">
                             {b.referencedCommit['@id'].slice(0, 8)}...
                           </div>
                         )}
@@ -257,27 +257,27 @@ export default function SysmlBrowser() {
             </div>
 
             {/* 右栏：元素列表 */}
-            <div className="col-span-7 bg-white rounded-lg shadow p-4">
+            <div className="col-span-7 bg-white dark:bg-neutral-900 rounded-lg border border-gray-200 dark:border-white/10 p-4">
               <div className="flex items-center justify-between mb-3">
-                <h2 className="text-sm font-semibold text-gray-500 uppercase">
+                <h2 className="text-sm font-semibold text-gray-500 dark:text-white/50 uppercase">
                   模型元素
                   {elements.length > 0 && (
-                    <span className="ml-2 text-blue-600 font-bold">{elements.length}</span>
+                    <span className="ml-2 text-black dark:text-white font-bold">{elements.length}</span>
                   )}
                 </h2>
               </div>
 
               {!selectedBranch ? (
-                <p className="text-sm text-gray-400">请选择分支查看模型元素</p>
+                <p className="text-sm text-gray-400 dark:text-white/40">请选择分支查看模型元素</p>
               ) : loadingElements ? (
-                <div className="flex items-center gap-2 text-gray-400 text-sm">
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500" />
+                <div className="flex items-center gap-2 text-gray-400 dark:text-white/40 text-sm">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-black dark:border-white" />
                   加载元素中...
                 </div>
               ) : elementError ? (
                 <div className="text-red-500 text-sm">{elementError}</div>
               ) : elements.length === 0 ? (
-                <p className="text-sm text-gray-400">该分支暂无元素</p>
+                <p className="text-sm text-gray-400 dark:text-white/40">该分支暂无元素</p>
               ) : (
                 <>
                   {/* 类型统计标签 */}
@@ -295,7 +295,7 @@ export default function SysmlBrowser() {
                         key={t}
                         onClick={() => setFilterType(filterType === t ? '' : t)}
                         className={`px-2 py-0.5 rounded-full text-xs font-medium transition-colors ${
-                          filterType === t ? 'bg-blue-600 text-white' : `${badge(t)} hover:opacity-80`
+                          filterType === t ? 'bg-black text-white dark:bg-white dark:text-black' : `${badge(t)} hover:opacity-80`
                         }`}
                       >
                         {ELEMENT_TYPE_LABELS[t] || t} ({typeCounts[t]})
@@ -309,14 +309,14 @@ export default function SysmlBrowser() {
                     placeholder="搜索名称 / 类型 / ID..."
                     value={search}
                     onChange={e => setSearch(e.target.value)}
-                    className="w-full border border-gray-200 rounded-md px-3 py-1.5 text-sm mb-3 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                    className="w-full border border-gray-200 dark:border-white/10 rounded-md px-3 py-1.5 text-sm mb-3 focus:outline-none focus:ring-1 focus:ring-black dark:bg-neutral-800 dark:text-white"
                   />
 
                   {/* 元素表格 */}
                   <div className="overflow-auto max-h-[calc(100vh-320px)]">
                     <table className="min-w-full text-sm">
                       <thead>
-                        <tr className="bg-gray-50 text-xs text-gray-500 uppercase">
+                        <tr className="bg-gray-50 dark:bg-neutral-800 text-xs text-gray-500 dark:text-white/50 uppercase">
                           <th className="px-3 py-2 text-left w-8">#</th>
                           <th className="px-3 py-2 text-left">类型</th>
                           <th className="px-3 py-2 text-left">名称</th>
@@ -324,36 +324,36 @@ export default function SysmlBrowser() {
                           <th className="px-3 py-2 text-left w-8"></th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-gray-100">
+                      <tbody className="divide-y divide-gray-100 dark:divide-white/10">
                         {filtered.map((el, idx) => (
                           <>
                             <tr
                               key={el['@id']}
-                              className="hover:bg-gray-50 cursor-pointer"
+                              className="hover:bg-gray-50 dark:hover:bg-white/[0.04] cursor-pointer"
                               onClick={() =>
                                 setExpandedElement(expandedElement === el['@id'] ? null : el['@id'])
                               }
                             >
-                              <td className="px-3 py-2 text-gray-400">{idx + 1}</td>
+                              <td className="px-3 py-2 text-gray-400 dark:text-white/40">{idx + 1}</td>
                               <td className="px-3 py-2">
                                 <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${badge(el['@type'])}`}>
                                   {ELEMENT_TYPE_LABELS[el['@type']] || el['@type']}
                                 </span>
                               </td>
-                              <td className="px-3 py-2 font-medium text-gray-800">
-                                {el.name || <span className="text-gray-400 italic">无名称</span>}
+                              <td className="px-3 py-2 font-medium text-gray-800 dark:text-white">
+                                {el.name || <span className="text-gray-400 dark:text-white/40 italic">无名称</span>}
                               </td>
-                              <td className="px-3 py-2 font-mono text-xs text-gray-400 truncate max-w-[180px]">
+                              <td className="px-3 py-2 font-mono text-xs text-gray-400 dark:text-white/40 truncate max-w-[180px]">
                                 {el['@id']}
                               </td>
-                              <td className="px-3 py-2 text-gray-400 text-xs">
+                              <td className="px-3 py-2 text-gray-400 dark:text-white/40 text-xs">
                                 {expandedElement === el['@id'] ? '▲' : '▶'}
                               </td>
                             </tr>
                             {expandedElement === el['@id'] && (
-                              <tr key={`${el['@id']}-detail`} className="bg-blue-50">
+                              <tr key={`${el['@id']}-detail`} className="bg-black/[0.03] dark:bg-white/[0.06]">
                                 <td colSpan={5} className="px-4 py-3">
-                                  <pre className="text-xs text-gray-700 overflow-auto max-h-48 whitespace-pre-wrap break-all">
+                                  <pre className="text-xs text-gray-700 dark:text-white/70 overflow-auto max-h-48 whitespace-pre-wrap break-all">
                                     {JSON.stringify(el, null, 2)}
                                   </pre>
                                 </td>
@@ -363,7 +363,7 @@ export default function SysmlBrowser() {
                         ))}
                         {filtered.length === 0 && (
                           <tr>
-                            <td colSpan={5} className="px-3 py-6 text-center text-gray-400">
+                            <td colSpan={5} className="px-3 py-6 text-center text-gray-400 dark:text-white/40">
                               没有符合条件的元素
                             </td>
                           </tr>

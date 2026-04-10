@@ -71,123 +71,111 @@ export default function Dashboard() {
 
   return (
     <Layout>
-      <div className="px-4 sm:px-0">
-        <h1 className="text-3xl font-bold text-gray-900 mb-8">
-          欢迎, {user?.username}
+      <div className="px-6 py-4">
+        <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-6">
+          欢迎，{user?.username}
         </h1>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="bg-white overflow-hidden shadow rounded-lg">
-            <div className="p-5">
-              <div className="flex items-center">
-                <div className="flex-shrink-0 bg-blue-500 rounded-md p-3">
-                  <svg className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                  </svg>
-                </div>
-                <div className="ml-5 w-0 flex-1">
-                  <dl>
-                    <dt className="text-sm font-medium text-gray-500 truncate">
-                      {user?.role === 'admin' ? '总项目数' : '参与项目数'}
-                    </dt>
-                    <dd className="text-lg font-medium text-gray-900">
-                      {stats.totalProjects}
-                    </dd>
-                  </dl>
-                </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="bg-white dark:bg-neutral-900 border border-gray-200 dark:border-white/10 rounded-lg p-5">
+            <div className="flex items-center">
+              <div className="flex-shrink-0 bg-black dark:bg-white rounded-full p-3">
+                <svg className="h-5 w-5 text-white dark:text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+              </div>
+              <div className="ml-4">
+                <dt className="text-xs text-black/40 dark:text-white/40 tracking-snug mono-label">
+                  {user?.role === 'admin' ? '总项目数' : '参与项目数'}
+                </dt>
+                <dd className="text-xl font-extrabold text-black dark:text-white tracking-tight mt-0.5">
+                  {stats.totalProjects}
+                </dd>
               </div>
             </div>
           </div>
 
-          <div className="bg-white overflow-hidden shadow rounded-lg">
-            <div className="p-5">
-              <div className="flex items-center">
-                <div className="flex-shrink-0 bg-yellow-500 rounded-md p-3">
-                  <svg className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                </div>
-                <div className="ml-5 w-0 flex-1">
-                  <dl>
-                    <dt className="text-sm font-medium text-gray-500 truncate">
-                      待处理任务
-                    </dt>
-                    <dd className="text-lg font-medium text-gray-900">
-                      {stats.pendingTasks}
-                    </dd>
-                  </dl>
-                </div>
+          <div className="bg-white dark:bg-neutral-900 border border-gray-200 dark:border-white/10 rounded-lg p-5">
+            <div className="flex items-center">
+              <div className="flex-shrink-0 bg-black dark:bg-white rounded-full p-3">
+                <svg className="h-5 w-5 text-white dark:text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <div className="ml-4">
+                <dt className="text-xs text-black/40 dark:text-white/40 tracking-snug mono-label">
+                  待处理任务
+                </dt>
+                <dd className="text-xl font-extrabold text-black dark:text-white tracking-tight mt-0.5">
+                  {stats.pendingTasks}
+                </dd>
               </div>
             </div>
           </div>
 
-          <div className="bg-white overflow-hidden shadow rounded-lg">
-            <div className="p-5">
-              <div className="flex items-center">
-                <div className="flex-shrink-0 bg-green-500 rounded-md p-3">
-                  <svg className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                </div>
-                <div className="ml-5 w-0 flex-1">
-                  <dl>
-                    <dt className="text-sm font-medium text-gray-500 truncate">
-                      已完成任务
-                    </dt>
-                    <dd className="text-lg font-medium text-gray-900">
-                      {stats.completedTasks}
-                    </dd>
-                  </dl>
-                </div>
+          <div className="bg-white dark:bg-neutral-900 border border-gray-200 dark:border-white/10 rounded-lg p-5">
+            <div className="flex items-center">
+              <div className="flex-shrink-0 bg-black dark:bg-white rounded-full p-3">
+                <svg className="h-5 w-5 text-white dark:text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <div className="ml-4">
+                <dt className="text-xs text-black/40 dark:text-white/40 tracking-snug mono-label">
+                  已完成任务
+                </dt>
+                <dd className="text-xl font-extrabold text-black dark:text-white tracking-tight mt-0.5">
+                  {stats.completedTasks}
+                </dd>
               </div>
             </div>
           </div>
         </div>
 
         {/* 项目数据统计 */}
-        <div className="mt-8 bg-white shadow rounded-lg">
-          <div className="px-6 py-4 border-b border-gray-200">
-            <h2 className="text-xl font-bold">项目数据统计</h2>
-            <p className="text-sm text-gray-500 mt-1">共 {projectStats.length} 个项目</p>
+        <div className="mt-8 bg-white dark:bg-neutral-900 border border-gray-200 dark:border-white/10 rounded-lg">
+          <div className="px-6 py-4 border-b border-gray-100 dark:border-white/10">
+            <h2 className="text-base font-bold text-black dark:text-white tracking-snug">项目数据统计</h2>
+            <p className="text-xs text-black/40 dark:text-white/40 mt-1">共 {projectStats.length} 个项目</p>
           </div>
           <div className="p-6">
             {projectStats.length === 0 ? (
-              <p className="text-gray-500 text-center py-8">暂无项目数据</p>
+              <p className="text-black/30 dark:text-white/30 text-center py-8 text-sm">暂无项目数据</p>
             ) : (
               <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <table className="min-w-full">
+                  <thead>
+                    <tr className="border-b border-gray-200 dark:border-white/10">
+                      <th className="px-6 py-3 text-left mono-label text-black/40 dark:text-white/40">
                         项目名称
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th className="px-6 py-3 text-left mono-label text-black/40 dark:text-white/40">
                         设备数
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th className="px-6 py-3 text-left mono-label text-black/40 dark:text-white/40">
                         信号数
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th className="px-6 py-3 text-left mono-label text-black/40 dark:text-white/40">
                         操作
                       </th>
                     </tr>
                   </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
+                  <tbody className="divide-y divide-gray-100 dark:divide-white/10">
                     {projectStats.map((stat) => (
-                      <tr key={stat.projectId} className="hover:bg-gray-50">
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                      <tr key={stat.projectId} className="hover:bg-black/[0.02] dark:hover:bg-white/[0.04] transition-colors">
+                        <td className="px-6 py-3.5 whitespace-nowrap text-sm font-bold text-black dark:text-white tracking-snug">
                           {stat.projectName}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        <td className="px-6 py-3.5 whitespace-nowrap text-sm text-black/60 dark:text-white/60">
                           {(stat.deviceCount || 0).toLocaleString()}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        <td className="px-6 py-3.5 whitespace-nowrap text-sm text-black/60 dark:text-white/60">
                           {(stat.signalCount || 0).toLocaleString()}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm">
+                        <td className="px-6 py-3.5 whitespace-nowrap text-sm">
                           <button
                             onClick={() => navigate(`/project-data?projectId=${stat.projectId}`)}
-                            className="text-blue-600 hover:text-blue-800 font-medium"
+                            className="text-black dark:text-white underline decoration-1 underline-offset-2 hover:text-black/60 dark:hover:text-white/60 transition-colors"
                           >
                             查看项目数据
                           </button>
@@ -205,5 +193,3 @@ export default function Dashboard() {
     </Layout>
   );
 }
-
-

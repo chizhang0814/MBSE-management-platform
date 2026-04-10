@@ -208,6 +208,8 @@ export default function ProjectDataView() {
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
   const [showSwitchProjectModal, setShowSwitchProjectModal] = useState(false);
   const [switchProjectTargetId, setSwitchProjectTargetId] = useState<number | ''>('');
+  const [showProjectDropdown, setShowProjectDropdown] = useState(false);
+  const projectDropdownRef = useRef<HTMLDivElement>(null);
 
   // ── 视图切换 ──
   const [activeView, setActiveView] = useState<'devices' | 'signals' | 'section-connectors'>('devices');
@@ -344,6 +346,7 @@ export default function ProjectDataView() {
   const [showDeviceModal, setShowDeviceModal] = useState(false);
   const [editingDevice, setEditingDevice] = useState<DeviceRow | null>(null);
   const [deviceForm, setDeviceForm] = useState<Partial<DeviceRow>>({});
+  const [deviceFormSnapshot, setDeviceFormSnapshot] = useState<string>('');
   const [fieldWarnings, setFieldWarnings] = useState<Record<string, { message: string; type: 'error' | 'warning' }>>({});
 
   // ── 连接器添加/编辑弹窗 ──
@@ -351,6 +354,7 @@ export default function ProjectDataView() {
   const [connectorTargetDeviceId, setConnectorTargetDeviceId] = useState<number | null>(null);
   const [editingConnector, setEditingConnector] = useState<ConnectorRow | null>(null);
   const [connectorForm, setConnectorForm] = useState<Partial<ConnectorRow>>({});
+  const [connectorFormSnapshot, setConnectorFormSnapshot] = useState<string>('');
 
   // ── 连接器合并弹窗 ──
   const [showMergeConnModal, setShowMergeConnModal] = useState(false);
@@ -364,11 +368,13 @@ export default function ProjectDataView() {
   const [pinTargetConnectorId, setPinTargetConnectorId] = useState<number | null>(null);
   const [editingPin, setEditingPin] = useState<PinRow | null>(null);
   const [pinForm, setPinForm] = useState<Partial<PinRow>>({});
+  const [pinFormSnapshot, setPinFormSnapshot] = useState<string>('');
 
   // ── 信号添加/编辑弹窗 ──
   const [showSignalModal, setShowSignalModal] = useState(false);
   const [editingSignal, setEditingSignal] = useState<SignalRow | null>(null);
   const [signalForm, setSignalForm] = useState<Partial<SignalRow>>({});
+  const [signalFormSnapshot, setSignalFormSnapshot] = useState<string>('');
   const [signalEndpoints, setSignalEndpoints] = useState<SignalEndpoint[]>([
     { 设备编号: '', 设备端元器件编号: '', 针孔号: '', 信号名称: '', 信号定义: '' },
     { 设备编号: '', 设备端元器件编号: '', 针孔号: '', 信号名称: '', 信号定义: '' },
@@ -452,6 +458,17 @@ export default function ProjectDataView() {
     observer.observe(sentinel);
     return () => observer.disconnect();
   });
+
+  // 项目下拉点击外部关闭
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (projectDropdownRef.current && !projectDropdownRef.current.contains(e.target as Node)) {
+        setShowProjectDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
 
   useEffect(() => {
     if (!selectedProjectId) { setProjectMembers([]); setMemberRoles([]); return; }
@@ -743,7 +760,9 @@ export default function ProjectDataView() {
     const defaultOwner = myProjectRole === '系统组' ? (user?.username || '') : '';
     // 默认选中所有构型
     const defaultConfigs = projectConfigurations.map(c => c.name).join(',');
-    setDeviceForm({ '设备负责人': defaultOwner, '设备装机构型': defaultConfigs });
+    const initForm = { '设备负责人': defaultOwner, '设备装机构型': defaultConfigs };
+    setDeviceForm(initForm);
+    setDeviceFormSnapshot(JSON.stringify(initForm));
     setFieldWarnings({});
     setShowDeviceModal(true);
   };
@@ -761,6 +780,7 @@ export default function ProjectDataView() {
 
     setEditingDevice(device);
     setDeviceForm({ ...device });
+    setDeviceFormSnapshot(JSON.stringify({ ...device }));
     setFieldWarnings({});
     setShowDeviceModal(true);
     // 编辑时立即触发查重
@@ -864,7 +884,9 @@ export default function ProjectDataView() {
     setEditingConnector(null);
     const device = devices.find(d => d.id === deviceId);
     const lin = (device as any)?.['设备LIN号（DOORS）'];
-    setConnectorForm(lin ? { '设备端元器件编号': `${lin}-` } : {});
+    const initForm = lin ? { '设备端元器件编号': `${lin}-` } : {};
+    setConnectorForm(initForm);
+    setConnectorFormSnapshot(JSON.stringify(initForm));
     setShowConnectorModal(true);
   };
 
@@ -881,6 +903,7 @@ export default function ProjectDataView() {
     setConnectorTargetDeviceId(deviceId);
     setEditingConnector(conn);
     setConnectorForm({ ...conn });
+    setConnectorFormSnapshot(JSON.stringify({ ...conn }));
     setShowConnectorModal(true);
 
     if (heartbeatRef.current) clearInterval(heartbeatRef.current);
@@ -1131,6 +1154,7 @@ export default function ProjectDataView() {
     setConnectorTargetDeviceId(deviceId);
     setEditingPin(null);
     setPinForm({});
+    setPinFormSnapshot(JSON.stringify({}));
     setShowPinModal(true);
   };
 
@@ -1148,6 +1172,7 @@ export default function ProjectDataView() {
     setConnectorTargetDeviceId(deviceId);
     setEditingPin(pin);
     setPinForm({ ...pin });
+    setPinFormSnapshot(JSON.stringify({ ...pin }));
     setShowPinModal(true);
 
     if (heartbeatRef.current) clearInterval(heartbeatRef.current);
@@ -1245,7 +1270,12 @@ export default function ProjectDataView() {
 
   const openAddSignal = async () => {
     setEditingSignal(null);
-    setSignalForm({});
+    const initForm = {};
+    setSignalForm(initForm);
+    setSignalFormSnapshot(JSON.stringify({ form: initForm, endpoints: [
+      { 设备编号: '', 设备端元器件编号: '', 针孔号: '', 信号名称: '', 信号定义: '' },
+      { 设备编号: '', 设备端元器件编号: '', 针孔号: '', 信号名称: '', 信号定义: '' },
+    ]}));
     setSignalEndpoints([
       { 设备编号: '', 设备端元器件编号: '', 针孔号: '', 信号名称: '', 信号定义: '' },
       { 设备编号: '', 设备端元器件编号: '', 针孔号: '', 信号名称: '', 信号定义: '' },
@@ -1344,6 +1374,7 @@ export default function ProjectDataView() {
         })
       : [{ 设备编号: '', 设备端元器件编号: '', 针孔号: '', 信号名称: '', 信号定义: '', 设备负责人: '', input: 0, output: 0 }];
     setSignalEndpoints(epList);
+    setSignalFormSnapshot(JSON.stringify({ form: { ...freshSignal }, endpoints: epList }));
     setEpDeviceSearch(epList.map(e => e.设备编号));
     setEpDeviceResults(epList.map(() => []));
 
@@ -1566,17 +1597,17 @@ export default function ProjectDataView() {
 
   const renderDeviceView = () => (
     <div className="flex flex-col h-full">
-      <div className="flex justify-between items-center mb-3 shrink-0">
+      <div className="flex justify-between items-center mb-3 shrink-0 flex-wrap gap-2">
         <div className="flex items-center gap-3 flex-wrap">
-          <h2 className="text-lg font-semibold">
+          <h2 className="text-lg font-semibold whitespace-nowrap">
             设备列表（{devices.length} 台 / 连接器共 {devices.reduce((s, d) => s + (d.connector_count ?? 0), 0)} 个）
           </h2>
           {statusSummary && (
-            <div className="flex gap-2 text-xs">
+            <div className="flex gap-2 text-xs whitespace-nowrap">
               <span className="px-2 py-0.5 rounded bg-green-50 text-green-700">
                 设备: {statusSummary.devices.normal} 正常{statusSummary.devices.Draft > 0 && <>, <span className="text-yellow-600">{statusSummary.devices.Draft} Draft</span></>}
               </span>
-              <span className="px-2 py-0.5 rounded bg-blue-50 text-blue-700">
+              <span className="px-2 py-0.5 rounded bg-black/[0.03] dark:bg-white/[0.06] text-black dark:text-white">
                 连接器: {statusSummary.connectors.normal} 正常{statusSummary.connectors.Draft > 0 && <>, <span className="text-yellow-600">{statusSummary.connectors.Draft} Draft</span></>}
               </span>
               <span className="px-2 py-0.5 rounded bg-purple-50 text-purple-700">
@@ -1585,7 +1616,7 @@ export default function ProjectDataView() {
             </div>
           )}
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 shrink-0">
           {isAdmin && (
             <button
               onClick={async () => {
@@ -1595,16 +1626,16 @@ export default function ProjectDataView() {
                 if (res.ok) { await loadDevices(); }
                 else { alert((await res.json()).error || '清空失败'); }
               }}
-              className="bg-red-500 text-white px-3 py-1.5 rounded text-sm hover:bg-red-600"
+              className="bg-red-500 text-white px-3 py-1.5 rounded-pill text-sm hover:bg-red-600 whitespace-nowrap"
             >清空设备视图数据</button>
           )}
           {canManageDevices && (
             <>
               <button
                 onClick={() => { setImportDevFile(null); setImportDevResult(null); setShowImportDevDataModal(true); }}
-                className="bg-purple-600 text-white px-3 py-1.5 rounded text-sm hover:bg-purple-700"
+                className="btn-secondary text-sm whitespace-nowrap"
               >导入设备和连接器数据</button>
-              <button id="tour-add-device" onClick={openAddDevice} className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700">
+              <button id="tour-add-device" onClick={openAddDevice} className="btn-primary text-sm whitespace-nowrap">
                 + 添加设备
               </button>
             </>
@@ -1614,9 +1645,9 @@ export default function ProjectDataView() {
 
       <div className="flex-1 min-h-0 overflow-y-auto">
       {loading ? (
-        <div className="text-center py-8 text-gray-500">加载中...</div>
+        <div className="text-center py-8 text-gray-500 dark:text-white/50">加载中...</div>
       ) : devices.length === 0 ? (
-        <div className="text-center py-8 text-gray-400">暂无设备数据</div>
+        <div className="text-center py-8 text-gray-400 dark:text-white/40">暂无设备数据</div>
       ) : (() => {
         const filteredDevices = devices.filter(d => {
           // 状态筛选（也包含有待审批子项的设备）
@@ -1663,28 +1694,28 @@ export default function ProjectDataView() {
         });
         const hasAnyFilter = Object.values(deviceFilters).some(v => v) || configFilterSelected.length > 0;
         return (
-        <div className="bg-white rounded-lg shadow">
+        <div className="bg-white dark:bg-neutral-900 rounded-lg shadow">
           <table className="min-w-full text-sm">
-            <thead className="bg-gray-50 sticky top-0 z-10">
+            <thead className="bg-gray-50 dark:bg-neutral-800 sticky top-0 z-10">
               <tr>
-                <th className="px-2 py-2 text-left text-xs text-gray-500 w-8"></th>
-                <th className="px-2 py-2 text-left text-xs text-gray-500 max-w-[90px]">设备编号</th>
-                <th className="px-2 py-2 text-left text-xs text-gray-500 max-w-[80px]">构型</th>
-                <th className="px-2 py-2 text-left text-xs text-gray-500 min-w-[100px]">状态</th>
-                <th className="px-2 py-2 text-left text-xs text-gray-500 max-w-[100px]">设备LIN号（DOORS）</th>
-                <th className="px-2 py-2 text-left text-xs text-gray-500">设备中文名称</th>
-                <th className="px-2 py-2 text-left text-xs text-gray-500 max-w-[70px]">ATA（前2位筛选）</th>
-                <th className="px-2 py-2 text-left text-xs text-gray-500 max-w-[60px]">DAL</th>
-                <th className="px-2 py-2 text-left text-xs text-gray-500 max-w-[50px]">等级</th>
-                <th className="px-2 py-2 text-left text-xs text-gray-500 max-w-[80px]">设备负责人</th>
-                <th className="px-2 py-2 text-left text-xs text-gray-500 max-w-[60px]">连接器数</th>
-                <th className="px-2 py-2 text-left text-xs text-gray-500 max-w-[90px] cursor-pointer select-none hover:text-blue-600"
+                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50 w-8"></th>
+                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50 max-w-[90px]">设备编号</th>
+                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50 max-w-[80px]">构型</th>
+                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50 min-w-[100px]">状态</th>
+                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50 max-w-[100px]">设备LIN号（DOORS）</th>
+                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50">设备中文名称</th>
+                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50 max-w-[70px]">ATA（前2位筛选）</th>
+                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50 max-w-[60px]">DAL</th>
+                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50 max-w-[50px]">等级</th>
+                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50 max-w-[80px]">设备负责人</th>
+                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50 max-w-[60px]">连接器数</th>
+                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50 max-w-[90px] cursor-pointer select-none hover:text-black dark:hover:text-white"
                   onClick={() => setDeviceSortOrder(o => o === 'desc' ? 'asc' : 'desc')}>
                   最后更新 {deviceSortOrder === 'desc' ? '▼' : '▲'}
                 </th>
-                <th className="px-2 py-2 text-left text-xs text-gray-500 w-[130px]">操作</th>
+                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50 w-[130px]">操作</th>
               </tr>
-              <tr className="bg-white border-b">
+              <tr className="bg-white dark:bg-neutral-900 border-b">
                 <th className="px-4 py-1"></th>
                 {['设备编号'].map(col => (
                   <th key={col} className="px-2 py-1 max-w-[90px]">
@@ -1694,11 +1725,11 @@ export default function ProjectDataView() {
                         placeholder="筛选..."
                         value={deviceFilters[col] || ''}
                         onChange={e => setDeviceFilters(prev => ({ ...prev, [col]: e.target.value }))}
-                        className="w-full px-1.5 py-0.5 pr-5 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-400"
+                        className="w-full px-1.5 py-0.5 pr-5 text-xs border border-gray-300 dark:border-white/20 rounded focus:outline-none focus:border-black"
                       />
                       {deviceFilters[col] && (
                         <button onClick={() => setDeviceFilters(prev => ({ ...prev, [col]: '' }))}
-                          className="absolute right-1 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs leading-none">&times;</button>
+                          className="absolute right-1 top-1/2 -translate-y-1/2 text-gray-400 dark:text-white/40 hover:text-gray-600 dark:text-white/60 text-xs leading-none">&times;</button>
                       )}
                     </div>
                   </th>
@@ -1707,7 +1738,7 @@ export default function ProjectDataView() {
                   <div className="relative">
                     <button
                       onClick={() => setConfigFilterOpen(o => !o)}
-                      className={`w-full px-1.5 py-0.5 text-xs border rounded text-left flex items-center justify-between gap-1 ${configFilterSelected.length > 0 ? 'border-violet-400 bg-violet-50 text-violet-700' : 'border-gray-300 bg-white text-gray-600'}`}
+                      className={`w-full px-1.5 py-0.5 text-xs border rounded text-left flex items-center justify-between gap-1 ${configFilterSelected.length > 0 ? 'border-violet-400 bg-violet-50 text-violet-700' : 'border-gray-300 dark:border-white/20 bg-white dark:bg-neutral-900 text-gray-600 dark:text-white/60'}`}
                     >
                       <span className="truncate">{configFilterSelected.length === 0 ? '所有' : configFilterSelected.length === projectConfigurations.length ? '所有' : `已选 ${configFilterSelected.length} 个`}</span>
                       {configFilterSelected.length > 0 && (
@@ -1715,21 +1746,21 @@ export default function ProjectDataView() {
                       )}
                     </button>
                     {configFilterOpen && (
-                      <div className="absolute top-full left-0 mt-0.5 z-30 bg-white border border-gray-200 rounded shadow-lg min-w-[220px] whitespace-nowrap">
-                        <label className="flex items-center gap-1.5 px-2 py-1 hover:bg-gray-50 cursor-pointer border-b border-gray-100">
+                      <div className="absolute top-full left-0 mt-0.5 z-30 bg-white dark:bg-neutral-900 border border-gray-200 dark:border-white/10 rounded shadow-lg min-w-[220px] whitespace-nowrap">
+                        <label className="flex items-center gap-1.5 px-2 py-1 hover:bg-gray-50 dark:hover:bg-white/[0.04] cursor-pointer border-b border-gray-100 dark:border-white/10">
                           <input
                             type="checkbox"
                             checked={configFilterSelected.length === projectConfigurations.length && projectConfigurations.length > 0}
                             onChange={e => setConfigFilterSelected(e.target.checked ? projectConfigurations.map(c => c.name) : [])}
                             className="accent-violet-600"
                           />
-                          <span className="text-xs font-medium text-gray-600">全选</span>
+                          <span className="text-xs font-medium text-gray-600 dark:text-white/60">全选</span>
                         </label>
                         {projectConfigurations.map((c, idx) => {
                           const n = idx + 1;
                           const circled = n <= 20 ? String.fromCodePoint(0x245F + n) : n <= 35 ? String.fromCodePoint(0x323C + n) : `(${n})`;
                           return (
-                          <label key={c.id} className="flex items-center gap-1.5 px-2 py-1 hover:bg-gray-50 cursor-pointer">
+                          <label key={c.id} className="flex items-center gap-1.5 px-2 py-1 hover:bg-gray-50 dark:hover:bg-white/[0.04] cursor-pointer">
                             <input
                               type="checkbox"
                               checked={configFilterSelected.includes(c.name)}
@@ -1740,8 +1771,8 @@ export default function ProjectDataView() {
                           </label>
                           );
                         })}
-                        <div className="border-t border-gray-100 px-2 py-1">
-                          <button onClick={() => setConfigFilterOpen(false)} className="text-xs text-gray-400 hover:text-gray-600 w-full text-right">关闭</button>
+                        <div className="border-t border-gray-100 dark:border-white/10 px-2 py-1">
+                          <button onClick={() => setConfigFilterOpen(false)} className="text-xs text-gray-400 dark:text-white/40 hover:text-gray-600 dark:text-white/60 w-full text-right">关闭</button>
                         </div>
                       </div>
                     )}
@@ -1751,7 +1782,7 @@ export default function ProjectDataView() {
                   <select
                     value={deviceFilters['_status'] || ''}
                     onChange={e => setDeviceFilters(prev => ({ ...prev, _status: e.target.value }))}
-                    className="w-full px-1 py-0.5 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-400 bg-white"
+                    className="w-full px-1 py-0.5 text-xs border border-gray-300 dark:border-white/20 rounded focus:outline-none focus:border-black dark:focus:border-white bg-white dark:bg-neutral-800 dark:text-white"
                   >
                     <option value="">全部状态</option>
                     <option value="Draft">Draft</option>
@@ -1772,11 +1803,11 @@ export default function ProjectDataView() {
                         placeholder="筛选..."
                         value={deviceFilters[col] || ''}
                         onChange={e => setDeviceFilters(prev => ({ ...prev, [col]: e.target.value }))}
-                        className="w-full px-1 py-0.5 pr-5 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-400"
+                        className="w-full px-1 py-0.5 pr-5 text-xs border border-gray-300 dark:border-white/20 rounded focus:outline-none focus:border-black"
                       />
                       {deviceFilters[col] && (
                         <button onClick={() => setDeviceFilters(prev => ({ ...prev, [col]: '' }))}
-                          className="absolute right-1 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs leading-none">&times;</button>
+                          className="absolute right-1 top-1/2 -translate-y-1/2 text-gray-400 dark:text-white/40 hover:text-gray-600 dark:text-white/60 text-xs leading-none">&times;</button>
                       )}
                     </div>
                   </th>
@@ -1786,7 +1817,7 @@ export default function ProjectDataView() {
                   <select
                     value={deviceFilters['设备等级'] || ''}
                     onChange={e => setDeviceFilters(prev => ({ ...prev, '设备等级': e.target.value }))}
-                    className="w-full px-1 py-0.5 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-400 bg-white"
+                    className="w-full px-1 py-0.5 text-xs border border-gray-300 dark:border-white/20 rounded focus:outline-none focus:border-black dark:focus:border-white bg-white dark:bg-neutral-800 dark:text-white"
                   >
                     <option value="">全部</option>
                     {['1级', '2级', '3级', '4级', '5级'].map(v => <option key={v} value={v}>{v}</option>)}
@@ -1802,11 +1833,11 @@ export default function ProjectDataView() {
                         placeholder="筛选..."
                         value={deviceFilters[col] || ''}
                         onChange={e => setDeviceFilters(prev => ({ ...prev, [col]: e.target.value }))}
-                        className="w-full px-1 py-0.5 pr-5 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-400"
+                        className="w-full px-1 py-0.5 pr-5 text-xs border border-gray-300 dark:border-white/20 rounded focus:outline-none focus:border-black"
                       />
                       {deviceFilters[col] && (
                         <button onClick={() => setDeviceFilters(prev => ({ ...prev, [col]: '' }))}
-                          className="absolute right-1 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs leading-none">&times;</button>
+                          className="absolute right-1 top-1/2 -translate-y-1/2 text-gray-400 dark:text-white/40 hover:text-gray-600 dark:text-white/60 text-xs leading-none">&times;</button>
                       )}
                     </div>
                   </th>
@@ -1822,30 +1853,30 @@ export default function ProjectDataView() {
                         const v = e.target.value;
                         if (v === '' || /^\d+$/.test(v)) setDeviceFilters(prev => ({ ...prev, connector_count: v }));
                       }}
-                      className="w-full px-1 py-0.5 pr-5 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-400"
+                      className="w-full px-1 py-0.5 pr-5 text-xs border border-gray-300 dark:border-white/20 rounded focus:outline-none focus:border-black"
                     />
                     {deviceFilters['connector_count'] && (
                       <button onClick={() => setDeviceFilters(prev => ({ ...prev, connector_count: '' }))}
-                        className="absolute right-1 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs leading-none">&times;</button>
+                        className="absolute right-1 top-1/2 -translate-y-1/2 text-gray-400 dark:text-white/40 hover:text-gray-600 dark:text-white/60 text-xs leading-none">&times;</button>
                     )}
                   </div>
                 </th>
                 <th className="px-4 py-1"></th>
                 <th className="px-4 py-1">
                     {hasAnyFilter && (
-                      <button onClick={() => setDeviceFilters({})} className="text-xs text-gray-400 hover:text-red-500">全部清除</button>
+                      <button onClick={() => setDeviceFilters({})} className="text-xs text-gray-400 dark:text-white/40 hover:text-red-500">全部清除</button>
                     )}
                   </th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100">
+            <tbody className="divide-y divide-gray-100 dark:divide-white/10">
               {filteredDevices.map((device, index) => {
                 const isExpanded = expandedDeviceId === device.id;
                 const lock = lockMap[device.id];
                 return (
                   <React.Fragment key={device.id}>
                     <tr
-                      className={`hover:bg-gray-50 ${hasTodo(device) ? 'bg-orange-100' : isExpanded ? 'bg-blue-50' : ''} cursor-pointer`}
+                      className={`hover:bg-gray-50 dark:hover:bg-white/[0.04] ${hasTodo(device) ? 'bg-orange-100' : isExpanded ? 'bg-black/[0.03] dark:bg-white/[0.06]' : ''} cursor-pointer`}
                       onDoubleClick={async () => {
                         if (!isExpanded) {
                           setExpandedDeviceId(device.id);
@@ -1868,7 +1899,7 @@ export default function ProjectDataView() {
                                 if (e.target.checked) setBatchApprovalIds(prev => [...prev, rid]);
                                 else setBatchApprovalIds(prev => prev.filter(id => id !== rid));
                               }}
-                              className="rounded border-gray-300"
+                              className="rounded border-gray-300 dark:border-white/20"
                             />
                           )}
                         </td>
@@ -1884,7 +1915,7 @@ export default function ProjectDataView() {
                               if (device.status === 'Pending') await loadApprovalInfo('device', device.id);
                             }
                           }}
-                          className="text-gray-400 hover:text-blue-600 font-mono text-xs"
+                          className="text-gray-400 dark:text-white/40 hover:text-black dark:hover:text-white font-mono text-xs"
                         >
                           {isExpanded ? '▼' : '▶'}
                         </button>
@@ -1892,7 +1923,7 @@ export default function ProjectDataView() {
                       <td className="px-2 py-2 font-medium text-sm max-w-[90px] truncate" title={device.设备编号}>{device.设备编号}</td>
                       <td className="px-2 py-2 text-sm max-w-[80px]">
                         {projectConfigurations.length === 0
-                          ? <span className="text-gray-300">—</span>
+                          ? <span className="text-gray-300 dark:text-white/30">—</span>
                           : (() => {
                               const deviceConfigs = (device.设备装机构型 || '').split(',').map(s => s.trim()).filter(Boolean);
                               return projectConfigurations.map((c, idx) => {
@@ -1910,7 +1941,7 @@ export default function ProjectDataView() {
                         )}
                         {device.status === 'Pending' && (
                           <>
-                            <span className="px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 text-xs font-semibold">审批中</span>
+                            <span className="px-1.5 py-0.5 rounded bg-black/10 dark:bg-white/15 text-black dark:text-white text-xs font-semibold">审批中</span>
                             {device.pending_item_type === 'approval' && <span className="ml-1 px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 text-xs">待我审批</span>}
                             {device.pending_item_type === 'completion' && <span className="ml-1 px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 text-xs">待我完善</span>}
                           </>
@@ -1930,36 +1961,36 @@ export default function ProjectDataView() {
                         )}
                         {/* 已导入/已更新标签暂时隐藏 */}
                       </td>
-                      <td className="px-2 py-2 text-gray-600 text-sm max-w-[100px] truncate" title={device['设备LIN号（DOORS）'] || '-'}>{device['设备LIN号（DOORS）'] || '-'}</td>
-                      <td className="px-2 py-2 text-gray-700 text-sm">{device.设备中文名称 || '-'}</td>
-                      <td className="px-2 py-2 text-gray-600 text-sm max-w-[70px] truncate" title={device['设备部件所属系统（4位ATA）'] || '-'}>{device['设备部件所属系统（4位ATA）'] || '-'}</td>
-                      <td className="px-2 py-2 text-gray-600 text-sm max-w-[60px] truncate" title={device.设备DAL || '-'}>{device.设备DAL || '-'}</td>
-                      <td className="px-2 py-2 text-gray-600 text-sm max-w-[50px] text-center">{device.设备等级 || '-'}</td>
-                      <td className="px-2 py-2 text-gray-600 text-sm max-w-[80px] truncate" title={`${device.设备负责人 || '-'}${device.设备负责人姓名 ? ` (${device.设备负责人姓名})` : ''}`}>
+                      <td className="px-2 py-2 text-gray-600 dark:text-white/60 text-sm max-w-[100px] truncate" title={device['设备LIN号（DOORS）'] || '-'}>{device['设备LIN号（DOORS）'] || '-'}</td>
+                      <td className="px-2 py-2 text-gray-700 dark:text-white/70 text-sm">{device.设备中文名称 || '-'}</td>
+                      <td className="px-2 py-2 text-gray-600 dark:text-white/60 text-sm max-w-[70px] truncate" title={device['设备部件所属系统（4位ATA）'] || '-'}>{device['设备部件所属系统（4位ATA）'] || '-'}</td>
+                      <td className="px-2 py-2 text-gray-600 dark:text-white/60 text-sm max-w-[60px] truncate" title={device.设备DAL || '-'}>{device.设备DAL || '-'}</td>
+                      <td className="px-2 py-2 text-gray-600 dark:text-white/60 text-sm max-w-[50px] text-center">{device.设备等级 || '-'}</td>
+                      <td className="px-2 py-2 text-gray-600 dark:text-white/60 text-sm max-w-[80px] truncate" title={`${device.设备负责人 || '-'}${device.设备负责人姓名 ? ` (${device.设备负责人姓名})` : ''}`}>
                         {device.设备负责人 || '-'}
-                        {device.设备负责人姓名 && <span className="text-gray-400 ml-1">({device.设备负责人姓名})</span>}
+                        {device.设备负责人姓名 && <span className="text-gray-400 dark:text-white/40 ml-1">({device.设备负责人姓名})</span>}
                       </td>
-                      <td className="px-2 py-2 text-gray-600 text-sm text-center max-w-[60px]">{device.connector_count ?? 0}</td>
-                      <td className="px-2 py-2 text-gray-400 text-xs max-w-[90px] truncate">{(device as any).updated_at ? new Date((device as any).updated_at).toLocaleDateString() : '-'}</td>
+                      <td className="px-2 py-2 text-gray-600 dark:text-white/60 text-sm text-center max-w-[60px]">{device.connector_count ?? 0}</td>
+                      <td className="px-2 py-2 text-gray-400 dark:text-white/40 text-xs max-w-[90px] truncate">{(device as any).updated_at ? new Date((device as any).updated_at).toLocaleDateString() : '-'}</td>
                       <td className="px-2 py-2 space-x-2 whitespace-nowrap w-[130px]">
                         {(() => {
                           const isERN = (device as any)['设备LIN号（DOORS）'] === SPECIAL_ERN_LIN;
-                          if (isERN) return <span className="text-xs text-gray-400">固有ERN</span>;
+                          if (isERN) return <span className="text-xs text-gray-400 dark:text-white/40">固有ERN</span>;
                           return (<>
                           {canEditDevice(device) && (device.status === 'Pending' ? (
-                            <span className="text-xs text-gray-400 cursor-not-allowed" title="记录审批中，不可编辑">编辑/删除</span>
+                            <span className="text-xs text-gray-400 dark:text-white/40 cursor-not-allowed" title="记录审批中，不可编辑">编辑/删除</span>
                           ) : lock ? (
                             <span className="text-xs text-amber-600">🔒{lock.lockedBy}</span>
                           ) : (
                             <>
-                              <button id={index === 0 ? 'tour-device-edit' : undefined} onClick={() => openEditDevice(device)} className="text-blue-600 hover:text-blue-800 text-xs">编辑</button>
+                              <button id={index === 0 ? 'tour-device-edit' : undefined} onClick={() => openEditDevice(device)} className="text-black hover:text-black/60 dark:hover:text-white/60 text-xs">编辑</button>
                               <button onClick={() => deleteDevice(device)} className="text-red-600 hover:text-red-800 text-xs">删除</button>
                             </>
                           ))}
                           {myProjectRole === '系统组' && !device.设备负责人 && !device.management_claim_requester && (
                             <button onClick={() => handleClaimManagement(device)} className="text-purple-600 hover:text-purple-800 text-xs">申请管理权限</button>
                           )}
-                          <button onClick={() => setHistoryTarget({ entityTable: 'devices', entityId: device.id, entityLabel: `设备 ${device.设备编号}` })} className="text-gray-500 hover:text-gray-700 text-xs">历史</button>
+                          <button onClick={() => setHistoryTarget({ entityTable: 'devices', entityId: device.id, entityLabel: `设备 ${device.设备编号}` })} className="text-gray-500 dark:text-white/50 hover:text-gray-700 dark:text-white/70 text-xs">历史</button>
                           </>);
                         })()}
                         </td>
@@ -1969,7 +2000,7 @@ export default function ProjectDataView() {
                       <>
                     {/* 设备详情 */}
                     <tr>
-                      <td colSpan={13} className="px-0 py-0 bg-gray-50 border-b border-gray-200">
+                      <td colSpan={13} className="px-0 py-0 bg-gray-50 dark:bg-neutral-800 border-b border-gray-200 dark:border-white/10">
                         <div className="pl-8 pr-4 py-3">
                           {/* 导入更新 diff */}
                           {(device as any).import_status === 'updated' && (() => {
@@ -1981,11 +2012,11 @@ export default function ProjectDataView() {
                               <div className="mb-3 border border-purple-200 rounded bg-purple-50 px-3 py-2 text-xs">
                                 <div className="font-semibold text-purple-700 mb-1">文件导入更新了以下字段：</div>
                                 <table className="w-auto border-collapse">
-                                  <thead><tr className="text-gray-500"><th className="pr-4 text-left font-medium">字段</th><th className="pr-4 text-left font-medium">原值</th><th className="text-left font-medium">新值</th></tr></thead>
+                                  <thead><tr className="text-gray-500 dark:text-white/50"><th className="pr-4 text-left font-medium">字段</th><th className="pr-4 text-left font-medium">原值</th><th className="text-left font-medium">新值</th></tr></thead>
                                   <tbody>
                                     {keys.map(k => (
                                       <tr key={k} className="border-t border-purple-100">
-                                        <td className="pr-4 py-0.5 text-gray-600">{k}</td>
+                                        <td className="pr-4 py-0.5 text-gray-600 dark:text-white/60">{k}</td>
                                         <td className="pr-4 py-0.5 text-red-600 line-through">{diff.old_values[k] || '-'}</td>
                                         <td className="py-0.5 text-green-700 font-medium">{diff.new_values[k] || '-'}</td>
                                       </tr>
@@ -2018,7 +2049,7 @@ export default function ProjectDataView() {
                               </div>
                             );
                           })()}
-                          <div className="text-xs font-semibold text-gray-600 mb-2">设备详细信息</div>
+                          <div className="text-xs font-semibold text-gray-600 dark:text-white/60 mb-2">设备详细信息</div>
                           <div className="grid grid-cols-4 gap-x-8 gap-y-1.5 text-xs">
                             {(() => {
                               const ve = parseValidationErrors(device.validation_errors);
@@ -2033,8 +2064,8 @@ export default function ProjectDataView() {
                                 const isErr = ve.fields.includes(fk);
                                 return (
                                   <div key={fk} className="flex gap-1 min-w-0">
-                                    <span className={`shrink-0 ${isErr ? 'text-red-600 font-medium' : 'text-gray-400'}`}>{f.label}：</span>
-                                    <span className={`truncate ${isErr ? 'text-red-600 font-medium' : 'text-gray-800'}`}
+                                    <span className={`shrink-0 ${isErr ? 'text-red-600 font-medium' : 'text-gray-400 dark:text-white/40'}`}>{f.label}：</span>
+                                    <span className={`truncate ${isErr ? 'text-red-600 font-medium' : 'text-gray-800 dark:text-white'}`}
                                       title={val || undefined}>
                                       {val || '-'}
                                     </span>
@@ -2087,9 +2118,9 @@ export default function ProjectDataView() {
                                 return (
                                   <>
                                     {request.project_name && (
-                                      <div className="text-xs text-blue-600 font-medium mb-1">项目：{request.project_name}</div>
+                                      <div className="text-xs text-black dark:text-white font-medium mb-1">项目：{request.project_name}</div>
                                     )}
-                                    <div className="text-xs font-semibold text-gray-600 mb-2">审批进度（{actionLabel}）</div>
+                                    <div className="text-xs font-semibold text-gray-600 dark:text-white/60 mb-2">审批进度（{actionLabel}）</div>
                                     {deleteImpact && (
                                       <div className="mb-2 text-xs text-red-600 bg-red-50 border border-red-200 rounded p-2">
                                         <div className="font-medium mb-1">删除影响：</div>
@@ -2104,25 +2135,25 @@ export default function ProjectDataView() {
                                       </div>
                                     )}
                                     {connRenames?.length > 0 && (
-                                      <div className="mb-2 text-xs text-blue-700 bg-blue-50 border border-blue-200 rounded p-2">
+                                      <div className="mb-2 text-xs text-black dark:text-white bg-black/[0.03] dark:bg-white/[0.06] border border-gray-200 dark:border-white/10 rounded p-2">
                                         <div className="font-medium mb-1">LIN号变更将自动重命名 {connRenames.length} 个连接器：</div>
                                         {connRenames.slice(0, 10).map((r: any, ri: number) => (
                                           <div key={ri}><span className="line-through text-red-500">{r.old}</span> → <span className="text-green-700 font-medium">{r.new}</span></div>
                                         ))}
-                                        {connRenames.length > 10 && <div className="text-gray-500">...及其他 {connRenames.length - 10} 个</div>}
+                                        {connRenames.length > 10 && <div className="text-gray-500 dark:text-white/50">...及其他 {connRenames.length - 10} 个</div>}
                                       </div>
                                     )}
                                     {diffRows.length > 0 && (
-                                      <div className="mb-2 text-xs border border-gray-200 rounded overflow-hidden">
-                                        <div className="bg-gray-100 px-2 py-1 font-medium text-gray-500">变更内容</div>
+                                      <div className="mb-2 text-xs border border-gray-200 dark:border-white/10 rounded overflow-hidden">
+                                        <div className="bg-gray-100 px-2 py-1 font-medium text-gray-500 dark:text-white/50">变更内容</div>
                                         <table className="w-full">
                                           <tbody>
                                             {diffRows.map(({ key, oldVal, newVal }) => (
-                                              <tr key={key} className="border-t border-gray-100">
-                                                <td className="px-2 py-1 text-gray-500 font-medium w-40 shrink-0">{key}</td>
+                                              <tr key={key} className="border-t border-gray-100 dark:border-white/10">
+                                                <td className="px-2 py-1 text-gray-500 dark:text-white/50 font-medium w-40 shrink-0">{key}</td>
                                                 <td className="px-2 py-1">
                                                   <span className="line-through text-red-500 mr-1">{oldVal}</span>
-                                                  <span className="text-gray-400 mr-1">→</span>
+                                                  <span className="text-gray-400 dark:text-white/40 mr-1">→</span>
                                                   <span className="text-green-700 font-medium">{newVal}</span>
                                                 </td>
                                               </tr>
@@ -2136,24 +2167,24 @@ export default function ProjectDataView() {
                               })()}
                               {completionItems.length > 0 && (
                                 <div className="mb-2">
-                                  <div className="text-xs text-gray-400 mb-1">完善阶段</div>
+                                  <div className="text-xs text-gray-400 dark:text-white/40 mb-1">完善阶段</div>
                                   {completionItems.map((item: any) => (
                                     <div key={item.id} className="flex items-center gap-1.5 text-xs mb-0.5">
                                       <span>{item.status === 'done' ? '✅' : item.status === 'cancelled' ? '❌' : '⏳'}</span>
                                       <span className="font-medium">{item.recipient_username}</span>
-                                      <span className="text-gray-500">{item.status === 'done' ? '已完善' : item.status === 'cancelled' ? '已取消' : '待完善'}</span>
+                                      <span className="text-gray-500 dark:text-white/50">{item.status === 'done' ? '已完善' : item.status === 'cancelled' ? '已取消' : '待完善'}</span>
                                     </div>
                                   ))}
                                 </div>
                               )}
                               {(request.current_phase === 'approval' || completionItems.every((i: any) => i.status !== 'pending')) && (
                                 <div className="mb-2">
-                                  <div className="text-xs text-gray-400 mb-1">审批阶段</div>
+                                  <div className="text-xs text-gray-400 dark:text-white/40 mb-1">审批阶段</div>
                                   {approvalItems.map((item: any) => (
                                     <div key={item.id} className="flex items-center gap-1.5 text-xs mb-0.5">
                                       <span>{item.status === 'done' && !item.rejection_reason ? '✅' : item.status === 'cancelled' ? '❌' : '⏳'}</span>
                                       <span className="font-medium">{item.recipient_username}</span>
-                                      <span className="text-gray-500">{item.status === 'done' && !item.rejection_reason ? '已通过' : item.status === 'done' && item.rejection_reason ? `已拒绝：${item.rejection_reason}` : item.status === 'cancelled' ? '已取消' : '待审批'}</span>
+                                      <span className="text-gray-500 dark:text-white/50">{item.status === 'done' && !item.rejection_reason ? '已通过' : item.status === 'done' && item.rejection_reason ? `已拒绝：${item.rejection_reason}` : item.status === 'cancelled' ? '已取消' : '待审批'}</span>
                                     </div>
                                   ))}
                                 </div>
@@ -2188,13 +2219,13 @@ export default function ProjectDataView() {
 
                     {/* 连接器展开 */}
                     <tr key={`${device.id}-connectors`}>
-                        <td colSpan={13} className="px-0 py-0 bg-blue-50">
+                        <td colSpan={13} className="px-0 py-0 bg-black/[0.03] dark:bg-white/[0.06]">
                           <div className="pl-8 pr-4 py-2">
                             <div className="flex justify-between items-center mb-1">
-                              <span className="text-xs font-semibold text-blue-700">连接器列表</span>
+                              <span className="text-xs font-semibold text-black dark:text-white">连接器列表</span>
                               {canEditDevice(device) && device.status !== 'Pending' && (device as any)['设备LIN号（DOORS）'] !== SPECIAL_ERN_LIN && (
                                 <div className="flex gap-2">
-                                  <button onClick={() => openAddConnector(device.id)} className="text-xs text-blue-600 hover:text-blue-800">+ 添加连接器</button>
+                                  <button onClick={() => openAddConnector(device.id)} className="text-xs text-black dark:text-white hover:text-black/60 dark:hover:text-white/60">+ 添加连接器</button>
                                   {(connectors[device.id]?.length ?? 0) >= 2 && (
                                     <button onClick={() => openMergeConnModal(device.id)} className="text-xs text-purple-600 hover:text-purple-800">合并连接器</button>
                                   )}
@@ -2202,19 +2233,19 @@ export default function ProjectDataView() {
                               )}
                             </div>
                             {!connectors[device.id] ? (
-                              <p className="text-xs text-gray-400">加载中...</p>
+                              <p className="text-xs text-gray-400 dark:text-white/40">加载中...</p>
                             ) : connectors[device.id].length === 0 ? (
-                              <p className="text-xs text-gray-400">暂无连接器</p>
+                              <p className="text-xs text-gray-400 dark:text-white/40">暂无连接器</p>
                             ) : (
                               <table className="w-full text-xs border-collapse">
                                 <thead>
-                                  <tr className="bg-blue-100">
-                                    <th className="px-2 py-1 text-left text-gray-600 w-6"></th>
-                                    <th className="px-2 py-1 text-left text-gray-600">元器件编号</th>
-                                    <th className="px-2 py-1 text-left text-gray-600">元器件名称</th>
-                                    <th className="px-2 py-1 text-left text-gray-600">针孔数</th>
-                                    <th className="px-2 py-1 text-left text-gray-600">最后更新</th>
-                                    {canEditDevice(device) && <th className="px-2 py-1 text-left text-gray-600">操作</th>}
+                                  <tr className="bg-black/[0.06] dark:bg-white/[0.1]">
+                                    <th className="px-2 py-1 text-left text-gray-600 dark:text-white/60 w-6"></th>
+                                    <th className="px-2 py-1 text-left text-gray-600 dark:text-white/60">元器件编号</th>
+                                    <th className="px-2 py-1 text-left text-gray-600 dark:text-white/60">元器件名称</th>
+                                    <th className="px-2 py-1 text-left text-gray-600 dark:text-white/60">针孔数</th>
+                                    <th className="px-2 py-1 text-left text-gray-600 dark:text-white/60">最后更新</th>
+                                    {canEditDevice(device) && <th className="px-2 py-1 text-left text-gray-600 dark:text-white/60">操作</th>}
                                   </tr>
                                 </thead>
                                 <tbody>
@@ -2224,7 +2255,7 @@ export default function ProjectDataView() {
                                       <>
                                         <tr
                                           key={conn.id}
-                                          className={`border-b border-blue-100 hover:bg-blue-50 ${hasTodo(conn) ? 'bg-orange-100' : connExpanded ? 'bg-indigo-50' : ''} cursor-pointer`}
+                                          className={`border-b border-gray-200 dark:border-white/10 hover:bg-black/[0.03] dark:hover:bg-white/[0.06] ${hasTodo(conn) ? 'bg-orange-100' : connExpanded ? 'bg-black/[0.04]' : ''} cursor-pointer`}
                                           onDoubleClick={async () => {
                                             if (!connExpanded) {
                                               setExpandedConnectorId(conn.id);
@@ -2245,7 +2276,7 @@ export default function ProjectDataView() {
                                                   if (conn.status === 'Pending') await loadApprovalInfo('connector', conn.id);
                                                 }
                                               }}
-                                              className="text-gray-400 hover:text-indigo-600"
+                                              className="text-gray-400 dark:text-white/40 hover:text-black/70 dark:hover:text-white/70"
                                             >
                                               {connExpanded ? '▼' : '▶'}
                                             </button>
@@ -2256,7 +2287,7 @@ export default function ProjectDataView() {
                                               <span className="ml-1 px-1 py-0.5 text-xs bg-yellow-100 text-yellow-700 rounded">Draft</span>
                                             )}
                                             {conn.status === 'Pending' && (
-                                              <span className="ml-1 px-1 py-0.5 text-xs bg-blue-100 text-blue-700 rounded">审批中</span>
+                                              <span className="ml-1 px-1 py-0.5 text-xs bg-black/10 dark:bg-white/15 text-black dark:text-white rounded">审批中</span>
                                             )}
                                             {conn.status !== 'Pending' && (conn as any).has_pending_sub && (
                                               <span className="ml-1 px-1 py-0.5 text-xs bg-orange-100 text-orange-700 rounded">子项待审批</span>
@@ -2268,22 +2299,22 @@ export default function ProjectDataView() {
                                           </td>
                                           <td className="px-2 py-1">{conn.设备端元器件名称及类型 || '-'}</td>
                                           <td className="px-2 py-1">{conn.pin_count ?? 0}</td>
-                                          <td className="px-2 py-1 text-gray-400 text-xs">{conn.updated_at ? new Date(conn.updated_at).toLocaleDateString() : '-'}</td>
+                                          <td className="px-2 py-1 text-gray-400 dark:text-white/40 text-xs">{conn.updated_at ? new Date(conn.updated_at).toLocaleDateString() : '-'}</td>
                                           <td className="px-2 py-1 space-x-1">
                                             {(device as any)['设备LIN号（DOORS）'] === SPECIAL_ERN_LIN ? (
-                                              <span className="text-xs text-gray-400">固有ERN</span>
+                                              <span className="text-xs text-gray-400 dark:text-white/40">固有ERN</span>
                                             ) : (<>
                                               {canEditDevice(device) && (conn.status === 'Pending' ? (
-                                                <span className="text-xs text-gray-400">审批中</span>
+                                                <span className="text-xs text-gray-400 dark:text-white/40">审批中</span>
                                               ) : connectorLockMap[conn.id] ? (
                                                 <span className="text-xs text-amber-600">🔒{connectorLockMap[conn.id].lockedBy}</span>
                                               ) : (
                                                 <>
-                                                  <button onClick={() => openEditConnector(device.id, conn)} className="text-blue-600">编辑</button>
+                                                  <button onClick={() => openEditConnector(device.id, conn)} className="text-black dark:text-white">编辑</button>
                                                   <button onClick={() => deleteConnector(device.id, conn)} className="text-red-600">删除</button>
                                                 </>
                                               ))}
-                                              <button onClick={() => setHistoryTarget({ entityTable: 'connectors', entityId: conn.id, entityLabel: `连接器 ${conn.设备端元器件编号}` })} className="text-gray-500 hover:text-gray-700">历史</button>
+                                              <button onClick={() => setHistoryTarget({ entityTable: 'connectors', entityId: conn.id, entityLabel: `连接器 ${conn.设备端元器件编号}` })} className="text-gray-500 dark:text-white/50 hover:text-gray-700 dark:text-white/70">历史</button>
                                             </>)}
                                             </td>
                                         </tr>
@@ -2292,10 +2323,10 @@ export default function ProjectDataView() {
                                         {connExpanded && (
                                           <tr key={`${conn.id}-pins`}>
                                             <td colSpan={(canEditDevice(device) || canEditPin(device)) ? 7 : 6} className="px-0 py-0">
-                                              <div className="pl-8 pr-2 py-1 bg-indigo-50">
+                                              <div className="pl-8 pr-2 py-1 bg-black/[0.04] dark:bg-white/[0.08]">
                                                 {/* 连接器详情 */}
-                                                <div className="mb-2 p-2 bg-white border border-indigo-100 rounded text-xs">
-                                                  <div className="font-semibold text-indigo-700 mb-1">连接器详情</div>
+                                                <div className="mb-2 p-2 bg-white dark:bg-neutral-900 border border-gray-200 dark:border-white/10 rounded text-xs">
+                                                  <div className="font-semibold text-black dark:text-white mb-1">连接器详情</div>
 
                                                   {/* 导入更新 diff */}
                                                   {(conn as any).import_status === 'updated' && (() => {
@@ -2307,11 +2338,11 @@ export default function ProjectDataView() {
                                                       <div className="mb-2 border border-purple-200 rounded bg-purple-50 px-3 py-2">
                                                         <div className="font-semibold text-purple-700 mb-1">文件导入更新了以下字段：</div>
                                                         <table className="w-auto border-collapse">
-                                                          <thead><tr className="text-gray-500"><th className="pr-4 text-left font-medium">字段</th><th className="pr-4 text-left font-medium">原值</th><th className="text-left font-medium">新值</th></tr></thead>
+                                                          <thead><tr className="text-gray-500 dark:text-white/50"><th className="pr-4 text-left font-medium">字段</th><th className="pr-4 text-left font-medium">原值</th><th className="text-left font-medium">新值</th></tr></thead>
                                                           <tbody>
                                                             {keys.map(k => (
                                                               <tr key={k} className="border-t border-purple-100">
-                                                                <td className="pr-4 py-0.5 text-gray-600">{k}</td>
+                                                                <td className="pr-4 py-0.5 text-gray-600 dark:text-white/60">{k}</td>
                                                                 <td className="pr-4 py-0.5 text-red-600 line-through">{diff.old_values[k] || '-'}</td>
                                                                 <td className="py-0.5 text-green-700 font-medium">{diff.new_values[k] || '-'}</td>
                                                               </tr>
@@ -2379,8 +2410,8 @@ export default function ProjectDataView() {
                                                       const isInvalid = isVeErr || (isDeliverField && val != null && val !== '' && val !== '是' && val !== '否');
                                                       return (
                                                         <div key={label} className="flex gap-1">
-                                                          <span className={`shrink-0 ${isInvalid ? 'text-red-600 font-medium' : 'text-gray-500'}`}>{label}：</span>
-                                                          <span className={`break-all ${isInvalid ? 'text-red-600 font-medium' : 'text-gray-800'}`}>{val || '-'}</span>
+                                                          <span className={`shrink-0 ${isInvalid ? 'text-red-600 font-medium' : 'text-gray-500 dark:text-white/50'}`}>{label}：</span>
+                                                          <span className={`break-all ${isInvalid ? 'text-red-600 font-medium' : 'text-gray-800 dark:text-white'}`}>{val || '-'}</span>
                                                         </div>
                                                       );
                                                     })}
@@ -2393,13 +2424,13 @@ export default function ProjectDataView() {
                                                   const { request: ar, items: ais, my_pending_item: mpi } = ai;
                                                   return (
                                                     <div className="mb-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs">
-                                                      {ar.project_name && <div className="text-blue-600 font-medium mb-0.5">项目：{ar.project_name}</div>}
-                                                      <div className="font-semibold text-gray-600 mb-1">审批进度（{ar.action_type}）</div>
+                                                      {ar.project_name && <div className="text-black dark:text-white font-medium mb-0.5">项目：{ar.project_name}</div>}
+                                                      <div className="font-semibold text-gray-600 dark:text-white/60 mb-1">审批进度（{ar.action_type}）</div>
                                                       {ais.map((it: any) => (
                                                         <div key={it.id} className="flex items-center gap-1.5 mb-0.5">
                                                           <span>{it.status === 'done' && !it.rejection_reason ? '✅' : it.status === 'cancelled' ? '❌' : '⏳'}</span>
                                                           <span className="font-medium">{it.recipient_username}</span>
-                                                          <span className="text-gray-500">{it.status === 'done' && !it.rejection_reason ? '已通过' : it.status === 'cancelled' ? '已取消' : it.item_type === 'completion' ? '待完善' : '待审批'}</span>
+                                                          <span className="text-gray-500 dark:text-white/50">{it.status === 'done' && !it.rejection_reason ? '已通过' : it.status === 'cancelled' ? '已取消' : it.item_type === 'completion' ? '待完善' : '待审批'}</span>
                                                         </div>
                                                       ))}
                                                       {mpi && mpi.item_type === 'approval' && ar.current_phase === 'approval' && (
@@ -2412,48 +2443,48 @@ export default function ProjectDataView() {
                                                   );
                                                 })()}
                                                 <div className="flex justify-between items-center mb-1">
-                                                  <span className="text-xs font-semibold text-indigo-600">针孔列表</span>
+                                                  <span className="text-xs font-semibold text-black/70 dark:text-white/70">针孔列表</span>
                                                   {canEditPin(device) && conn.status !== 'Pending' && (device as any)['设备LIN号（DOORS）'] !== SPECIAL_ERN_LIN && (
-                                                    <button onClick={() => openAddPin(device.id, conn.id)} className="text-xs text-indigo-600">+ 添加针孔</button>
+                                                    <button onClick={() => openAddPin(device.id, conn.id)} className="text-xs text-black/70 dark:text-white/70">+ 添加针孔</button>
                                                   )}
                                                 </div>
                                                 {!pins[conn.id] ? (
-                                                  <p className="text-xs text-gray-400">加载中...</p>
+                                                  <p className="text-xs text-gray-400 dark:text-white/40">加载中...</p>
                                                 ) : pins[conn.id].length === 0 ? (
-                                                  <p className="text-xs text-gray-400">暂无针孔</p>
+                                                  <p className="text-xs text-gray-400 dark:text-white/40">暂无针孔</p>
                                                 ) : (
                                                   <table className="w-full text-xs">
                                                     <thead>
-                                                      <tr className="bg-indigo-100">
-                                                        <th className="px-2 py-1 text-left text-gray-600">针孔号</th>
-                                                        <th className="px-2 py-1 text-left text-gray-600">最后更新</th>
-                                                        {(canEditDevice(device) || canEditPin(device)) && <th className="px-2 py-1 text-left text-gray-600">操作</th>}
+                                                      <tr className="bg-black/[0.06] dark:bg-white/[0.1]">
+                                                        <th className="px-2 py-1 text-left text-gray-600 dark:text-white/60">针孔号</th>
+                                                        <th className="px-2 py-1 text-left text-gray-600 dark:text-white/60">最后更新</th>
+                                                        {(canEditDevice(device) || canEditPin(device)) && <th className="px-2 py-1 text-left text-gray-600 dark:text-white/60">操作</th>}
                                                       </tr>
                                                     </thead>
                                                     <tbody>
                                                       {pins[conn.id].map(pin => (
                                                         <React.Fragment key={pin.id}>
-                                                        <tr className={`border-b border-indigo-100 ${hasTodo(pin) ? 'bg-orange-100' : ''}`}>
+                                                        <tr className={`border-b border-gray-200 dark:border-white/10 ${hasTodo(pin) ? 'bg-orange-100' : ''}`}>
                                                           <td className="px-2 py-1">
                                                             {pin.针孔号}
-                                                            {pin.status === 'Pending' && <span className="ml-1 px-1 py-0.5 text-xs bg-blue-100 text-blue-700 rounded">审批中</span>}
+                                                            {pin.status === 'Pending' && <span className="ml-1 px-1 py-0.5 text-xs bg-black/10 dark:bg-white/15 text-black dark:text-white rounded">审批中</span>}
                                                             {pin.status === 'normal' && <span className="ml-1 px-1 py-0.5 text-xs bg-green-100 text-green-700 rounded">已生效</span>}
                                                             {/* 已导入/已更新标签暂时隐藏 */}
                                                           </td>
-                                                          <td className="px-2 py-1 text-gray-400 text-xs">{(pin as any).updated_at ? new Date((pin as any).updated_at).toLocaleDateString() : '-'}</td>
+                                                          <td className="px-2 py-1 text-gray-400 dark:text-white/40 text-xs">{(pin as any).updated_at ? new Date((pin as any).updated_at).toLocaleDateString() : '-'}</td>
                                                           <td className="px-2 py-1 space-x-1">
                                                             {(device as any)['设备LIN号（DOORS）'] === SPECIAL_ERN_LIN ? (
-                                                              <span className="text-xs text-gray-400">固有ERN</span>
+                                                              <span className="text-xs text-gray-400 dark:text-white/40">固有ERN</span>
                                                             ) : (<>
                                                               {pin.status === 'Pending' ? (
-                                                                <button onClick={() => loadApprovalInfo('pin', pin.id)} className="text-xs text-blue-600 hover:text-blue-800">审批详情</button>
+                                                                <button onClick={() => loadApprovalInfo('pin', pin.id)} className="text-xs text-black dark:text-white hover:text-black/60 dark:hover:text-white/60">审批详情</button>
                                                               ) : canEditPin(device) ? (
                                                                 <>
-                                                                  <button onClick={() => openEditPin(device.id, conn.id, pin)} className="text-blue-600">编辑</button>
+                                                                  <button onClick={() => openEditPin(device.id, conn.id, pin)} className="text-black dark:text-white">编辑</button>
                                                                   <button onClick={() => deletePin(device.id, conn.id, pin)} className="text-red-600">删除</button>
                                                                 </>
                                                               ) : null}
-                                                              <button onClick={() => setHistoryTarget({ entityTable: 'pins', entityId: pin.id, entityLabel: `针孔 ${pin.针孔号}` })} className="text-gray-500 hover:text-gray-700">历史</button>
+                                                              <button onClick={() => setHistoryTarget({ entityTable: 'pins', entityId: pin.id, entityLabel: `针孔 ${pin.针孔号}` })} className="text-gray-500 dark:text-white/50 hover:text-gray-700 dark:text-white/70">历史</button>
                                                             </>)}
                                                             </td>
                                                         </tr>
@@ -2465,13 +2496,13 @@ export default function ProjectDataView() {
                                                             <tr key={`${pin.id}-approval`}>
                                                               <td colSpan={4} className="px-2 py-1">
                                                                 <div className="p-2 bg-yellow-50 border border-yellow-200 rounded text-xs mb-1">
-                                                                  {ar.project_name && <div className="text-blue-600 font-medium mb-0.5">项目：{ar.project_name}</div>}
+                                                                  {ar.project_name && <div className="text-black dark:text-white font-medium mb-0.5">项目：{ar.project_name}</div>}
                                                                   {(() => {
                                                                     const actionLabels: Record<string, string> = {
                                                                       create_pin: '新建针孔', edit_pin: '修改针孔', delete_pin: '删除针孔',
                                                                     };
                                                                     const actionLabel = actionLabels[ar.action_type] || ar.action_type;
-                                                                    return <div className="font-semibold text-gray-600 mb-1">针孔 {pin.针孔号} — {actionLabel}</div>;
+                                                                    return <div className="font-semibold text-gray-600 dark:text-white/60 mb-1">针孔 {pin.针孔号} — {actionLabel}</div>;
                                                                   })()}
                                                                   {/* 变更内容 */}
                                                                   {ar.action_type === 'edit_pin' && ar.old_payload && ar.payload && (() => {
@@ -2481,7 +2512,7 @@ export default function ProjectDataView() {
                                                                       const diffs = Object.keys(newObj).filter(k => String(oldObj[k] || '') !== String(newObj[k] || ''));
                                                                       if (diffs.length === 0) return null;
                                                                       return (
-                                                                        <div className="mb-1 text-gray-500">
+                                                                        <div className="mb-1 text-gray-500 dark:text-white/50">
                                                                           {diffs.map(k => <div key={k}>{k}：{String(oldObj[k] || '（空）')} → {String(newObj[k] || '（空）')}</div>)}
                                                                         </div>
                                                                       );
@@ -2512,12 +2543,12 @@ export default function ProjectDataView() {
                                                                     return (<>
                                                                       {completionItems.length > 0 && (
                                                                         <div className="mb-1">
-                                                                          <div className="text-gray-400 mb-0.5">阶段一：设备负责人审批</div>
+                                                                          <div className="text-gray-400 dark:text-white/40 mb-0.5">阶段一：设备负责人审批</div>
                                                                           {completionItems.map((it: any) => (
                                                                             <div key={it.id} className="flex items-center gap-1.5 mb-0.5">
                                                                               <span>{it.status === 'done' && !it.rejection_reason ? '✅' : it.status === 'cancelled' ? '❌' : '⏳'}</span>
                                                                               <span className="font-medium">{it.recipient_username}</span>
-                                                                              <span className="text-gray-500">{it.status === 'done' && !it.rejection_reason ? '已通过' : it.status === 'cancelled' ? '已取消' : '待审批'}</span>
+                                                                              <span className="text-gray-500 dark:text-white/50">{it.status === 'done' && !it.rejection_reason ? '已通过' : it.status === 'cancelled' ? '已取消' : '待审批'}</span>
                                                                             </div>
                                                                           ))}
                                                                           {/* 阶段一审批按钮 */}
@@ -2531,14 +2562,14 @@ export default function ProjectDataView() {
                                                                       )}
                                                                       {approvalItems.length > 0 && (
                                                                         <div className="mb-1">
-                                                                          <div className="text-gray-400 mb-0.5">
+                                                                          <div className="text-gray-400 dark:text-white/40 mb-0.5">
                                                                             阶段二：总体组审批{ar!.current_phase === 'completion' && <span className="text-orange-500 ml-1">（等待阶段一审批完成）</span>}
                                                                           </div>
                                                                           {approvalItems.map((it: any) => (
                                                                             <div key={it.id} className="flex items-center gap-1.5 mb-0.5">
                                                                               <span>{it.status === 'done' && !it.rejection_reason ? '✅' : it.status === 'cancelled' ? '❌' : '⏳'}</span>
                                                                               <span className="font-medium">{it.recipient_username}</span>
-                                                                              <span className="text-gray-500">{it.status === 'done' && !it.rejection_reason ? '已通过' : it.status === 'cancelled' ? '已取消' : '待审批'}</span>
+                                                                              <span className="text-gray-500 dark:text-white/50">{it.status === 'done' && !it.rejection_reason ? '已通过' : it.status === 'cancelled' ? '已取消' : '待审批'}</span>
                                                                             </div>
                                                                           ))}
                                                                           {/* 阶段二审批按钮 */}
@@ -2583,7 +2614,7 @@ export default function ProjectDataView() {
             </tbody>
           </table>
           {hasAnyFilter && (
-            <div className="px-4 py-1.5 text-xs text-gray-500 bg-gray-50 border-t">
+            <div className="px-4 py-1.5 text-xs text-gray-500 dark:text-white/50 bg-gray-50 dark:bg-neutral-800 border-t">
               显示 {filteredDevices.length} / {devices.length} 条设备
             </div>
           )}
@@ -2608,36 +2639,36 @@ export default function ProjectDataView() {
           断面连接器列表（{sectionConnectors.length} 个 / 连接器共 {sectionConnectors.reduce((s, sc) => s + (sc.connector_count ?? 0), 0)} 个）
         </h2>
         {canManageSC && (
-          <button onClick={openAddSC} className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700">
+          <button onClick={openAddSC} className="btn-primary text-sm">
             + 添加断面连接器
           </button>
         )}
       </div>
 
       {loading ? (
-        <div className="text-center py-8 text-gray-500">加载中...</div>
+        <div className="text-center py-8 text-gray-500 dark:text-white/50">加载中...</div>
       ) : sectionConnectors.length === 0 ? (
-        <div className="text-center py-8 text-gray-400">暂无断面连接器数据</div>
+        <div className="text-center py-8 text-gray-400 dark:text-white/40">暂无断面连接器数据</div>
       ) : (
-        <div className="bg-white rounded-lg shadow">
+        <div className="bg-white dark:bg-neutral-900 rounded-lg shadow">
           <table className="min-w-full text-sm">
-            <thead className="bg-gray-50 sticky top-0 z-10">
+            <thead className="bg-gray-50 dark:bg-neutral-800 sticky top-0 z-10">
               <tr>
                 <th className="px-4 py-2 w-8"></th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500">设备名称</th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500">连接器数</th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500">负责人</th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500">更新时间</th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500">操作</th>
+                <th className="px-4 py-2 text-left text-xs text-gray-500 dark:text-white/50">设备名称</th>
+                <th className="px-4 py-2 text-left text-xs text-gray-500 dark:text-white/50">连接器数</th>
+                <th className="px-4 py-2 text-left text-xs text-gray-500 dark:text-white/50">负责人</th>
+                <th className="px-4 py-2 text-left text-xs text-gray-500 dark:text-white/50">更新时间</th>
+                <th className="px-4 py-2 text-left text-xs text-gray-500 dark:text-white/50">操作</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100">
+            <tbody className="divide-y divide-gray-100 dark:divide-white/10">
               {sectionConnectors.map(sc => {
                 const isExpanded = expandedSCId === sc.id;
                 return (
                   <React.Fragment key={sc.id}>
                     <tr
-                      className={`hover:bg-gray-50 ${isExpanded ? 'bg-blue-50' : ''} cursor-pointer`}
+                      className={`hover:bg-gray-50 dark:hover:bg-white/[0.04] ${isExpanded ? 'bg-black/[0.03] dark:bg-white/[0.06]' : ''} cursor-pointer`}
                       onDoubleClick={async () => {
                         if (!isExpanded) { setExpandedSCId(sc.id); await loadSCConnectors(sc.id); }
                         else { setExpandedSCId(null); }
@@ -2649,53 +2680,53 @@ export default function ProjectDataView() {
                             if (isExpanded) { setExpandedSCId(null); }
                             else { setExpandedSCId(sc.id); await loadSCConnectors(sc.id); }
                           }}
-                          className="text-gray-400 hover:text-blue-600 font-mono text-xs"
+                          className="text-gray-400 dark:text-white/40 hover:text-black dark:hover:text-white font-mono text-xs"
                         >
                           {isExpanded ? '▼' : '▶'}
                         </button>
                       </td>
                       <td className="px-4 py-2 font-medium">{sc.设备名称}</td>
-                      <td className="px-4 py-2 text-gray-600">{sc.connector_count ?? 0}</td>
-                      <td className="px-4 py-2 text-gray-600">{sc.负责人 || '-'}</td>
-                      <td className="px-4 py-2 text-gray-400 text-xs">
+                      <td className="px-4 py-2 text-gray-600 dark:text-white/60">{sc.connector_count ?? 0}</td>
+                      <td className="px-4 py-2 text-gray-600 dark:text-white/60">{sc.负责人 || '-'}</td>
+                      <td className="px-4 py-2 text-gray-400 dark:text-white/40 text-xs">
                         {sc.updated_at ? new Date(sc.updated_at.includes('Z') || sc.updated_at.includes('+')
                           ? sc.updated_at : sc.updated_at.replace(' ', 'T') + 'Z').toLocaleString() : '-'}
                       </td>
                       <td className="px-4 py-2 space-x-2 whitespace-nowrap">
                         {canEditSC(sc) && (
                           <>
-                            <button onClick={() => openEditSC(sc)} className="text-blue-600 hover:text-blue-800 text-xs">编辑</button>
+                            <button onClick={() => openEditSC(sc)} className="text-black hover:text-black/60 dark:hover:text-white/60 text-xs">编辑</button>
                             <button onClick={() => deleteSC(sc)} className="text-red-600 hover:text-red-800 text-xs">删除</button>
                           </>
                         )}
-                        <button onClick={() => setHistoryTarget({ entityTable: 'section_connectors', entityId: sc.id, entityLabel: `断面连接器 ${sc.设备名称}` })} className="text-gray-500 hover:text-gray-700 text-xs">历史</button>
+                        <button onClick={() => setHistoryTarget({ entityTable: 'section_connectors', entityId: sc.id, entityLabel: `断面连接器 ${sc.设备名称}` })} className="text-gray-500 dark:text-white/50 hover:text-gray-700 dark:text-white/70 text-xs">历史</button>
                       </td>
                     </tr>
 
                     {isExpanded && (
                       <tr>
-                        <td colSpan={6} className="px-0 py-0 bg-blue-50">
+                        <td colSpan={6} className="px-0 py-0 bg-black/[0.03] dark:bg-white/[0.06]">
                           <div className="pl-8 pr-4 py-2">
                             <div className="flex justify-between items-center mb-1">
-                              <span className="text-xs font-semibold text-blue-700">连接器列表</span>
+                              <span className="text-xs font-semibold text-black dark:text-white">连接器列表</span>
                               {canEditSC(sc) && (
-                                <button onClick={() => openAddSCConnector(sc.id)} className="text-xs text-blue-600 hover:text-blue-800">+ 添加连接器</button>
+                                <button onClick={() => openAddSCConnector(sc.id)} className="text-xs text-black dark:text-white hover:text-black/60 dark:hover:text-white/60">+ 添加连接器</button>
                               )}
                             </div>
                             {!scConnectors[sc.id] ? (
-                              <p className="text-xs text-gray-400">加载中...</p>
+                              <p className="text-xs text-gray-400 dark:text-white/40">加载中...</p>
                             ) : scConnectors[sc.id].length === 0 ? (
-                              <p className="text-xs text-gray-400">暂无连接器</p>
+                              <p className="text-xs text-gray-400 dark:text-white/40">暂无连接器</p>
                             ) : (
                               <table className="w-full text-xs border-collapse">
                                 <thead>
-                                  <tr className="bg-blue-100">
-                                    <th className="px-2 py-1 text-left text-gray-600 w-6"></th>
-                                    <th className="px-2 py-1 text-left text-gray-600">连接器号</th>
-                                    <th className="px-2 py-1 text-left text-gray-600">元器件编号</th>
-                                    <th className="px-2 py-1 text-left text-gray-600">元器件名称</th>
-                                    <th className="px-2 py-1 text-left text-gray-600">针孔数</th>
-                                    {canEditSC(sc) && <th className="px-2 py-1 text-left text-gray-600">操作</th>}
+                                  <tr className="bg-black/[0.06] dark:bg-white/[0.1]">
+                                    <th className="px-2 py-1 text-left text-gray-600 dark:text-white/60 w-6"></th>
+                                    <th className="px-2 py-1 text-left text-gray-600 dark:text-white/60">连接器号</th>
+                                    <th className="px-2 py-1 text-left text-gray-600 dark:text-white/60">元器件编号</th>
+                                    <th className="px-2 py-1 text-left text-gray-600 dark:text-white/60">元器件名称</th>
+                                    <th className="px-2 py-1 text-left text-gray-600 dark:text-white/60">针孔数</th>
+                                    {canEditSC(sc) && <th className="px-2 py-1 text-left text-gray-600 dark:text-white/60">操作</th>}
                                   </tr>
                                 </thead>
                                 <tbody>
@@ -2704,7 +2735,7 @@ export default function ProjectDataView() {
                                     return (
                                       <React.Fragment key={conn.id}>
                                         <tr
-                                          className={`border-b border-blue-100 hover:bg-blue-50 ${connExpanded ? 'bg-indigo-50' : ''} cursor-pointer`}
+                                          className={`border-b border-gray-200 dark:border-white/10 hover:bg-black/[0.03] dark:hover:bg-white/[0.06] ${connExpanded ? 'bg-black/[0.04]' : ''} cursor-pointer`}
                                           onDoubleClick={async () => {
                                             if (!connExpanded) { setExpandedSCConnectorId(conn.id); await loadSCPins(sc.id, conn.id); }
                                             else { setExpandedSCConnectorId(null); }
@@ -2716,7 +2747,7 @@ export default function ProjectDataView() {
                                                 if (connExpanded) setExpandedSCConnectorId(null);
                                                 else { setExpandedSCConnectorId(conn.id); await loadSCPins(sc.id, conn.id); }
                                               }}
-                                              className="text-gray-400 hover:text-indigo-600"
+                                              className="text-gray-400 dark:text-white/40 hover:text-black/70 dark:hover:text-white/70"
                                             >
                                               {connExpanded ? '▼' : '▶'}
                                             </button>
@@ -2728,21 +2759,21 @@ export default function ProjectDataView() {
                                           <td className="px-2 py-1 space-x-1">
                                               {canEditSC(sc) && (
                                                 <>
-                                                  <button onClick={() => openEditSCConnector(sc.id, conn)} className="text-blue-600">编辑</button>
+                                                  <button onClick={() => openEditSCConnector(sc.id, conn)} className="text-black dark:text-white">编辑</button>
                                                   <button onClick={() => deleteSCConnector(sc.id, conn)} className="text-red-600">删除</button>
                                                 </>
                                               )}
-                                              <button onClick={() => setHistoryTarget({ entityTable: 'sc_connectors', entityId: conn.id, entityLabel: `SC连接器 ${conn.连接器号}` })} className="text-gray-500 hover:text-gray-700">历史</button>
+                                              <button onClick={() => setHistoryTarget({ entityTable: 'sc_connectors', entityId: conn.id, entityLabel: `SC连接器 ${conn.连接器号}` })} className="text-gray-500 dark:text-white/50 hover:text-gray-700 dark:text-white/70">历史</button>
                                             </td>
                                         </tr>
 
                                         {connExpanded && (
                                           <tr>
                                             <td colSpan={6} className="px-0 py-0">
-                                              <div className="pl-8 pr-2 py-1 bg-indigo-50">
+                                              <div className="pl-8 pr-2 py-1 bg-black/[0.04] dark:bg-white/[0.08]">
                                                 {/* 连接器详情 */}
-                                                <div className="mb-2 p-2 bg-white border border-indigo-100 rounded text-xs">
-                                                  <div className="font-semibold text-indigo-700 mb-1">连接器详情</div>
+                                                <div className="mb-2 p-2 bg-white dark:bg-neutral-900 border border-gray-200 dark:border-white/10 rounded text-xs">
+                                                  <div className="font-semibold text-black dark:text-white mb-1">连接器详情</div>
                                                   <div className="grid grid-cols-2 gap-x-4 gap-y-0.5">
                                                     {([
                                                       ['连接器号', conn.连接器号],
@@ -2755,47 +2786,47 @@ export default function ProjectDataView() {
                                                       ['备注', conn.备注],
                                                     ] as [string, string | undefined][]).map(([label, val]) => (
                                                       <div key={label} className="flex gap-1">
-                                                        <span className="text-gray-500 shrink-0">{label}：</span>
-                                                        <span className="text-gray-800 break-all">{val || '-'}</span>
+                                                        <span className="text-gray-500 dark:text-white/50 shrink-0">{label}：</span>
+                                                        <span className="text-gray-800 dark:text-white break-all">{val || '-'}</span>
                                                       </div>
                                                     ))}
                                                   </div>
                                                 </div>
                                                 {/* 针孔 */}
                                                 <div className="flex justify-between items-center mb-1">
-                                                  <span className="text-xs font-semibold text-indigo-600">针孔列表</span>
+                                                  <span className="text-xs font-semibold text-black/70 dark:text-white/70">针孔列表</span>
                                                   {canEditSC(sc) && (
-                                                    <button onClick={() => openAddSCPin(sc.id, conn.id)} className="text-xs text-indigo-600">+ 添加针孔</button>
+                                                    <button onClick={() => openAddSCPin(sc.id, conn.id)} className="text-xs text-black/70 dark:text-white/70">+ 添加针孔</button>
                                                   )}
                                                 </div>
                                                 {!scPins[conn.id] ? (
-                                                  <p className="text-xs text-gray-400">加载中...</p>
+                                                  <p className="text-xs text-gray-400 dark:text-white/40">加载中...</p>
                                                 ) : scPins[conn.id].length === 0 ? (
-                                                  <p className="text-xs text-gray-400">暂无针孔</p>
+                                                  <p className="text-xs text-gray-400 dark:text-white/40">暂无针孔</p>
                                                 ) : (
                                                   <table className="w-full text-xs">
                                                     <thead>
-                                                      <tr className="bg-indigo-100">
-                                                        <th className="px-2 py-1 text-left text-gray-600">针孔号</th>
-                                                        <th className="px-2 py-1 text-left text-gray-600">端接尺寸</th>
-                                                        <th className="px-2 py-1 text-left text-gray-600">屏蔽类型</th>
-                                                        {canEditSC(sc) && <th className="px-2 py-1 text-left text-gray-600">操作</th>}
+                                                      <tr className="bg-black/[0.06] dark:bg-white/[0.1]">
+                                                        <th className="px-2 py-1 text-left text-gray-600 dark:text-white/60">针孔号</th>
+                                                        <th className="px-2 py-1 text-left text-gray-600 dark:text-white/60">端接尺寸</th>
+                                                        <th className="px-2 py-1 text-left text-gray-600 dark:text-white/60">屏蔽类型</th>
+                                                        {canEditSC(sc) && <th className="px-2 py-1 text-left text-gray-600 dark:text-white/60">操作</th>}
                                                       </tr>
                                                     </thead>
                                                     <tbody>
                                                       {scPins[conn.id].map(pin => (
-                                                        <tr key={pin.id} className="border-b border-indigo-100">
+                                                        <tr key={pin.id} className="border-b border-gray-200 dark:border-white/10">
                                                           <td className="px-2 py-1">{pin.针孔号}</td>
                                                           <td className="px-2 py-1">{pin.端接尺寸 || '-'}</td>
                                                           <td className="px-2 py-1">{pin.屏蔽类型 || '-'}</td>
                                                           <td className="px-2 py-1 space-x-1">
                                                               {canEditSC(sc) && (
                                                                 <>
-                                                                  <button onClick={() => openEditSCPin(sc.id, conn.id, pin)} className="text-blue-600">编辑</button>
+                                                                  <button onClick={() => openEditSCPin(sc.id, conn.id, pin)} className="text-black dark:text-white">编辑</button>
                                                                   <button onClick={() => deleteSCPin(sc.id, conn.id, pin)} className="text-red-600">删除</button>
                                                                 </>
                                                               )}
-                                                              <button onClick={() => setHistoryTarget({ entityTable: 'sc_pins', entityId: pin.id, entityLabel: `SC针孔 ${pin.针孔号}` })} className="text-gray-500 hover:text-gray-700">历史</button>
+                                                              <button onClick={() => setHistoryTarget({ entityTable: 'sc_pins', entityId: pin.id, entityLabel: `SC针孔 ${pin.针孔号}` })} className="text-gray-500 dark:text-white/50 hover:text-gray-700 dark:text-white/70">历史</button>
                                                             </td>
                                                         </tr>
                                                       ))}
@@ -2843,7 +2874,7 @@ export default function ProjectDataView() {
                 if (res.ok) { await loadSignals(); }
                 else { alert((await res.json()).error || '清空失败'); }
               }}
-              className={`px-3 py-1.5 rounded text-sm ${sgCheckMode ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-red-500 text-white hover:bg-red-600'}`}
+              className={`px-3 py-1.5 rounded text-sm ${sgCheckMode ? 'bg-gray-300 text-gray-500 dark:text-white/50 cursor-not-allowed' : 'bg-red-500 text-white hover:bg-red-600'}`}
             >清空信号视图数据</button>
           )}
           {canExport && (
@@ -2858,7 +2889,7 @@ export default function ProjectDataView() {
               const data = await res.json();
               setAtaExportDevices(data.devices || []);
             }}
-            className={`px-3 py-1.5 rounded text-sm ${sgCheckMode ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-teal-600 text-white hover:bg-teal-700'}`}
+            className={`px-3 py-1.5 rounded text-sm ${sgCheckMode ? 'bg-gray-300 text-gray-500 dark:text-white/50 cursor-not-allowed' : 'bg-teal-600 text-white hover:bg-teal-700'}`}
           >WB导出</button>
           )}
           {canManageSignals && (
@@ -2866,18 +2897,18 @@ export default function ProjectDataView() {
               <button
                 disabled={sgCheckMode}
                 onClick={() => { setImportSigFile(null); setImportSigResult(null); setImportSigType('import'); setShowImportSigModal(true); }}
-                className={`px-3 py-1.5 rounded text-sm ${sgCheckMode ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-purple-600 text-white hover:bg-purple-700'}`}
+                className={`px-3 py-1.5 rounded text-sm ${sgCheckMode ? 'bg-gray-300 text-gray-500 dark:text-white/50 cursor-not-allowed' : 'bg-purple-600 text-white hover:bg-purple-700'}`}
               >导入信号及针孔数据</button>
               {!sgCheckMode && (
                 <button
                   onClick={() => { setSgCheckMode(true); setSgCheckedIds([]); }}
-                  className="bg-indigo-600 text-white px-3 py-1.5 rounded text-sm hover:bg-indigo-700"
+                  className="bg-black text-white dark:bg-white dark:text-black px-3 py-1.5 rounded text-sm hover:bg-gray-800 dark:hover:bg-gray-200"
                 >信号分组</button>
               )}
               <button
                 disabled={sgCheckMode}
                 onClick={openAddSignal}
-                className={`px-3 py-1.5 rounded text-sm ${sgCheckMode ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
+                className={`px-3 py-1.5 rounded text-sm ${sgCheckMode ? 'bg-gray-300 text-gray-500 dark:text-white/50 cursor-not-allowed' : 'bg-black text-white dark:bg-white dark:text-black hover:bg-gray-800 dark:hover:bg-gray-200'}`}
               >
                 + 添加信号
               </button>
@@ -2888,21 +2919,21 @@ export default function ProjectDataView() {
 
       {/* 分组模式操作栏 */}
       {sgCheckMode && (
-        <div className="bg-indigo-50 border-b border-indigo-200 px-4 py-2 flex items-center gap-3 shrink-0">
+        <div className="bg-black/[0.04] border-b border-gray-200 dark:border-white/10 px-4 py-2 flex items-center gap-3 shrink-0">
           {/* 左侧：状态 */}
-          <span className="text-sm text-indigo-700 shrink-0">
+          <span className="text-sm text-black dark:text-white shrink-0">
             <span className="font-semibold">分组模式</span>
             {sgCheckedIds.length > 0 && <span className="ml-1">· 已选 <span className="font-semibold">{sgCheckedIds.length}</span> 条</span>}
           </span>
 
-          <div className="w-px h-5 bg-indigo-200 shrink-0" />
+          <div className="w-px h-5 bg-gray-200 shrink-0" />
 
           {/* 中间左：创建空白分组 */}
           <select
             value={sgBlankType}
             disabled={sgCheckedIds.length > 0}
             onChange={e => setSgBlankType(e.target.value)}
-            className={`border rounded px-2 py-1 text-xs ${sgCheckedIds.length > 0 ? 'border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed' : 'border-indigo-300 bg-white'}`}
+            className={`border rounded px-2 py-1 text-xs ${sgCheckedIds.length > 0 ? 'border-gray-200 dark:border-white/10 bg-gray-100 text-gray-400 dark:text-white/40 cursor-not-allowed' : 'border-gray-300 dark:border-white/20 bg-white dark:bg-neutral-900'}`}
           >
             <option value="">选择组类型...</option>
             {([
@@ -2938,16 +2969,16 @@ export default function ProjectDataView() {
               } catch { alert('操作失败'); }
               finally { setSgCreating(false); }
             }}
-            className={`px-2 py-1 rounded text-xs shrink-0 ${!sgBlankType || sgCheckedIds.length > 0 ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700'}`}
+            className={`px-2 py-1 rounded text-xs shrink-0 ${!sgBlankType || sgCheckedIds.length > 0 ? 'bg-gray-300 text-gray-500 dark:text-white/50 cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700'}`}
           >创建空白分组</button>
 
           {/* 中间右：已有信号建组（勾选后显示） */}
           {sgCheckedIds.length > 0 && (
             <>
-              <div className="w-px h-5 bg-indigo-200 shrink-0" />
+              <div className="w-px h-5 bg-gray-200 shrink-0" />
               <button
                 onClick={() => setSgCheckedIds([])}
-                className="px-2 py-1 border border-indigo-300 rounded text-xs text-indigo-700 hover:bg-indigo-100 shrink-0"
+                className="px-2 py-1 border border-gray-300 dark:border-white/20 rounded text-xs text-black dark:text-white hover:bg-black/[0.06] dark:hover:bg-white/[0.1] shrink-0"
               >取消选择</button>
               <button
                 disabled={sgCreating}
@@ -2968,7 +2999,7 @@ export default function ProjectDataView() {
                   } catch { alert('操作失败'); }
                   finally { setSgCreating(false); }
                 }}
-                className="px-2 py-1 bg-indigo-600 text-white rounded text-xs hover:bg-indigo-700 disabled:bg-gray-400 shrink-0"
+                className="px-2 py-1 bg-black text-white dark:bg-white dark:text-black rounded text-xs hover:bg-gray-800 dark:hover:bg-gray-200 disabled:bg-gray-400 shrink-0"
               >{sgCreating ? '创建中...' : '已有信号建组'}</button>
             </>
           )}
@@ -2998,16 +3029,16 @@ export default function ProjectDataView() {
           >{sgCreating ? '处理中...' : '智能分组'}</button>
           <button
             onClick={() => { setSgCheckMode(false); setSgCheckedIds([]); }}
-            className="px-3 py-1 border border-indigo-300 rounded text-sm text-indigo-700 hover:bg-indigo-100 shrink-0"
+            className="px-3 py-1 border border-gray-300 dark:border-white/20 rounded text-sm text-black dark:text-white hover:bg-black/[0.06] dark:hover:bg-white/[0.1] shrink-0"
           >退出分组模式</button>
         </div>
       )}
 
       <div className="flex-1 min-h-0 overflow-y-auto">
       {loading ? (
-        <div className="text-center py-8 text-gray-500">加载中...</div>
+        <div className="text-center py-8 text-gray-500 dark:text-white/50">加载中...</div>
       ) : signals.length === 0 ? (
-        <div className="text-center py-8 text-gray-400">暂无信号数据</div>
+        <div className="text-center py-8 text-gray-400 dark:text-white/40">暂无信号数据</div>
       ) : (() => {
         const filteredSignals = signals.filter(s => {
           if (filterMode === 'pending' && s.status !== 'Pending') return false;
@@ -3100,34 +3131,34 @@ export default function ProjectDataView() {
         const displayedSignals = isFiltering ? reorderedSignals : reorderedSignals.slice(0, signalDisplayCount);
         const hasMore = !isFiltering && reorderedSignals.length > signalDisplayCount;
         return (
-        <div className="bg-white rounded-lg shadow">
-          <div className="px-4 py-1.5 text-xs text-gray-500 bg-gray-50 border-b sticky top-0 z-20">
+        <div className="bg-white dark:bg-neutral-900 rounded-lg shadow">
+          <div className="px-4 py-1.5 text-xs text-gray-500 dark:text-white/50 bg-gray-50 dark:bg-neutral-800 border-b sticky top-0 z-20">
             {isFiltering
               ? `显示 ${filteredSignals.length} / ${signals.length} 条信号`
               : `已载入 ${Math.min(signalDisplayCount, filteredSignals.length)} / ${signalTotal} 条信号`}
           </div>
           <table className="min-w-full text-sm">
-            <thead className="bg-gray-50 sticky top-[29px] z-10">
+            <thead className="bg-gray-50 dark:bg-neutral-800 sticky top-[29px] z-10">
               <tr>
-                <th className="px-2 py-2 text-left text-xs text-gray-500 w-8">#</th>
-                {sgCheckMode && <th className="px-1 py-2 text-center text-xs text-gray-500 w-8"></th>}
-                {!sgCheckMode && filterMode === 'my_tasks' && <th className="px-1 py-2 text-center text-xs text-gray-500 w-8"></th>}
-                <th className="py-2 text-xs text-gray-500 w-5">组</th>
-                <th className="px-2 py-2 text-left text-xs text-gray-500 w-8"></th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500 max-w-[120px]">Unique ID</th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500 w-[200px]">状态</th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500 max-w-[180px]">信号名称摘要</th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500 w-[80px]">连接类型</th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500 w-[90px]">导线等级</th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500 max-w-[180px]">端点摘要</th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500 w-[120px]">创建人</th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500 max-w-[90px] cursor-pointer select-none hover:text-blue-600"
+                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50 w-8">#</th>
+                {sgCheckMode && <th className="px-1 py-2 text-center text-xs text-gray-500 dark:text-white/50 w-8"></th>}
+                {!sgCheckMode && filterMode === 'my_tasks' && <th className="px-1 py-2 text-center text-xs text-gray-500 dark:text-white/50 w-8"></th>}
+                <th className="py-2 text-xs text-gray-500 dark:text-white/50 w-5">组</th>
+                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50 w-8"></th>
+                <th className="px-4 py-2 text-left text-xs text-gray-500 dark:text-white/50 max-w-[120px]">Unique ID</th>
+                <th className="px-4 py-2 text-left text-xs text-gray-500 dark:text-white/50 w-[200px]">状态</th>
+                <th className="px-4 py-2 text-left text-xs text-gray-500 dark:text-white/50 max-w-[180px]">信号名称摘要</th>
+                <th className="px-4 py-2 text-left text-xs text-gray-500 dark:text-white/50 w-[80px]">连接类型</th>
+                <th className="px-4 py-2 text-left text-xs text-gray-500 dark:text-white/50 w-[90px]">导线等级</th>
+                <th className="px-4 py-2 text-left text-xs text-gray-500 dark:text-white/50 max-w-[180px]">端点摘要</th>
+                <th className="px-4 py-2 text-left text-xs text-gray-500 dark:text-white/50 w-[120px]">创建人</th>
+                <th className="px-4 py-2 text-left text-xs text-gray-500 dark:text-white/50 max-w-[90px] cursor-pointer select-none hover:text-black dark:hover:text-white"
                   onClick={() => setSignalSortOrder(o => o === 'desc' ? 'asc' : 'desc')}>
                   最后更新 {signalSortOrder === 'desc' ? '▼' : '▲'}
                 </th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500 w-[130px]">操作</th>
+                <th className="px-4 py-2 text-left text-xs text-gray-500 dark:text-white/50 w-[130px]">操作</th>
               </tr>
-              <tr className="bg-white border-b">
+              <tr className="bg-white dark:bg-neutral-900 border-b">
                 <th className="px-2 py-1"></th>
                 {sgCheckMode && <th className="px-1 py-1"></th>}
                 {!sgCheckMode && filterMode === 'my_tasks' && <th className="px-1 py-1 w-8"></th>}
@@ -3135,7 +3166,7 @@ export default function ProjectDataView() {
                   <select
                     value={sgGroupFilter}
                     onChange={e => setSgGroupFilter(e.target.value)}
-                    className="w-full text-xs border border-gray-300 rounded py-0.5 px-0 focus:outline-none focus:border-blue-400"
+                    className="w-full text-xs border border-gray-300 dark:border-white/20 rounded py-0.5 px-0 focus:outline-none focus:border-black"
                     title="按分组类型筛选"
                   >
                     <option value="">全部</option>
@@ -3162,10 +3193,10 @@ export default function ProjectDataView() {
                   <div className="relative">
                     <input type="text" placeholder="筛选..." value={signalFilters['unique_id'] || ''}
                       onChange={e => setSignalFilters(prev => ({ ...prev, unique_id: e.target.value }))}
-                      className="w-full px-1.5 py-0.5 pr-5 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-400" />
+                      className="w-full px-1.5 py-0.5 pr-5 text-xs border border-gray-300 dark:border-white/20 rounded focus:outline-none focus:border-black" />
                     {signalFilters['unique_id'] && (
                       <button onClick={() => setSignalFilters(prev => ({ ...prev, unique_id: '' }))}
-                        className="absolute right-1 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs leading-none">&times;</button>
+                        className="absolute right-1 top-1/2 -translate-y-1/2 text-gray-400 dark:text-white/40 hover:text-gray-600 dark:text-white/60 text-xs leading-none">&times;</button>
                     )}
                   </div>
                 </th>
@@ -3173,7 +3204,7 @@ export default function ProjectDataView() {
                 <th className="px-4 py-1 w-[200px]">
                   <select value={signalFilters['_status'] || ''}
                     onChange={e => setSignalFilters(prev => ({ ...prev, _status: e.target.value }))}
-                    className="w-full px-1 py-0.5 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-400 bg-white">
+                    className="w-full px-1 py-0.5 text-xs border border-gray-300 dark:border-white/20 rounded focus:outline-none focus:border-black dark:focus:border-white bg-white dark:bg-neutral-800 dark:text-white">
                     <option value="">全部状态</option>
                     <option value="Draft">Draft</option>
                     <option value="Pending">审批中</option>
@@ -3186,10 +3217,10 @@ export default function ProjectDataView() {
                     <div className="relative">
                       <input type="text" placeholder="筛选..." value={signalFilters[col] || ''}
                         onChange={e => setSignalFilters(prev => ({ ...prev, [col]: e.target.value }))}
-                        className="w-full px-1.5 py-0.5 pr-5 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-400" />
+                        className="w-full px-1.5 py-0.5 pr-5 text-xs border border-gray-300 dark:border-white/20 rounded focus:outline-none focus:border-black" />
                       {signalFilters[col] && (
                         <button onClick={() => setSignalFilters(prev => ({ ...prev, [col]: '' }))}
-                          className="absolute right-1 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs leading-none">&times;</button>
+                          className="absolute right-1 top-1/2 -translate-y-1/2 text-gray-400 dark:text-white/40 hover:text-gray-600 dark:text-white/60 text-xs leading-none">&times;</button>
                       )}
                     </div>
                   </th>
@@ -3198,7 +3229,7 @@ export default function ProjectDataView() {
                 <th className="px-4 py-1 w-[90px]">
                   <select value={signalFilters['导线等级'] || ''}
                     onChange={e => setSignalFilters(prev => ({ ...prev, '导线等级': e.target.value }))}
-                    className="w-full px-1 py-0.5 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-400 bg-white">
+                    className="w-full px-1 py-0.5 text-xs border border-gray-300 dark:border-white/20 rounded focus:outline-none focus:border-black dark:focus:border-white bg-white dark:bg-neutral-800 dark:text-white">
                     <option value="">全部</option>
                     <option value="1级">1级</option>
                     <option value="2级">2级</option>
@@ -3213,10 +3244,10 @@ export default function ProjectDataView() {
                     <div className="relative">
                       <input type="text" placeholder="筛选..." value={signalFilters[col] || ''}
                         onChange={e => setSignalFilters(prev => ({ ...prev, [col]: e.target.value }))}
-                        className="w-full px-1.5 py-0.5 pr-5 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-400" />
+                        className="w-full px-1.5 py-0.5 pr-5 text-xs border border-gray-300 dark:border-white/20 rounded focus:outline-none focus:border-black" />
                       {signalFilters[col] && (
                         <button onClick={() => setSignalFilters(prev => ({ ...prev, [col]: '' }))}
-                          className="absolute right-1 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs leading-none">&times;</button>
+                          className="absolute right-1 top-1/2 -translate-y-1/2 text-gray-400 dark:text-white/40 hover:text-gray-600 dark:text-white/60 text-xs leading-none">&times;</button>
                       )}
                     </div>
                   </th>
@@ -3225,12 +3256,12 @@ export default function ProjectDataView() {
                 {/* 操作列 - 清除按钮 */}
                 <th className="px-4 py-1">
                   {hasAnySignalFilter && (
-                    <button onClick={() => setSignalFilters({})} className="text-xs text-gray-400 hover:text-red-500">全部清除</button>
+                    <button onClick={() => setSignalFilters({})} className="text-xs text-gray-400 dark:text-white/40 hover:text-red-500">全部清除</button>
                   )}
                 </th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100">
+            <tbody className="divide-y divide-gray-100 dark:divide-white/10">
               {/* 预计算分组位置信息 */}
               {(() => {
                 const groupPosMap = new Map<number, { pos: 'first' | 'middle' | 'last' | 'solo'; groupSize: number }>();
@@ -3258,7 +3289,7 @@ export default function ProjectDataView() {
                       <tr><td colSpan={99} className="h-2 bg-transparent p-0 border-none" /></tr>
                     )}
                     <tr
-                      className={`hover:bg-gray-50 ${
+                      className={`hover:bg-gray-50 dark:hover:bg-white/[0.04] ${
                         hasTodo(signal) || signalDetails[signal.id]?.endpoints?.some(ep => hasTodo(ep))
                           ? 'bg-orange-100'
                           : isExpanded ? 'bg-green-50' : ''
@@ -3303,7 +3334,7 @@ export default function ProjectDataView() {
                           </>
                           );
                         })() : (
-                          <span className="text-gray-400 block py-2">{displayIndex + 1}</span>
+                          <span className="text-gray-400 dark:text-white/40 block py-2">{displayIndex + 1}</span>
                         )}
                       </td>
                       {sgCheckMode && (
@@ -3317,7 +3348,7 @@ export default function ProjectDataView() {
                                 if (e.target.checked) setSgCheckedIds(prev => [...prev, signal.id]);
                                 else setSgCheckedIds(prev => prev.filter(id => id !== signal.id));
                               }}
-                              className="rounded border-gray-300"
+                              className="rounded border-gray-300 dark:border-white/20"
                             />
                           )}
                         </td>
@@ -3334,7 +3365,7 @@ export default function ProjectDataView() {
                                 if (e.target.checked) setBatchApprovalIds(prev => [...prev, rid]);
                                 else setBatchApprovalIds(prev => prev.filter(id => id !== rid));
                               }}
-                              className="rounded border-gray-300"
+                              className="rounded border-gray-300 dark:border-white/20"
                             />
                           )}
                         </td>
@@ -3385,7 +3416,7 @@ export default function ProjectDataView() {
                               if ((signal as any).import_status === 'updated') loadImportDiff('signals', signal.id);
                             }
                           }}
-                          className="text-gray-400 hover:text-green-600 font-mono text-xs"
+                          className="text-gray-400 dark:text-white/40 hover:text-green-600 font-mono text-xs"
                         >
                           {isExpanded ? '▼' : '▶'}
                         </button>
@@ -3397,7 +3428,7 @@ export default function ProjectDataView() {
                         )}
                         {signal.status === 'Pending' && (
                           <>
-                            <span className="px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 text-xs font-semibold">审批中</span>
+                            <span className="px-1.5 py-0.5 rounded bg-black/10 dark:bg-white/15 text-black dark:text-white text-xs font-semibold">审批中</span>
                             {signal.pending_item_type === 'approval' && <span className="ml-1 px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 text-xs">待我审批</span>}
                             {signal.pending_item_type === 'completion' && <span className="ml-1 px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 text-xs">待我完善</span>}
                           </>
@@ -3408,27 +3439,27 @@ export default function ProjectDataView() {
                         {/* 已导入/已更新标签暂时隐藏 */}
                       </td>
                       <td className="px-4 py-2 text-xs max-w-[180px] truncate" title={signal.信号名称摘要 || '-'}>{signal.信号名称摘要 || '-'}</td>
-                      <td className="px-4 py-2 text-gray-600 w-[80px] truncate" title={signal.连接类型 || '-'}>{signal.连接类型 || '-'}</td>
-                      <td className="px-4 py-2 text-gray-600 text-xs w-[90px]">{signal.导线等级 || '-'}</td>
-                      <td className="px-4 py-2 text-gray-600 text-xs max-w-[180px] truncate" title={signal.endpoint_summary || '-'}>{signal.endpoint_summary || '-'}</td>
-                      <td className="px-4 py-2 text-gray-600 text-xs w-[120px] truncate" title={signal.created_by || '-'}>{signal.created_by || '-'}</td>
-                      <td className="px-4 py-2 text-gray-400 text-xs max-w-[90px] truncate">{(signal as any).updated_at ? new Date((signal as any).updated_at).toLocaleDateString() : '-'}</td>
+                      <td className="px-4 py-2 text-gray-600 dark:text-white/60 w-[80px] truncate" title={signal.连接类型 || '-'}>{signal.连接类型 || '-'}</td>
+                      <td className="px-4 py-2 text-gray-600 dark:text-white/60 text-xs w-[90px]">{signal.导线等级 || '-'}</td>
+                      <td className="px-4 py-2 text-gray-600 dark:text-white/60 text-xs max-w-[180px] truncate" title={signal.endpoint_summary || '-'}>{signal.endpoint_summary || '-'}</td>
+                      <td className="px-4 py-2 text-gray-600 dark:text-white/60 text-xs w-[120px] truncate" title={signal.created_by || '-'}>{signal.created_by || '-'}</td>
+                      <td className="px-4 py-2 text-gray-400 dark:text-white/40 text-xs max-w-[90px] truncate">{(signal as any).updated_at ? new Date((signal as any).updated_at).toLocaleDateString() : '-'}</td>
                       <td className="px-4 py-2 space-x-2 text-xs whitespace-nowrap w-[130px]">
                         {signal.status === 'Pending' ? (
-                          <span className="text-gray-400 cursor-not-allowed" title="记录审批中，不可编辑">编辑/删除</span>
+                          <span className="text-gray-400 dark:text-white/40 cursor-not-allowed" title="记录审批中，不可编辑">编辑/删除</span>
                         ) : (
                           <>
                             {canManageSignals && (signalLockMap[signal.id] ? (
                               <span className="text-amber-600">🔒{signalLockMap[signal.id].lockedBy}</span>
                             ) : (
-                              <button onClick={() => openEditSignal(signal)} className="text-blue-600 hover:text-blue-800">编辑</button>
+                              <button onClick={() => openEditSignal(signal)} className="text-black hover:text-black/60 dark:hover:text-white/60">编辑</button>
                             ))}
                             {canDeleteSignal(signal) && (
                               <button onClick={() => deleteSignal(signal)} className="text-red-600 hover:text-red-800">删除</button>
                             )}
                           </>
                         )}
-                        <button onClick={() => setHistoryTarget({ entityTable: 'signals', entityId: signal.id, entityLabel: `信号 ${signal.unique_id || signal.id}` })} className="text-gray-500 hover:text-gray-700">历史</button>
+                        <button onClick={() => setHistoryTarget({ entityTable: 'signals', entityId: signal.id, entityLabel: `信号 ${signal.unique_id || signal.id}` })} className="text-gray-500 dark:text-white/50 hover:text-gray-700 dark:text-white/70">历史</button>
                       </td>
                     </tr>
 
@@ -3442,28 +3473,28 @@ export default function ProjectDataView() {
                         <tr key={`${signal.id}-approval`}>
                           <td colSpan={11} className="px-0 py-0 bg-yellow-50 border-b border-yellow-200">
                             <div className="pl-8 pr-4 py-3">
-                              {request.project_name && <div className="text-xs text-blue-600 font-medium mb-1">项目：{request.project_name}</div>}
-                              <div className="text-xs font-semibold text-gray-600 mb-2">审批进度（{request.action_type}）</div>
+                              {request.project_name && <div className="text-xs text-black dark:text-white font-medium mb-1">项目：{request.project_name}</div>}
+                              <div className="text-xs font-semibold text-gray-600 dark:text-white/60 mb-2">审批进度（{request.action_type}）</div>
                               {completionItems.length > 0 && (
                                 <div className="mb-2">
-                                  <div className="text-xs text-gray-400 mb-1">完善阶段</div>
+                                  <div className="text-xs text-gray-400 dark:text-white/40 mb-1">完善阶段</div>
                                   {completionItems.map((item: any) => (
                                     <div key={item.id} className="flex items-center gap-1.5 text-xs mb-0.5">
                                       <span>{item.status === 'done' ? '✅' : item.status === 'cancelled' ? '❌' : '⏳'}</span>
                                       <span className="font-medium">{item.recipient_username}</span>
-                                      <span className="text-gray-500">{item.status === 'done' ? '已完善' : item.status === 'cancelled' ? '已取消' : '待完善'}</span>
+                                      <span className="text-gray-500 dark:text-white/50">{item.status === 'done' ? '已完善' : item.status === 'cancelled' ? '已取消' : '待完善'}</span>
                                     </div>
                                   ))}
                                 </div>
                               )}
                               {(request.current_phase === 'approval' || completionItems.every((i: any) => i.status !== 'pending')) && (
                                 <div className="mb-2">
-                                  <div className="text-xs text-gray-400 mb-1">审批阶段</div>
+                                  <div className="text-xs text-gray-400 dark:text-white/40 mb-1">审批阶段</div>
                                   {approvalItems.map((item: any) => (
                                     <div key={item.id} className="flex items-center gap-1.5 text-xs mb-0.5">
                                       <span>{item.status === 'done' && !item.rejection_reason ? '✅' : item.status === 'cancelled' ? '❌' : '⏳'}</span>
                                       <span className="font-medium">{item.recipient_username}</span>
-                                      <span className="text-gray-500">{item.status === 'done' && !item.rejection_reason ? '已通过' : item.status === 'done' && item.rejection_reason ? `已拒绝：${item.rejection_reason}` : item.status === 'cancelled' ? '已取消' : '待审批'}</span>
+                                      <span className="text-gray-500 dark:text-white/50">{item.status === 'done' && !item.rejection_reason ? '已通过' : item.status === 'done' && item.rejection_reason ? `已拒绝：${item.rejection_reason}` : item.status === 'cancelled' ? '已取消' : '待审批'}</span>
                                     </div>
                                   ))}
                                 </div>
@@ -3501,11 +3532,11 @@ export default function ProjectDataView() {
                                 <div className="mb-3 border border-purple-200 rounded bg-purple-50 px-3 py-2">
                                   <div className="font-semibold text-purple-700 mb-1">文件导入更新了以下字段：</div>
                                   <table className="w-auto border-collapse text-xs">
-                                    <thead><tr className="text-gray-500"><th className="pr-4 text-left font-medium">字段</th><th className="pr-4 text-left font-medium">原值</th><th className="text-left font-medium">新值</th></tr></thead>
+                                    <thead><tr className="text-gray-500 dark:text-white/50"><th className="pr-4 text-left font-medium">字段</th><th className="pr-4 text-left font-medium">原值</th><th className="text-left font-medium">新值</th></tr></thead>
                                     <tbody>
                                       {keys.map(k => (
                                         <tr key={k} className="border-t border-purple-100">
-                                          <td className="pr-4 py-0.5 text-gray-600">{k}</td>
+                                          <td className="pr-4 py-0.5 text-gray-600 dark:text-white/60">{k}</td>
                                           <td className="pr-4 py-0.5 text-red-600 line-through">{diff.old_values[k] || '-'}</td>
                                           <td className="py-0.5 text-green-700 font-medium">{diff.new_values[k] || '-'}</td>
                                         </tr>
@@ -3525,7 +3556,7 @@ export default function ProjectDataView() {
                               return (
                                 <div className="mb-3 border border-amber-200 rounded bg-amber-50 px-3 py-2">
                                   <div className="font-semibold text-amber-700 mb-1">信号合并记录（{conflicts.length}条）</div>
-                                  <ul className="list-disc list-inside text-xs text-gray-700 space-y-0.5 max-h-40 overflow-y-auto">
+                                  <ul className="list-disc list-inside text-xs text-gray-700 dark:text-white/70 space-y-0.5 max-h-40 overflow-y-auto">
                                     {conflicts.map((c, i) => <li key={i}>{c}</li>)}
                                   </ul>
                                 </div>
@@ -3534,7 +3565,7 @@ export default function ProjectDataView() {
 
                             {/* 连接摘要 */}
                             {detail.endpoints?.length >= 1 && (
-                              <div className="mb-3 font-semibold text-gray-800 text-sm bg-green-100 px-3 py-1.5 rounded">
+                              <div className="mb-3 font-semibold text-gray-800 dark:text-white text-sm bg-green-100 px-3 py-1.5 rounded">
                                 {detail.endpoints.map((ep, i) => {
                                   if (!ep.pin_id) {
                                     return (
@@ -3566,8 +3597,8 @@ export default function ProjectDataView() {
                                 if (!valid) return null;
                                 return (
                                   <div className="col-span-2 flex gap-2 mb-1">
-                                    <span className="text-gray-500 w-36 flex-shrink-0">信号ATA:</span>
-                                    <span className="text-gray-800">{v}</span>
+                                    <span className="text-gray-500 dark:text-white/50 w-36 flex-shrink-0">信号ATA:</span>
+                                    <span className="text-gray-800 dark:text-white">{v}</span>
                                   </div>
                                 );
                               })()}
@@ -3575,16 +3606,16 @@ export default function ProjectDataView() {
                               {/* 导线等级（计算值） */}
                               {(detail as any).导线等级 && (
                                 <div className="flex gap-2">
-                                  <span className="text-gray-500 w-36 flex-shrink-0">导线等级:</span>
-                                  <span className="text-gray-800 font-medium">{(detail as any).导线等级}</span>
+                                  <span className="text-gray-500 dark:text-white/50 w-36 flex-shrink-0">导线等级:</span>
+                                  <span className="text-gray-800 dark:text-white font-medium">{(detail as any).导线等级}</span>
                                 </div>
                               )}
 
                               {/* 协议标识（仅ARINC 429 / CAN Bus时显示） */}
                               {(detail as any)['协议标识'] && (
                                 <div className="flex gap-2">
-                                  <span className="text-gray-500 w-36 flex-shrink-0">协议标识:</span>
-                                  <span className="text-gray-800">{(detail as any)['协议标识']}</span>
+                                  <span className="text-gray-500 dark:text-white/50 w-36 flex-shrink-0">协议标识:</span>
+                                  <span className="text-gray-800 dark:text-white">{(detail as any)['协议标识']}</span>
                                 </div>
                               )}
 
@@ -3610,8 +3641,8 @@ export default function ProjectDataView() {
                                 { key: '备注',          label: '备注' },
                               ].map(f => (
                                 <div key={f.key} className="flex gap-2">
-                                  <span className="text-gray-500 w-36 flex-shrink-0">{f.label}:</span>
-                                  <span className="text-gray-800">{(detail as any)[f.key] || '-'}</span>
+                                  <span className="text-gray-500 dark:text-white/50 w-36 flex-shrink-0">{f.label}:</span>
+                                  <span className="text-gray-800 dark:text-white">{(detail as any)[f.key] || '-'}</span>
                                 </div>
                               ))}
 
@@ -3628,8 +3659,8 @@ export default function ProjectDataView() {
                                 { key: '成品线安装责任',        label: '成品线安装责任' },
                               ].map(f => (
                                 <div key={f.key} className="flex gap-2">
-                                  <span className="text-gray-500 w-36 flex-shrink-0">{f.label}:</span>
-                                  <span className="text-gray-800">{(detail as any)[f.key] || '-'}</span>
+                                  <span className="text-gray-500 dark:text-white/50 w-36 flex-shrink-0">{f.label}:</span>
+                                  <span className="text-gray-800 dark:text-white">{(detail as any)[f.key] || '-'}</span>
                                 </div>
                               ))}
                             </div>
@@ -3637,7 +3668,7 @@ export default function ProjectDataView() {
                             {/* 端点详细信息表 */}
                             {detail.endpoints?.length > 0 && (
                               <div>
-                                <p className="font-medium text-gray-700 mb-1">信号端点信息</p>
+                                <p className="font-medium text-gray-700 dark:text-white/70 mb-1">信号端点信息</p>
                                 <table className="w-full text-xs border-collapse">
                                   <thead>
                                     <tr className="bg-green-100">
@@ -3664,7 +3695,7 @@ export default function ProjectDataView() {
                                       return (
                                       <React.Fragment key={i}>
                                       <tr className={`border-b border-green-100 ${!ep.pin_id ? 'bg-orange-50' : ''}`}>
-                                        <td className="px-2 py-1 text-gray-500">端点{i + 1}</td>
+                                        <td className="px-2 py-1 text-gray-500 dark:text-white/50">端点{i + 1}</td>
                                         <td className="px-2 py-1">{ep.设备编号}</td>
                                         <td className="px-2 py-1 font-mono">
                                           {ep.pin_id
@@ -3672,14 +3703,14 @@ export default function ProjectDataView() {
                                             : <span className="text-orange-500 italic">待完善</span>
                                           }
                                         </td>
-                                        <td className="px-2 py-1 text-gray-600">{(ep as any).设备负责人 || '-'}</td>
+                                        <td className="px-2 py-1 text-gray-600 dark:text-white/60">{(ep as any).设备负责人 || '-'}</td>
                                         <td className="px-2 py-1">
                                           {ep.pin_id ? ep.针孔号 : <span className="text-orange-500 italic">待完善</span>}
                                         </td>
                                         <td className="px-2 py-1">{(ep as any).pin_端接尺寸 || '-'}</td>
                                         <td className="px-2 py-1">{(ep as any).pin_屏蔽类型 || '-'}</td>
                                         <td className="px-2 py-1">{ep.信号名称 || '-'}</td>
-                                        <td className="px-2 py-1 text-gray-600">{ep.信号定义 || '-'}</td>
+                                        <td className="px-2 py-1 text-gray-600 dark:text-white/60">{ep.信号定义 || '-'}</td>
                                         <td className="px-2 py-1 text-center">
                                           {myEdges.length > 0 ? (
                                             <button
@@ -3688,12 +3719,12 @@ export default function ProjectDataView() {
                                                 if (n.has(epId)) n.delete(epId); else n.add(epId);
                                                 return n;
                                               })}
-                                              className="text-blue-500 hover:text-blue-700 font-mono text-xs"
+                                              className="text-black/60 dark:text-white/60 hover:text-black dark:hover:text-white font-mono text-xs"
                                               title={`${myEdges.length} 条连接`}
                                             >{isEdgeExpanded ? '▼' : '▶'} {myEdges.length}</button>
-                                          ) : <span className="text-gray-300">-</span>}
+                                          ) : <span className="text-gray-300 dark:text-white/30">-</span>}
                                         </td>
-                                        <td className="px-2 py-1 text-gray-600">{(ep as any).备注 || '-'}</td>
+                                        <td className="px-2 py-1 text-gray-600 dark:text-white/60">{(ep as any).备注 || '-'}</td>
                                         <td className="px-2 py-1">
                                           {!ep.pin_id
                                             ? (signal.status === 'Pending' && ep.设备负责人 === user?.username
@@ -3712,7 +3743,7 @@ export default function ProjectDataView() {
                                       {isEdgeExpanded && myEdges.length > 0 && (
                                         <tr>
                                           <td colSpan={12} className="px-0 py-0">
-                                            <div className="ml-8 mr-4 my-1 bg-blue-50 border border-blue-200 rounded p-2">
+                                            <div className="ml-8 mr-4 my-1 bg-black/[0.03] dark:bg-white/[0.06] border border-gray-200 dark:border-white/10 rounded p-2">
                                               {myEdges.map(edge => {
                                                 const isFrom = edge.from_endpoint_id === epId;
                                                 const otherEpId = isFrom ? edge.to_endpoint_id : edge.from_endpoint_id;
@@ -3724,10 +3755,10 @@ export default function ProjectDataView() {
                                                   : `endpoint#${otherEpId}`;
                                                 return (
                                                   <div key={edge.id} className="flex items-center gap-2 text-xs py-0.5">
-                                                    <span className={`font-bold text-sm ${edge.direction === 'bidirectional' ? 'text-purple-600' : 'text-blue-600'}`}>{arrow}</span>
-                                                    <span className="font-mono text-gray-800">{otherLabel}</span>
-                                                    <span className="text-gray-400">{dirLabel}</span>
-                                                    {edge.source_info && <span className="text-gray-300 ml-auto">{edge.source_info}</span>}
+                                                    <span className={`font-bold text-sm ${edge.direction === 'bidirectional' ? 'text-purple-600' : 'text-black dark:text-white'}`}>{arrow}</span>
+                                                    <span className="font-mono text-gray-800 dark:text-white">{otherLabel}</span>
+                                                    <span className="text-gray-400 dark:text-white/40">{dirLabel}</span>
+                                                    {edge.source_info && <span className="text-gray-300 dark:text-white/30 ml-auto">{edge.source_info}</span>}
                                                   </div>
                                                 );
                                               })}
@@ -3754,7 +3785,7 @@ export default function ProjectDataView() {
           </table>
           {/* 渐进加载哨兵 */}
           {hasMore && (
-            <div ref={signalSentinelRef} className="py-3 text-center text-xs text-gray-400">
+            <div ref={signalSentinelRef} className="py-3 text-center text-xs text-gray-400 dark:text-white/40">
               滚动加载更多... （已显示 {Math.min(signalDisplayCount, reorderedSignals.length)} / {reorderedSignals.length} 条）
             </div>
           )}
@@ -3772,19 +3803,32 @@ export default function ProjectDataView() {
 
   return (
     <Layout>
-      <div className="px-4 py-4 h-full flex flex-col overflow-hidden">
+      <div className="px-6 py-4 h-full flex flex-col overflow-hidden">
         {/* 顶部：项目名称 */}
         <div className="mb-3">
-          <span className="text-xl font-bold text-gray-900">
-            {selectedProjectId ? projects.find(p => p.id === selectedProjectId)?.name ?? '（未知项目）' : '请选择项目'}
-          </span>
-          <button
-            disabled={sgCheckMode}
-            onClick={() => { setSwitchProjectTargetId(selectedProjectId ?? ''); setShowSwitchProjectModal(true); }}
-            className={`ml-3 px-2 py-1 text-xs border rounded ${sgCheckMode ? 'border-gray-200 text-gray-300 cursor-not-allowed' : 'border-gray-300 hover:bg-gray-50 text-gray-600'}`}
-          >
-            切换项目
-          </button>
+          <div className="relative inline-block" ref={projectDropdownRef}>
+            <button
+              disabled={sgCheckMode}
+              onClick={() => setShowProjectDropdown(!showProjectDropdown)}
+              className={`inline-flex items-center gap-2 text-3xl font-bold ${sgCheckMode ? 'text-gray-400 dark:text-white/40 cursor-not-allowed' : 'text-gray-900 dark:text-white hover:text-black/70 dark:hover:text-white/70 transition-colors'}`}
+            >
+              {selectedProjectId ? projects.find(p => p.id === selectedProjectId)?.name ?? '（未知项目）' : '请选择项目'}
+              <svg className={`w-5 h-5 transition-transform ${showProjectDropdown ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+            </button>
+            {showProjectDropdown && projects.length > 0 && (
+              <div className="absolute left-0 top-full mt-1 w-64 bg-white dark:bg-neutral-900 border border-gray-200 dark:border-white/10 rounded-lg shadow-lg z-50 py-1">
+                {projects.map(p => (
+                  <button
+                    key={p.id}
+                    onClick={() => { setSelectedProjectId(p.id); setShowProjectDropdown(false); }}
+                    className={`w-full text-left px-4 py-2 text-sm transition-colors ${p.id === selectedProjectId ? 'bg-black text-white dark:bg-white dark:text-black' : 'hover:bg-black/[0.04] dark:hover:bg-white/[0.06] text-black dark:text-white'}`}
+                  >
+                    {p.name}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           {selectedProjectId && canExport && (
             <button
               onClick={() => {
@@ -3794,7 +3838,7 @@ export default function ProjectDataView() {
                 setDownloadCols(m);
                 setShowDownloadModal(true);
               }}
-              className="ml-2 px-2 py-1 text-xs border border-gray-300 rounded hover:bg-gray-50 text-indigo-600"
+              className="ml-2 btn-secondary text-xs !px-3 !py-1"
             >
               下载项目数据
             </button>
@@ -3803,22 +3847,22 @@ export default function ProjectDataView() {
 
         {/* 视图切换 */}
         <div className={`flex flex-wrap items-center gap-3 mb-3 ${sgCheckMode ? 'opacity-50 pointer-events-none' : ''}`}>
-          <div className="flex bg-gray-100 rounded-md p-0.5">
+          <div className="flex bg-gray-100 dark:bg-neutral-800 rounded-md p-0.5">
             <button
               onClick={() => setActiveView('devices')}
-              className={`px-3 py-1 rounded text-sm ${activeView === 'devices' ? 'bg-white shadow text-blue-600 font-medium' : 'text-gray-600'}`}
+              className={`px-3 py-1 rounded text-sm ${activeView === 'devices' ? 'bg-white dark:bg-neutral-900 shadow text-black dark:text-white font-medium' : 'text-gray-600 dark:text-white/60'}`}
             >
               设备视图
             </button>
             <button
               onClick={() => setActiveView('section-connectors')}
-              className={`px-3 py-1 rounded text-sm ${activeView === 'section-connectors' ? 'bg-white shadow text-blue-600 font-medium' : 'text-gray-600'}`}
+              className={`px-3 py-1 rounded text-sm ${activeView === 'section-connectors' ? 'bg-white dark:bg-neutral-900 shadow text-black dark:text-white font-medium' : 'text-gray-600 dark:text-white/60'}`}
             >
               断面连接器
             </button>
             <button
               onClick={() => setActiveView('signals')}
-              className={`px-3 py-1 rounded text-sm ${activeView === 'signals' ? 'bg-white shadow text-blue-600 font-medium' : 'text-gray-600'}`}
+              className={`px-3 py-1 rounded text-sm ${activeView === 'signals' ? 'bg-white dark:bg-neutral-900 shadow text-black dark:text-white font-medium' : 'text-gray-600 dark:text-white/60'}`}
             >
               信号视图
             </button>
@@ -3827,17 +3871,17 @@ export default function ProjectDataView() {
 
         {/* 筛选按钮 */}
         <div id="tour-filter-tabs" className={`flex flex-wrap items-center gap-3 mb-4 justify-between ${sgCheckMode ? 'opacity-50 pointer-events-none' : ''}`}>
-          <div className="flex bg-gray-100 rounded-md p-0.5">
+          <div className="flex bg-gray-100 dark:bg-neutral-800 rounded-md p-0.5">
             <button
               onClick={() => setFilterMode('all')}
-              className={`px-3 py-1 rounded text-sm ${filterMode === 'all' ? 'bg-white shadow text-blue-600 font-medium' : 'text-gray-600'}`}
+              className={`px-3 py-1 rounded text-sm ${filterMode === 'all' ? 'bg-white dark:bg-neutral-900 shadow text-black dark:text-white font-medium' : 'text-gray-600 dark:text-white/60'}`}
             >
               {activeView === 'signals' ? '全部信号' : '全部设备'}
             </button>
             {(isAdmin || myProjectRole === '系统组') && (
               <button
                 onClick={() => setFilterMode('my')}
-                className={`px-3 py-1 rounded text-sm ${filterMode === 'my' ? 'bg-white shadow text-blue-600 font-medium' : 'text-gray-600'}`}
+                className={`px-3 py-1 rounded text-sm ${filterMode === 'my' ? 'bg-white dark:bg-neutral-900 shadow text-black dark:text-white font-medium' : 'text-gray-600 dark:text-white/60'}`}
               >
                 {activeView === 'signals' ? '与我有关的信号' : '己方设备'}
               </button>
@@ -3845,7 +3889,7 @@ export default function ProjectDataView() {
             {activeView === 'devices' && (isAdmin || myProjectRole === '系统组') && (
               <button
                 onClick={() => setFilterMode('related')}
-                className={`px-3 py-1 rounded text-sm ${filterMode === 'related' ? 'bg-white shadow text-teal-600 font-medium' : 'text-gray-600'}`}
+                className={`px-3 py-1 rounded text-sm ${filterMode === 'related' ? 'bg-white dark:bg-neutral-900 shadow text-teal-600 font-medium' : 'text-gray-600 dark:text-white/60'}`}
               >
                 对端设备
               </button>
@@ -3853,7 +3897,7 @@ export default function ProjectDataView() {
             {myProjectRole !== '总体PMO组' && myProjectRole !== '其他组' && (
               <button
                 onClick={() => { setFilterMode('my_tasks'); setBatchApprovalIds([]); }}
-                className={`px-3 py-1 rounded text-sm ${filterMode === 'my_tasks' ? 'bg-white shadow text-orange-600 font-medium' : 'text-gray-600'}`}
+                className={`px-3 py-1 rounded text-sm ${filterMode === 'my_tasks' ? 'bg-white dark:bg-neutral-900 shadow text-orange-600 font-medium' : 'text-gray-600 dark:text-white/60'}`}
               >
                 我的任务
               </button>
@@ -3861,7 +3905,7 @@ export default function ProjectDataView() {
             {activeView === 'signals' && (
               <button
                 onClick={() => setFilterMode('networking')}
-                className={`px-3 py-1 rounded text-sm ${filterMode === 'networking' ? 'bg-white shadow text-green-600 font-medium' : 'text-gray-600'}`}
+                className={`px-3 py-1 rounded text-sm ${filterMode === 'networking' ? 'bg-white dark:bg-neutral-900 shadow text-green-600 font-medium' : 'text-gray-600 dark:text-white/60'}`}
               >
                 组网信号
               </button>
@@ -3885,17 +3929,17 @@ export default function ProjectDataView() {
                     if (e.target.checked) setBatchApprovalIds([...new Set([...batchApprovalIds, ...allApprovalIds])]);
                     else setBatchApprovalIds(batchApprovalIds.filter(id => !allApprovalIds.includes(id)));
                   }}
-                  className="rounded border-gray-300"
+                  className="rounded border-gray-300 dark:border-white/20"
                   disabled={allApprovalIds.length === 0}
                 />
-                <span className="text-xs text-gray-500">全选</span>
+                <span className="text-xs text-gray-500 dark:text-white/50">全选</span>
               </label>
               {batchApprovalIds.length > 0 && (
-                <span className="text-xs text-gray-500">已选 <span className="font-semibold text-orange-600">{batchApprovalIds.length}</span> 条</span>
+                <span className="text-xs text-gray-500 dark:text-white/50">已选 <span className="font-semibold text-orange-600">{batchApprovalIds.length}</span> 条</span>
               )}
               <button
                 onClick={() => setBatchApprovalIds([])}
-                className={`px-2 py-1 text-xs rounded ${batchApprovalIds.length > 0 ? 'border border-gray-300 text-gray-600 hover:bg-gray-50' : 'hidden'}`}
+                className={`px-2 py-1 text-xs rounded ${batchApprovalIds.length > 0 ? 'border border-gray-300 dark:border-white/20 text-gray-600 dark:text-white/60 hover:bg-gray-50 dark:hover:bg-white/[0.04]' : 'hidden'}`}
               >取消选择</button>
               <button
                 disabled={batchApprovalIds.length === 0 || batchApproving}
@@ -3917,7 +3961,7 @@ export default function ProjectDataView() {
                   } catch { alert('操作失败'); }
                   finally { setBatchApproving(false); }
                 }}
-                className={`px-3 py-1 rounded text-xs ${batchApprovalIds.length > 0 && !batchApproving ? 'bg-orange-500 text-white hover:bg-orange-600' : 'bg-gray-300 text-gray-500 cursor-not-allowed'}`}
+                className={`px-3 py-1 rounded text-xs ${batchApprovalIds.length > 0 && !batchApproving ? 'bg-orange-500 text-white hover:bg-orange-600' : 'bg-gray-300 text-gray-500 dark:text-white/50 cursor-not-allowed'}`}
               >{batchApproving ? '审批中...' : '一键审批'}</button>
             </div>
             );
@@ -3926,7 +3970,7 @@ export default function ProjectDataView() {
           {/* 智能助手按钮 */}
           <button
             onClick={() => setShowChat(c => !c)}
-            className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-700 text-sm hover:bg-indigo-100 transition-colors"
+            className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-black/[0.04] dark:bg-white/[0.08] border border-gray-200 dark:border-white/10 text-black dark:text-white text-sm hover:bg-black/[0.06] dark:hover:bg-white/[0.1] transition-colors"
           >
             <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
@@ -3937,8 +3981,8 @@ export default function ProjectDataView() {
 
         {/* 智能助手浮窗 */}
         {showChat && (
-          <div className="fixed bottom-6 right-6 z-50 w-96 bg-white rounded-2xl shadow-2xl border border-gray-200 flex flex-col" style={{ height: '520px' }}>
-            <div className="flex items-center justify-between px-4 py-3 bg-indigo-600 rounded-t-2xl">
+          <div className="fixed bottom-6 right-6 z-50 w-96 bg-white dark:bg-neutral-900 rounded-2xl shadow-2xl border border-gray-200 dark:border-white/10 flex flex-col" style={{ height: '520px' }}>
+            <div className="flex items-center justify-between px-4 py-3 bg-black rounded-t-2xl">
               <div className="flex items-center gap-2 text-white font-medium text-sm">
                 <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
@@ -3946,13 +3990,13 @@ export default function ProjectDataView() {
                 EICD 智能助手
               </div>
               <div className="flex items-center gap-2">
-                <button onClick={() => setChatMessages([])} className="text-indigo-200 hover:text-white text-xs">清空</button>
-                <button onClick={() => setShowChat(false)} className="text-indigo-200 hover:text-white">✕</button>
+                <button onClick={() => setChatMessages([])} className="text-white/60 hover:text-white text-xs">清空</button>
+                <button onClick={() => setShowChat(false)} className="text-white/60 hover:text-white">✕</button>
               </div>
             </div>
             <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
               {chatMessages.length === 0 && (
-                <div className="text-center text-gray-400 text-sm mt-8">
+                <div className="text-center text-gray-400 dark:text-white/40 text-sm mt-8">
                   <p className="text-2xl mb-2">💬</p>
                   <p>你好！我是 EICD 智能助手</p>
                   <p className="mt-1 text-xs">可以问我关于平台操作、字段含义、航空电气规范等问题</p>
@@ -3962,8 +4006,8 @@ export default function ProjectDataView() {
                 <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                   <div className={`max-w-[80%] px-3 py-2 rounded-2xl text-sm whitespace-pre-wrap ${
                     msg.role === 'user'
-                      ? 'bg-indigo-600 text-white rounded-br-sm'
-                      : 'bg-gray-100 text-gray-800 rounded-bl-sm'
+                      ? 'bg-black text-white dark:bg-white dark:text-black rounded-br-sm'
+                      : 'bg-gray-100 text-gray-800 dark:text-white rounded-bl-sm'
                   }`}>
                     {msg.content}
                   </div>
@@ -3971,13 +4015,13 @@ export default function ProjectDataView() {
               ))}
               {chatLoading && (
                 <div className="flex justify-start">
-                  <div className="bg-gray-100 text-gray-500 px-3 py-2 rounded-2xl rounded-bl-sm text-sm">
+                  <div className="bg-gray-100 text-gray-500 dark:text-white/50 px-3 py-2 rounded-2xl rounded-bl-sm text-sm">
                     <span className="animate-pulse">正在思考...</span>
                   </div>
                 </div>
               )}
             </div>
-            <div className="px-4 py-3 border-t border-gray-100">
+            <div className="px-4 py-3 border-t border-gray-100 dark:border-white/10">
               <form onSubmit={async e => {
                 e.preventDefault();
                 const text = chatInput.trim();
@@ -4004,11 +4048,11 @@ export default function ProjectDataView() {
                   value={chatInput}
                   onChange={e => setChatInput(e.target.value)}
                   placeholder="输入问题..."
-                  className="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-indigo-400"
+                  className="flex-1 border border-gray-300 dark:border-white/20 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-black"
                   disabled={chatLoading}
                 />
                 <button type="submit" disabled={chatLoading || !chatInput.trim()}
-                  className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700 disabled:opacity-50">
+                  className="px-3 py-1.5 bg-black text-white dark:bg-white dark:text-black rounded-lg text-sm hover:bg-gray-800 dark:hover:bg-gray-200 disabled:opacity-50">
                   发送
                 </button>
               </form>
@@ -4019,7 +4063,7 @@ export default function ProjectDataView() {
         {/* 内容区 */}
         <div className="flex-1 min-h-0">
         {!selectedProjectId ? (
-          <div className="text-center py-16 text-gray-400">
+          <div className="text-center py-16 text-gray-400 dark:text-white/40">
             {projects.length === 0 && !isAdmin
               ? '当前无任何项目权限，请点击右上角灰色齿轮申请项目权限'
               : '请先选择项目'}
@@ -4032,10 +4076,10 @@ export default function ProjectDataView() {
         {/* ── 导入/更新设备数据弹窗 ── */}
         {showImportDevDataModal && selectedProjectId && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg max-w-lg w-full max-h-[80vh] flex flex-col">
-              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
+            <div className="bg-white dark:bg-neutral-900 rounded-lg max-w-lg w-full max-h-[80vh] flex flex-col">
+              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-white/10 shrink-0">
                 <h2 className="text-xl font-bold">导入设备和连接器数据</h2>
-                <button onClick={() => setShowImportDevDataModal(false)} className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 text-sm">关闭</button>
+                <button onClick={() => setShowImportDevDataModal(false)} className="px-4 py-2 border border-gray-300 dark:border-white/20 rounded hover:bg-gray-50 dark:hover:bg-white/[0.04] text-sm">关闭</button>
               </div>
               <div className="flex-1 overflow-y-auto px-6 py-4">
                 {!importDevResult ? (
@@ -4044,11 +4088,11 @@ export default function ProjectDataView() {
                     <div className="flex mb-4">
                       <button
                         onClick={() => { setImportDevPhase('devices'); setImportDevFile(null); }}
-                        className={`flex-1 px-4 py-2.5 text-sm font-medium border rounded-l-lg ${importDevPhase === 'devices' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'}`}
+                        className={`flex-1 px-4 py-2.5 text-sm font-medium border rounded-l-lg ${importDevPhase === 'devices' ? 'bg-black text-white dark:bg-white dark:text-black border-black' : 'bg-white dark:bg-neutral-900 text-gray-600 dark:text-white/60 border-gray-300 dark:border-white/20 hover:bg-gray-50 dark:hover:bg-white/[0.04]'}`}
                       >电设备清单</button>
                       <button
                         onClick={() => { setImportDevPhase('connectors'); setImportDevFile(null); }}
-                        className={`flex-1 px-4 py-2.5 text-sm font-medium border-t border-b border-r rounded-r-lg ${importDevPhase === 'connectors' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'}`}
+                        className={`flex-1 px-4 py-2.5 text-sm font-medium border-t border-b border-r rounded-r-lg ${importDevPhase === 'connectors' ? 'bg-black text-white dark:bg-white dark:text-black border-black' : 'bg-white dark:bg-neutral-900 text-gray-600 dark:text-white/60 border-gray-300 dark:border-white/20 hover:bg-gray-50 dark:hover:bg-white/[0.04]'}`}
                       >设备端元器件清单</button>
                     </div>
                     {/* 导入/更新按钮（更新暂时隐藏） */}
@@ -4056,20 +4100,20 @@ export default function ProjectDataView() {
                     <div className="flex gap-3 mb-4">
                       <button
                         onClick={() => { setImportDevType('import'); setImportDevFile(null); }}
-                        className={`flex-1 px-3 py-2 rounded text-sm border-2 ${importDevType === 'import' ? 'border-blue-500 bg-blue-50 text-blue-700 font-medium' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}
+                        className={`flex-1 px-3 py-2 rounded text-sm border-2 ${importDevType === 'import' ? 'border-black bg-black/[0.03] dark:bg-white/[0.06] text-black dark:text-white font-medium' : 'border-gray-200 dark:border-white/10 text-gray-600 dark:text-white/60 hover:border-gray-300 dark:border-white/20'}`}
                       >导入（新增）</button>
                       <button
                         onClick={() => { setImportDevType('update'); setImportDevFile(null); }}
-                        className={`flex-1 px-3 py-2 rounded text-sm border-2 ${importDevType === 'update' ? 'border-orange-500 bg-orange-50 text-orange-700 font-medium' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}
+                        className={`flex-1 px-3 py-2 rounded text-sm border-2 ${importDevType === 'update' ? 'border-orange-500 bg-orange-50 text-orange-700 font-medium' : 'border-gray-200 dark:border-white/10 text-gray-600 dark:text-white/60 hover:border-gray-300 dark:border-white/20'}`}
                       >更新（已有数据）</button>
                     </div>
                     */}
-                    <div className="mb-4 text-sm text-gray-600">
+                    <div className="mb-4 text-sm text-gray-600 dark:text-white/60">
                       <p>选择 Excel 文件导入<b>{importDevPhase === 'devices' ? '电设备' : '设备端元器件'}</b>清单数据（新增记录）</p>
                     </div>
                     <input type="file" accept=".xlsx,.xls"
                       onChange={e => setImportDevFile(e.target.files?.[0] || null)}
-                      className="w-full border border-gray-300 rounded px-3 py-2 text-sm mb-4"
+                      className="w-full border border-gray-300 dark:border-white/20 rounded px-3 py-2 text-sm mb-4"
                     />
                     <button
                       onClick={async () => {
@@ -4100,13 +4144,13 @@ export default function ProjectDataView() {
                         }
                       }}
                       disabled={importDevLoading || !importDevFile}
-                      className="w-full bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:bg-gray-400 text-sm"
+                      className="w-full btn-primary disabled:bg-gray-400 text-sm"
                     >{importDevLoading ? '处理中...' : '开始'}</button>
                   </>
                 ) : importDevResult.error ? (
                   <div>
                     <p className="text-red-600 mb-3">{importDevResult.error}</p>
-                    <button onClick={() => setImportDevResult(null)} className="text-blue-600 text-sm">返回重试</button>
+                    <button onClick={() => setImportDevResult(null)} className="text-black dark:text-white text-sm">返回重试</button>
                   </div>
                 ) : (
                   <div>
@@ -4117,15 +4161,15 @@ export default function ProjectDataView() {
                           {sheet}: 成功 {info.success || 0}{info.errors?.length > 0 && <>, 失败 {info.errors.length}</>}
                         </p>
                       ))}
-                      {importDevResult.unchanged > 0 && <p className="text-gray-500">数据无变化 {importDevResult.unchanged} 条</p>}
+                      {importDevResult.unchanged > 0 && <p className="text-gray-500 dark:text-white/50">数据无变化 {importDevResult.unchanged} 条</p>}
                       {importDevResult.notFound > 0 && <p className="text-yellow-700">未匹配 {importDevResult.notFound} 条</p>}
                     </div>
                     {importDevResult.errors?.length > 0 && (
-                      <div className="border border-gray-200 rounded p-2 max-h-40 overflow-y-auto mb-3">
-                        {importDevResult.errors.map((e: string, i: number) => <p key={i} className="text-xs text-gray-500">{e}</p>)}
+                      <div className="border border-gray-200 dark:border-white/10 rounded p-2 max-h-40 overflow-y-auto mb-3">
+                        {importDevResult.errors.map((e: string, i: number) => <p key={i} className="text-xs text-gray-500 dark:text-white/50">{e}</p>)}
                       </div>
                     )}
-                    <button onClick={() => setImportDevResult(null)} className="text-blue-600 text-sm">继续操作</button>
+                    <button onClick={() => setImportDevResult(null)} className="text-black dark:text-white text-sm">继续操作</button>
                   </div>
                 )}
               </div>
@@ -4136,10 +4180,10 @@ export default function ProjectDataView() {
         {/* ── 导入/更新信号数据弹窗 ── */}
         {showImportSigModal && selectedProjectId && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg max-w-lg w-full max-h-[80vh] flex flex-col">
-              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
+            <div className="bg-white dark:bg-neutral-900 rounded-lg max-w-lg w-full max-h-[80vh] flex flex-col">
+              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-white/10 shrink-0">
                 <h2 className="text-xl font-bold">导入信号及针孔数据</h2>
-                <button onClick={() => setShowImportSigModal(false)} className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 text-sm">关闭</button>
+                <button onClick={() => setShowImportSigModal(false)} className="px-4 py-2 border border-gray-300 dark:border-white/20 rounded hover:bg-gray-50 dark:hover:bg-white/[0.04] text-sm">关闭</button>
               </div>
               <div className="flex-1 overflow-y-auto px-6 py-4">
                 {!importSigResult ? (
@@ -4149,20 +4193,20 @@ export default function ProjectDataView() {
                     <div className="flex gap-3 mb-4">
                       <button
                         onClick={() => { setImportSigType('import'); setImportSigFile(null); }}
-                        className={`flex-1 px-3 py-2 rounded text-sm border-2 ${importSigType === 'import' ? 'border-blue-500 bg-blue-50 text-blue-700 font-medium' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}
+                        className={`flex-1 px-3 py-2 rounded text-sm border-2 ${importSigType === 'import' ? 'border-black bg-black/[0.03] dark:bg-white/[0.06] text-black dark:text-white font-medium' : 'border-gray-200 dark:border-white/10 text-gray-600 dark:text-white/60 hover:border-gray-300 dark:border-white/20'}`}
                       >导入电气接口清单</button>
                       <button
                         onClick={() => { setImportSigType('update'); setImportSigFile(null); }}
-                        className={`flex-1 px-3 py-2 rounded text-sm border-2 ${importSigType === 'update' ? 'border-orange-500 bg-orange-50 text-orange-700 font-medium' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}
+                        className={`flex-1 px-3 py-2 rounded text-sm border-2 ${importSigType === 'update' ? 'border-orange-500 bg-orange-50 text-orange-700 font-medium' : 'border-gray-200 dark:border-white/10 text-gray-600 dark:text-white/60 hover:border-gray-300 dark:border-white/20'}`}
                       >更新电气接口清单</button>
                     </div>
                     */}
-                    <div className="mb-4 text-sm text-gray-600">
+                    <div className="mb-4 text-sm text-gray-600 dark:text-white/60">
                       <p>选择 Excel 文件导入电气接口清单数据（新增信号和端点）</p>
                     </div>
                     <input type="file" accept=".xlsx,.xls"
                       onChange={e => setImportSigFile(e.target.files?.[0] || null)}
-                      className="w-full border border-gray-300 rounded px-3 py-2 text-sm mb-4"
+                      className="w-full border border-gray-300 dark:border-white/20 rounded px-3 py-2 text-sm mb-4"
                     />
                     <button
                       onClick={async () => {
@@ -4190,13 +4234,13 @@ export default function ProjectDataView() {
                         }
                       }}
                       disabled={importSigLoading || !importSigFile}
-                      className="w-full bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:bg-gray-400 text-sm"
+                      className="w-full btn-primary disabled:bg-gray-400 text-sm"
                     >{importSigLoading ? '处理中...' : '开始'}</button>
                   </>
                 ) : importSigResult.error ? (
                   <div>
                     <p className="text-red-600 mb-3">{importSigResult.error}</p>
-                    <button onClick={() => setImportSigResult(null)} className="text-blue-600 text-sm">返回重试</button>
+                    <button onClick={() => setImportSigResult(null)} className="text-black dark:text-white text-sm">返回重试</button>
                   </div>
                 ) : (
                   <div>
@@ -4207,15 +4251,15 @@ export default function ProjectDataView() {
                           {sheet}: 成功 {info.success || 0}{info.merged ? `, 合并 ${info.merged}` : ''}{info.errors?.length > 0 && `, 失败 ${info.errors.length}`}
                         </p>
                       ))}
-                      {importSigResult.unchanged > 0 && <p className="text-gray-500">数据无变化 {importSigResult.unchanged} 条</p>}
+                      {importSigResult.unchanged > 0 && <p className="text-gray-500 dark:text-white/50">数据无变化 {importSigResult.unchanged} 条</p>}
                       {importSigResult.notFound > 0 && <p className="text-yellow-700">未匹配 {importSigResult.notFound} 条</p>}
                     </div>
                     {importSigResult.errors?.length > 0 && (
-                      <div className="border border-gray-200 rounded p-2 max-h-40 overflow-y-auto mb-3">
-                        {importSigResult.errors.map((e: string, i: number) => <p key={i} className="text-xs text-gray-500">{e}</p>)}
+                      <div className="border border-gray-200 dark:border-white/10 rounded p-2 max-h-40 overflow-y-auto mb-3">
+                        {importSigResult.errors.map((e: string, i: number) => <p key={i} className="text-xs text-gray-500 dark:text-white/50">{e}</p>)}
                       </div>
                     )}
-                    <button onClick={() => setImportSigResult(null)} className="text-blue-600 text-sm">继续操作</button>
+                    <button onClick={() => setImportSigResult(null)} className="text-black dark:text-white text-sm">继续操作</button>
                   </div>
                 )}
               </div>
@@ -4228,11 +4272,11 @@ export default function ProjectDataView() {
         {/* ── 下载配置弹窗 ── */}
         {showDownloadModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg max-w-2xl w-full max-h-[85vh] flex flex-col">
-              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
+            <div className="bg-white dark:bg-neutral-900 rounded-lg max-w-2xl w-full max-h-[85vh] flex flex-col">
+              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-white/10 shrink-0">
                 <h2 className="text-xl font-bold">下载项目数据</h2>
                 <div className="flex gap-2">
-                  <button onClick={() => setShowDownloadModal(false)} className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 text-sm">取消</button>
+                  <button onClick={() => setShowDownloadModal(false)} className="px-4 py-2 border border-gray-300 dark:border-white/20 rounded hover:bg-gray-50 dark:hover:bg-white/[0.04] text-sm">取消</button>
                   <button
                     onClick={async () => {
                       if (!selectedProjectId) return;
@@ -4261,31 +4305,31 @@ export default function ProjectDataView() {
                       finally { setDownloading(false); }
                     }}
                     disabled={downloading || !Object.values(downloadSheets).some(v => v)}
-                    className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-400 text-sm"
+                    className="px-4 py-2 btn-primary disabled:bg-gray-400 text-sm"
                   >{downloading ? '下载中...' : '下载'}</button>
                 </div>
               </div>
               <div className="flex-1 overflow-y-auto px-6 py-4">
                 {DOWNLOAD_SHEETS.map(sheet => (
-                  <div key={sheet.key} className="mb-4 border border-gray-200 rounded-lg overflow-hidden">
-                    <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 border-b border-gray-200">
+                  <div key={sheet.key} className="mb-4 border border-gray-200 dark:border-white/10 rounded-lg overflow-hidden">
+                    <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-neutral-800 border-b border-gray-200 dark:border-white/10">
                       <input type="checkbox" checked={downloadSheets[sheet.key] || false}
                         onChange={e => setDownloadSheets({ ...downloadSheets, [sheet.key]: e.target.checked })} className="rounded" />
                       <span className="font-medium text-sm">{sheet.name}</span>
                       {sheet.cols.length > 0 && downloadSheets[sheet.key] && (
-                        <span className="text-xs text-gray-400 ml-auto">
+                        <span className="text-xs text-gray-400 dark:text-white/40 ml-auto">
                           {downloadCols[sheet.key]?.size || 0} / {sheet.cols.length} 列
                           <button onClick={() => setDownloadCols(prev => ({ ...prev, [sheet.key]: new Set(sheet.cols) }))}
-                            className="ml-2 text-blue-500 hover:text-blue-700">全选</button>
+                            className="ml-2 text-black/60 dark:text-white/60 hover:text-black dark:hover:text-white">全选</button>
                           <button onClick={() => setDownloadCols(prev => ({ ...prev, [sheet.key]: new Set() }))}
-                            className="ml-1 text-blue-500 hover:text-blue-700">清空</button>
+                            className="ml-1 text-black/60 dark:text-white/60 hover:text-black dark:hover:text-white">清空</button>
                         </span>
                       )}
                     </div>
                     {sheet.cols.length > 0 && downloadSheets[sheet.key] && (
                       <div className="px-3 py-2 grid grid-cols-3 gap-1">
                         {sheet.cols.map(col => (
-                          <label key={col} className="flex items-center gap-1 text-xs cursor-pointer hover:bg-gray-50 px-1 py-0.5 rounded">
+                          <label key={col} className="flex items-center gap-1 text-xs cursor-pointer hover:bg-gray-50 dark:hover:bg-white/[0.04] px-1 py-0.5 rounded">
                             <input type="checkbox" checked={downloadCols[sheet.key]?.has(col) || false}
                               onChange={e => {
                                 setDownloadCols(prev => {
@@ -4300,7 +4344,7 @@ export default function ProjectDataView() {
                       </div>
                     )}
                     {sheet.cols.length === 0 && downloadSheets[sheet.key] && (
-                      <div className="px-3 py-2 text-xs text-gray-400">导出全部列（不可选择）</div>
+                      <div className="px-3 py-2 text-xs text-gray-400 dark:text-white/40">导出全部列（不可选择）</div>
                     )}
                   </div>
                 ))}
@@ -4312,12 +4356,12 @@ export default function ProjectDataView() {
         {/* ── 切换项目弹窗 ── */}
         {showSwitchProjectModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg p-6 w-80">
+            <div className="bg-white dark:bg-neutral-900 rounded-lg p-6 w-80">
               <h2 className="text-lg font-bold mb-4">切换项目</h2>
               <select
                 value={switchProjectTargetId}
                 onChange={e => setSwitchProjectTargetId(e.target.value === '' ? '' : parseInt(e.target.value))}
-                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm mb-4"
+                className="w-full border border-gray-300 dark:border-white/20 rounded-md px-3 py-2 text-sm mb-4"
               >
                 <option value="">请选择项目</option>
                 {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
@@ -4325,7 +4369,7 @@ export default function ProjectDataView() {
               <div className="flex gap-2 justify-end">
                 <button
                   onClick={() => setShowSwitchProjectModal(false)}
-                  className="px-4 py-2 text-sm border border-gray-300 rounded hover:bg-gray-50"
+                  className="px-4 py-2 text-sm border border-gray-300 dark:border-white/20 rounded hover:bg-gray-50 dark:hover:bg-white/[0.04]"
                 >
                   取消
                 </button>
@@ -4336,7 +4380,7 @@ export default function ProjectDataView() {
                     }
                     setShowSwitchProjectModal(false);
                   }}
-                  className="px-4 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
+                  className="px-4 py-2 text-sm btn-primary"
                 >
                   确认切换
                 </button>
@@ -4346,24 +4390,33 @@ export default function ProjectDataView() {
         )}
 
         {/* ── 设备弹窗 ── */}
-        {showDeviceModal && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg max-w-2xl w-full max-h-[85vh] flex flex-col">
+        {showDeviceModal && (() => {
+          const devDirty = JSON.stringify(deviceForm) !== deviceFormSnapshot;
+          return (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-white dark:bg-neutral-900 rounded-lg max-w-2xl w-full max-h-[85vh] flex flex-col">
               {(() => {
                 const editVe = parseValidationErrors(editingDevice?.validation_errors);
                 const hasHardError = Object.values(fieldWarnings).some(w => w.type === 'error');
                 return (<>
-              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
-                <h2 className="text-xl font-bold">{editingDevice ? '编辑设备' : '添加设备'}</h2>
-                <div className="flex gap-2">
-                  <button onClick={closeDeviceModal} className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 text-sm">取消</button>
-                  <button onClick={() => saveDevice(true)} className="px-4 py-2 bg-yellow-500 text-white rounded hover:bg-yellow-600 text-sm">保存为Draft</button>
-                  <button
-                    onClick={() => saveDevice(false)}
-                    disabled={hasHardError}
-                    className={`px-4 py-2 rounded text-white text-sm ${hasHardError ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}
-                    title={hasHardError ? '存在校验错误（红色标记），请先修正' : undefined}
-                  >提交审批</button>
+              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 dark:border-white/10 shrink-0">
+                <h2 className="text-base font-bold text-black dark:text-white tracking-snug">{editingDevice ? '编辑设备' : '添加设备'}</h2>
+                <div className="flex items-center gap-2">
+                  {devDirty && (
+                    <>
+                      <button onClick={() => saveDevice(true)} className="btn-secondary text-xs !px-3 !py-1">保存为 Draft</button>
+                      <button
+                        onClick={() => saveDevice(false)}
+                        disabled={hasHardError}
+                        className={`text-xs !px-3 !py-1 ${hasHardError ? 'btn-secondary !text-black/30 dark:text-white/30 !border-gray-200 dark:border-white/10 cursor-not-allowed' : 'btn-primary'}`}
+                        title={hasHardError ? '存在校验错误（红色标记），请先修正' : undefined}
+                      >提交审批</button>
+                      <div className="w-px h-4 bg-gray-200 mx-1" />
+                    </>
+                  )}
+                  <button onClick={closeDeviceModal} className="text-black/30 dark:text-white/30 hover:text-black dark:hover:text-white transition-colors" title="关闭">
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
                 </div>
               </div>
               <div className="flex-1 overflow-y-auto px-6 py-4">
@@ -4375,28 +4428,28 @@ export default function ProjectDataView() {
                   const fw = fieldWarnings[f.key as string];
                   return (
                   <div key={f.key}>
-                    <label className={`block text-xs mb-1 ${isErr ? 'text-red-600 font-medium' : 'text-gray-600'}`}>
+                    <label className={`block text-xs mb-1 ${isErr ? 'text-red-600 font-medium' : 'text-gray-600 dark:text-white/60'}`}>
                       {f.label}{(f.key === '设备编号' || f.key === '设备部件所属系统（4位ATA）' || f.key === '设备负责人') ? <span className="text-red-500"> *</span> : ''}
                       {fw && <span className={`ml-1 ${fw.type === 'error' ? 'text-red-600' : 'text-orange-500'}`}>({fw.message})</span>}
                     </label>
                     {(f.key === 'created_by' || f.key === '导入来源') ? (
-                      <div className="w-full border border-gray-200 bg-gray-50 rounded px-2 py-1 text-sm text-gray-500 break-all"
+                      <div className="w-full border border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-neutral-800 rounded px-2 py-1 text-sm text-gray-500 dark:text-white/50 break-all"
                         title={(deviceForm as any)[f.key] || undefined}>
                         {(deviceForm as any)[f.key] || '-'}
                       </div>
                     ) : f.key === '设备负责人' ? (
                       myProjectRole === '系统组' && !isAdmin ? (
                         /* 系统组：其他组，固定为自己 */
-                        <div className="w-full border border-gray-200 bg-gray-50 rounded px-2 py-1 text-sm text-gray-700">
+                        <div className="w-full border border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-neutral-800 rounded px-2 py-1 text-sm text-gray-700 dark:text-white/70">
                           {(deviceForm as any)[f.key] || '-'}
-                          {(deviceForm as any)[f.key] && employeeNameMap[(deviceForm as any)[f.key]] && <span className="text-gray-400 ml-1">({employeeNameMap[(deviceForm as any)[f.key]]})</span>}
+                          {(deviceForm as any)[f.key] && employeeNameMap[(deviceForm as any)[f.key]] && <span className="text-gray-400 dark:text-white/40 ml-1">({employeeNameMap[(deviceForm as any)[f.key]]})</span>}
                         </div>
                       ) : (
                         /* admin / 总体组：可选择系统组 */
                         <select
                           value={(deviceForm as any)[f.key] || ''}
                           onChange={e => setDeviceForm({ ...deviceForm, [f.key]: e.target.value })}
-                          className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
+                          className="w-full border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-sm"
                         >
                           <option value="">请选择</option>
                           {myProjectRole === '总体组' && !isAdmin
@@ -4416,15 +4469,15 @@ export default function ProjectDataView() {
                         </select>
                       )
                     ) : f.key === '设备装机构型' ? (
-                      <div className="border border-gray-300 rounded px-2 py-1.5 text-sm max-h-32 overflow-y-auto">
+                      <div className="border border-gray-300 dark:border-white/20 rounded px-2 py-1.5 text-sm max-h-32 overflow-y-auto">
                         {projectConfigurations.length === 0 ? (
-                          <span className="text-gray-400 text-xs">暂无构型，请先在项目管理中添加</span>
+                          <span className="text-gray-400 dark:text-white/40 text-xs">暂无构型，请先在项目管理中添加</span>
                         ) : (
                           projectConfigurations.map(c => {
                             const selected = ((deviceForm as any)['设备装机构型'] || '').split(',').map((s: string) => s.trim()).filter(Boolean);
                             const checked = selected.includes(c.name);
                             return (
-                              <label key={c.id} className="flex items-center gap-1.5 py-0.5 cursor-pointer hover:bg-gray-50">
+                              <label key={c.id} className="flex items-center gap-1.5 py-0.5 cursor-pointer hover:bg-gray-50 dark:hover:bg-white/[0.04]">
                                 <input
                                   type="checkbox"
                                   checked={checked}
@@ -4463,7 +4516,7 @@ export default function ProjectDataView() {
                               validateATA('');
                             }
                           }}
-                          className="w-20 border border-gray-300 rounded px-1 py-1 text-sm flex-shrink-0"
+                          className="w-20 border border-gray-300 dark:border-white/20 rounded px-1 py-1 text-sm flex-shrink-0"
                         >
                           <option value="">--</option>
                           {['21','23','24','25','27','30','31','32','33','34','42','45','46','52','86','90','92'].map(v => (
@@ -4487,14 +4540,14 @@ export default function ProjectDataView() {
                             }
                           }}
                           placeholder="如 42-XX"
-                          className={`flex-1 border rounded px-2 py-1 text-sm ${fw ? (fw.type === 'error' ? 'border-red-400' : 'border-orange-400') : 'border-gray-300'}`}
+                          className={`flex-1 border rounded px-2 py-1 text-sm ${fw ? (fw.type === 'error' ? 'border-red-400' : 'border-orange-400') : 'border-gray-300 dark:border-white/20'}`}
                         />
                       </div>
                     ) : f.key === '设备DAL' ? (
                       <select
                         value={(deviceForm as any)[f.key] || ''}
                         onChange={e => setDeviceForm({ ...deviceForm, [f.key]: e.target.value })}
-                        className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
+                        className="w-full border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-sm"
                       >
                         <option value="">请选择</option>
                         {['A', 'B', 'C', 'D', 'E', '其他'].map(v => (
@@ -4505,7 +4558,7 @@ export default function ProjectDataView() {
                       <select
                         value={(deviceForm as any)[f.key] || ''}
                         onChange={e => setDeviceForm({ ...deviceForm, [f.key]: e.target.value })}
-                        className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
+                        className="w-full border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-sm"
                       >
                         <option value="">请选择</option>
                         {['1级', '2级', '3级', '4级', '5级'].map(v => (
@@ -4516,7 +4569,7 @@ export default function ProjectDataView() {
                       <select
                         value={(deviceForm as any)[f.key] || ''}
                         onChange={e => setDeviceForm({ ...deviceForm, [f.key]: e.target.value })}
-                        className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
+                        className="w-full border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-sm"
                       >
                         <option value="">请选择系统组成员</option>
                         {memberRoles.filter(m => m.project_role === '系统组').map(m => (
@@ -4527,7 +4580,7 @@ export default function ProjectDataView() {
                       <select
                         value={(deviceForm as any)[f.key] || ''}
                         onChange={e => setDeviceForm({ ...deviceForm, [f.key]: e.target.value })}
-                        className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
+                        className="w-full border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-sm"
                       >
                         <option value="">请选择</option>
                         <option value="是">是</option>
@@ -4546,7 +4599,7 @@ export default function ProjectDataView() {
                             checkDeviceDuplicates(deviceForm, editingDevice?.id);
                           }
                         }}
-                        className={`w-full border rounded px-2 py-1 text-sm ${fw ? (fw.type === 'error' ? 'border-red-400' : 'border-orange-400') : 'border-gray-300'}`}
+                        className={`w-full border rounded px-2 py-1 text-sm ${fw ? (fw.type === 'error' ? 'border-red-400' : 'border-orange-400') : 'border-gray-300 dark:border-white/20'}`}
                       />
                     )}
                   </div>
@@ -4558,18 +4611,28 @@ export default function ProjectDataView() {
               })()}
             </div>
           </div>
-        )}
+          );
+        })()}
 
         {/* ── 连接器弹窗 ── */}
-        {showConnectorModal && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg max-w-lg w-full max-h-[80vh] flex flex-col">
-              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
-                <h2 className="text-xl font-bold">{editingConnector ? '编辑连接器' : '添加连接器'}</h2>
-                <div className="flex gap-2">
-                  <button onClick={closeConnectorModal} className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 text-sm">取消</button>
-                  <button onClick={() => saveConnector(true)} className="px-4 py-2 bg-yellow-500 text-white rounded hover:bg-yellow-600 text-sm">保存为Draft</button>
-                  <button onClick={() => saveConnector(false)} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm">提交审批</button>
+        {showConnectorModal && (() => {
+          const connDirty = JSON.stringify(connectorForm) !== connectorFormSnapshot;
+          return (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-white dark:bg-neutral-900 rounded-lg max-w-lg w-full max-h-[80vh] flex flex-col">
+              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 dark:border-white/10 shrink-0">
+                <h2 className="text-base font-bold text-black dark:text-white tracking-snug">{editingConnector ? '编辑连接器' : '添加连接器'}</h2>
+                <div className="flex items-center gap-2">
+                  {connDirty && (
+                    <>
+                      <button onClick={() => saveConnector(true)} className="btn-secondary text-xs !px-3 !py-1">保存为 Draft</button>
+                      <button onClick={() => saveConnector(false)} className="btn-primary text-xs !px-3 !py-1">提交审批</button>
+                      <div className="w-px h-4 bg-gray-200 mx-1" />
+                    </>
+                  )}
+                  <button onClick={closeConnectorModal} className="text-black/30 dark:text-white/30 hover:text-black dark:hover:text-white transition-colors" title="关闭">
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
                 </div>
               </div>
               <div className="flex-1 overflow-y-auto px-6 py-4">
@@ -4618,30 +4681,30 @@ export default function ProjectDataView() {
 
                 return (
                 <div className="mb-3">
-                  <label className="block text-xs text-gray-600 mb-1">设备端元器件编号 <span className="text-red-500">*</span></label>
+                  <label className="block text-xs text-gray-600 dark:text-white/60 mb-1">设备端元器件编号 <span className="text-red-500">*</span></label>
                   <div className="flex items-center gap-1 text-sm">
-                    <span className="text-gray-500 font-mono shrink-0">{lin}-</span>
+                    <span className="text-gray-500 dark:text-white/50 font-mono shrink-0">{lin}-</span>
 
                     {mode === 'sp' && (<>
-                      <span className="text-gray-500 font-mono shrink-0">SP</span>
+                      <span className="text-gray-500 dark:text-white/50 font-mono shrink-0">SP</span>
                       <input type="text" value={suffixNum} maxLength={5} placeholder="5位数字"
                         onChange={e => { const v = e.target.value.replace(/\D/g, '').slice(0, 5); updateCompId(`${lin}-SP${v}`); }}
-                        className="w-24 border border-gray-300 rounded px-2 py-1 font-mono" />
+                        className="w-24 border border-gray-300 dark:border-white/20 rounded px-2 py-1 font-mono" />
                     </>)}
 
                     {mode === 'dism' && (<>
-                      <span className="text-gray-500 font-mono shrink-0">D</span>
+                      <span className="text-gray-500 dark:text-white/50 font-mono shrink-0">D</span>
                       <input type="text" value={dismNum1} maxLength={4} placeholder="4位"
                         onChange={e => { const v = e.target.value.replace(/\D/g, '').slice(0, 4); updateCompId(buildCompId('', '', v, dismNum2, dismRP)); }}
-                        className="w-16 border border-gray-300 rounded px-2 py-1 font-mono" />
-                      <span className="text-gray-500">-</span>
+                        className="w-16 border border-gray-300 dark:border-white/20 rounded px-2 py-1 font-mono" />
+                      <span className="text-gray-500 dark:text-white/50">-</span>
                       <input type="text" value={dismNum2} maxLength={3} placeholder="3位"
                         onChange={e => { const v = e.target.value.replace(/\D/g, '').slice(0, 3); updateCompId(buildCompId('', '', dismNum1, v, dismRP)); }}
-                        className="w-14 border border-gray-300 rounded px-2 py-1 font-mono" />
-                      <span className="text-gray-500">-</span>
+                        className="w-14 border border-gray-300 dark:border-white/20 rounded px-2 py-1 font-mono" />
+                      <span className="text-gray-500 dark:text-white/50">-</span>
                       <select value={dismRP}
                         onChange={e => updateCompId(buildCompId('', '', dismNum1, dismNum2, e.target.value))}
-                        className="border border-gray-300 rounded px-2 py-1 bg-white">
+                        className="border border-gray-300 dark:border-white/20 rounded px-2 py-1 bg-white dark:bg-neutral-900">
                         <option value="">选择</option>
                         <option value="R">R</option>
                         <option value="P">P</option>
@@ -4651,7 +4714,7 @@ export default function ProjectDataView() {
                     {mode === 'ata86' && (<>
                       <select value={suffixType}
                         onChange={e => { const t = e.target.value; updateCompId(buildCompId(t, t === 'J' ? suffixNum : '')); }}
-                        className="border border-gray-300 rounded px-2 py-1 bg-white">
+                        className="border border-gray-300 dark:border-white/20 rounded px-2 py-1 bg-white dark:bg-neutral-900">
                         <option value="">选择类型</option>
                         <option value="G">G</option>
                         <option value="N">N</option>
@@ -4662,14 +4725,14 @@ export default function ProjectDataView() {
                       {suffixType === 'J' && (
                         <input type="text" value={suffixNum} placeholder="数字"
                           onChange={e => { const v = e.target.value.replace(/\D/g, ''); updateCompId(`${lin}-J${v}`); }}
-                          className="w-20 border border-gray-300 rounded px-2 py-1 font-mono" />
+                          className="w-20 border border-gray-300 dark:border-white/20 rounded px-2 py-1 font-mono" />
                       )}
                     </>)}
 
                     {mode === 'normal' && (<>
                       <select value={suffixType}
                         onChange={e => { const t = e.target.value; updateCompId(buildCompId(t, t === 'NA' ? '' : suffixNum)); }}
-                        className="border border-gray-300 rounded px-2 py-1 bg-white">
+                        className="border border-gray-300 dark:border-white/20 rounded px-2 py-1 bg-white dark:bg-neutral-900">
                         <option value="">选择类型</option>
                         <option value="J">J</option>
                         <option value="TB">TB</option>
@@ -4679,11 +4742,11 @@ export default function ProjectDataView() {
                       {suffixType && suffixType !== 'NA' && (
                         <input type="text" value={suffixNum} placeholder="数字"
                           onChange={e => { const v = e.target.value.replace(/\D/g, ''); updateCompId(`${lin}-${suffixType}${v}`); }}
-                          className="w-20 border border-gray-300 rounded px-2 py-1 font-mono" />
+                          className="w-20 border border-gray-300 dark:border-white/20 rounded px-2 py-1 font-mono" />
                       )}
                     </>)}
                   </div>
-                  <div className="text-xs text-gray-400 mt-0.5 font-mono">{currentCompId || `${lin}-...`}</div>
+                  <div className="text-xs text-gray-400 dark:text-white/40 mt-0.5 font-mono">{currentCompId || `${lin}-...`}</div>
                 </div>);
               })()}
 
@@ -4703,7 +4766,7 @@ export default function ProjectDataView() {
                 const deliverInvalid = isDeliverField && deliverVal !== '' && deliverVal !== '是' && deliverVal !== '否';
                 return (
                 <div key={f.key} className="mb-3">
-                  <label className={`block text-xs mb-1 ${deliverInvalid ? 'text-red-600 font-medium' : 'text-gray-600'}`}>
+                  <label className={`block text-xs mb-1 ${deliverInvalid ? 'text-red-600 font-medium' : 'text-gray-600 dark:text-white/60'}`}>
                     {f.label}
                     {deliverInvalid && <span className="ml-2 font-normal">（当前值：<span className="font-medium">{deliverVal}</span>）</span>}
                   </label>
@@ -4711,7 +4774,7 @@ export default function ProjectDataView() {
                     <select
                       value={deliverInvalid ? '' : deliverVal}
                       onChange={e => setConnectorForm({ ...connectorForm, [f.key]: e.target.value })}
-                      className={`w-full border rounded px-2 py-1 text-sm bg-white ${deliverInvalid ? 'border-red-400' : 'border-gray-300'}`}
+                      className={`w-full border rounded px-2 py-1 text-sm bg-white dark:bg-neutral-900 ${deliverInvalid ? 'border-red-400' : 'border-gray-300 dark:border-white/20'}`}
                     >
                       <option value="">请选择</option>
                       <option value="是">是</option>
@@ -4724,7 +4787,7 @@ export default function ProjectDataView() {
                       onChange={e => {
                         setConnectorForm({ ...connectorForm, [f.key]: e.target.value });
                       }}
-                      className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
+                      className="w-full border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-sm"
                     />
                   )}
                 </div>
@@ -4732,37 +4795,38 @@ export default function ProjectDataView() {
               </div>
             </div>
           </div>
-        )}
+          );
+        })()}
 
         {/* ── 断面连接器弹窗 ── */}
         {showSCModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg max-w-sm w-full flex flex-col">
-              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
+            <div className="bg-white dark:bg-neutral-900 rounded-lg max-w-sm w-full flex flex-col">
+              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-white/10 shrink-0">
                 <h2 className="text-xl font-bold">{editingSC ? '编辑断面连接器' : '添加断面连接器'}</h2>
                 <div className="flex gap-2">
-                  <button onClick={() => setShowSCModal(false)} className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 text-sm">取消</button>
-                  <button onClick={saveSC} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm">保存</button>
+                  <button onClick={() => setShowSCModal(false)} className="px-4 py-2 border border-gray-300 dark:border-white/20 rounded hover:bg-gray-50 dark:hover:bg-white/[0.04] text-sm">取消</button>
+                  <button onClick={saveSC} className="px-4 py-2 btn-primary text-sm">保存</button>
                 </div>
               </div>
               <div className="px-6 py-4">
               <div className="mb-3">
-                <label className="block text-xs text-gray-600 mb-1">设备名称 <span className="text-red-500">*</span></label>
+                <label className="block text-xs text-gray-600 dark:text-white/60 mb-1">设备名称 <span className="text-red-500">*</span></label>
                 <input
                   type="text"
                   value={scForm['设备名称'] || ''}
                   onChange={e => setSCForm({ ...scForm, '设备名称': e.target.value })}
-                  className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
+                  className="w-full border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-sm"
                   placeholder="请输入设备名称"
                 />
               </div>
               <div className="mb-3">
-                <label className="block text-xs text-gray-600 mb-1">负责人</label>
+                <label className="block text-xs text-gray-600 dark:text-white/60 mb-1">负责人</label>
                 {isAdmin ? (
                   <select
                     value={scForm['负责人'] || ''}
                     onChange={e => setSCForm({ ...scForm, '负责人': e.target.value })}
-                    className="w-full border border-gray-300 rounded px-2 py-1 text-sm bg-white"
+                    className="w-full border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-sm bg-white dark:bg-neutral-900"
                   >
                     <option value="">请选择（仅限项目成员）</option>
                     {projectMembers.map(m => (
@@ -4770,7 +4834,7 @@ export default function ProjectDataView() {
                     ))}
                   </select>
                 ) : (
-                  <div className="w-full border border-gray-200 bg-gray-50 rounded px-2 py-1 text-sm text-gray-700">
+                  <div className="w-full border border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-neutral-800 rounded px-2 py-1 text-sm text-gray-700 dark:text-white/70">
                     {scForm['负责人'] || '-'}
                   </div>
                 )}
@@ -4783,12 +4847,12 @@ export default function ProjectDataView() {
         {/* ── 断面连接器-连接器弹窗 ── */}
         {showSCConnectorModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg max-w-lg w-full max-h-[80vh] flex flex-col">
-              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
+            <div className="bg-white dark:bg-neutral-900 rounded-lg max-w-lg w-full max-h-[80vh] flex flex-col">
+              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-white/10 shrink-0">
                 <h2 className="text-xl font-bold">{editingSCConnector ? '编辑连接器' : '添加连接器'}</h2>
                 <div className="flex gap-2">
-                  <button onClick={() => setShowSCConnectorModal(false)} className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 text-sm">取消</button>
-                  <button onClick={saveSCConnector} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm">保存</button>
+                  <button onClick={() => setShowSCConnectorModal(false)} className="px-4 py-2 border border-gray-300 dark:border-white/20 rounded hover:bg-gray-50 dark:hover:bg-white/[0.04] text-sm">取消</button>
+                  <button onClick={saveSCConnector} className="px-4 py-2 btn-primary text-sm">保存</button>
                 </div>
               </div>
               <div className="flex-1 overflow-y-auto px-6 py-4">
@@ -4805,14 +4869,14 @@ export default function ProjectDataView() {
                 const isDeliverField = f.key === '设备端元器件匹配的元器件是否随设备交付';
                 return (
                   <div key={f.key} className="mb-3">
-                    <label className="block text-xs text-gray-600 mb-1">
+                    <label className="block text-xs text-gray-600 dark:text-white/60 mb-1">
                       {f.label.endsWith(' *') ? <>{f.label.slice(0, -2)}<span className="text-red-500"> *</span></> : f.label}
                     </label>
                     {isDeliverField ? (
                       <select
                         value={String((scConnectorForm as any)[f.key] || '')}
                         onChange={e => setSCConnectorForm({ ...scConnectorForm, [f.key]: e.target.value })}
-                        className="w-full border border-gray-300 rounded px-2 py-1 text-sm bg-white"
+                        className="w-full border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-sm bg-white dark:bg-neutral-900"
                       >
                         <option value="">请选择</option>
                         <option value="是">是</option>
@@ -4823,7 +4887,7 @@ export default function ProjectDataView() {
                         type="text"
                         value={String((scConnectorForm as any)[f.key] || '')}
                         onChange={e => setSCConnectorForm({ ...scConnectorForm, [f.key]: e.target.value })}
-                        className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
+                        className="w-full border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-sm"
                       />
                     )}
                   </div>
@@ -4837,12 +4901,12 @@ export default function ProjectDataView() {
         {/* ── 断面连接器-针孔弹窗 ── */}
         {showSCPinModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg max-w-sm w-full flex flex-col">
-              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
+            <div className="bg-white dark:bg-neutral-900 rounded-lg max-w-sm w-full flex flex-col">
+              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-white/10 shrink-0">
                 <h2 className="text-xl font-bold">{editingSCPin ? '编辑针孔' : '添加针孔'}</h2>
                 <div className="flex gap-2">
-                  <button onClick={() => setShowSCPinModal(false)} className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 text-sm">取消</button>
-                  <button onClick={saveSCPin} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm">保存</button>
+                  <button onClick={() => setShowSCPinModal(false)} className="px-4 py-2 border border-gray-300 dark:border-white/20 rounded hover:bg-gray-50 dark:hover:bg-white/[0.04] text-sm">取消</button>
+                  <button onClick={saveSCPin} className="px-4 py-2 btn-primary text-sm">保存</button>
                 </div>
               </div>
               <div className="px-6 py-4">
@@ -4853,14 +4917,14 @@ export default function ProjectDataView() {
                 { key: '备注', label: '备注' },
               ].map(f => (
                 <div key={f.key} className="mb-3">
-                  <label className="block text-xs text-gray-600 mb-1">
+                  <label className="block text-xs text-gray-600 dark:text-white/60 mb-1">
                     {f.label.endsWith(' *') ? <>{f.label.slice(0, -2)}<span className="text-red-500"> *</span></> : f.label}
                   </label>
                   <input
                     type="text"
                     value={String((scPinForm as any)[f.key] || '')}
                     onChange={e => setSCPinForm({ ...scPinForm, [f.key]: e.target.value })}
-                    className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
+                    className="w-full border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-sm"
                   />
                 </div>
               ))}
@@ -4870,15 +4934,24 @@ export default function ProjectDataView() {
         )}
 
         {/* ── 针孔弹窗 ── */}
-        {showPinModal && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg max-w-lg w-full flex flex-col">
-              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
-                <h2 className="text-xl font-bold">{editingPin ? '编辑针孔' : '添加针孔'}</h2>
-                <div className="flex gap-2">
-                  <button onClick={closePinModal} className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 text-sm whitespace-nowrap">取消</button>
-                  <button onClick={() => savePin(true)} className="px-4 py-2 bg-yellow-500 text-white rounded hover:bg-yellow-600 text-sm whitespace-nowrap">保存为Draft</button>
-                  <button onClick={() => savePin(false)} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm whitespace-nowrap">提交审批</button>
+        {showPinModal && (() => {
+          const pinDirty = JSON.stringify(pinForm) !== pinFormSnapshot;
+          return (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-white dark:bg-neutral-900 rounded-lg max-w-lg w-full flex flex-col">
+              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 dark:border-white/10 shrink-0">
+                <h2 className="text-base font-bold text-black dark:text-white tracking-snug">{editingPin ? '编辑针孔' : '添加针孔'}</h2>
+                <div className="flex items-center gap-2">
+                  {pinDirty && (
+                    <>
+                      <button onClick={() => savePin(true)} className="btn-secondary text-xs !px-3 !py-1">保存为 Draft</button>
+                      <button onClick={() => savePin(false)} className="btn-primary text-xs !px-3 !py-1">提交审批</button>
+                      <div className="w-px h-4 bg-gray-200 mx-1" />
+                    </>
+                  )}
+                  <button onClick={closePinModal} className="text-black/30 dark:text-white/30 hover:text-black dark:hover:text-white transition-colors" title="关闭">
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
                 </div>
               </div>
               <div className="px-6 py-4">
@@ -4887,21 +4960,22 @@ export default function ProjectDataView() {
                 { key: '备注', label: '备注' },
               ].map(f => (
                 <div key={f.key} className="mb-3">
-                  <label className="block text-xs text-gray-600 mb-1">
+                  <label className="block text-xs text-gray-600 dark:text-white/60 mb-1">
                     {f.label.endsWith(' *') ? <>{f.label.slice(0, -2)}<span className="text-red-500"> *</span></> : f.label}
                   </label>
                   <input
                     type="text"
                     value={(pinForm as any)[f.key] || ''}
                     onChange={e => setPinForm({ ...pinForm, [f.key]: e.target.value })}
-                    className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
+                    className="w-full border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-sm"
                   />
                 </div>
               ))}
               </div>
             </div>
           </div>
-        )}
+          );
+        })()}
 
         {/* ── 合并连接器弹窗 ── */}
         {showMergeConnModal && mergeConnDeviceId && (() => {
@@ -4910,11 +4984,11 @@ export default function ProjectDataView() {
           const sourceConns = deviceConns.filter(c => mergeConnSources.has(c.id));
           return (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg max-w-xl w-full max-h-[85vh] flex flex-col">
-              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
+            <div className="bg-white dark:bg-neutral-900 rounded-lg max-w-xl w-full max-h-[85vh] flex flex-col">
+              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-white/10 shrink-0">
                 <h2 className="text-xl font-bold">合并连接器</h2>
                 <div className="flex gap-2">
-                  <button onClick={() => setShowMergeConnModal(false)} className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 text-sm">取消</button>
+                  <button onClick={() => setShowMergeConnModal(false)} className="px-4 py-2 border border-gray-300 dark:border-white/20 rounded hover:bg-gray-50 dark:hover:bg-white/[0.04] text-sm">取消</button>
                   <button
                     onClick={executeMergeConnectors}
                     disabled={merging || !mergeConnTarget || mergeConnSources.size === 0}
@@ -4925,7 +4999,7 @@ export default function ProjectDataView() {
               <div className="flex-1 overflow-y-auto px-6 py-4">
                 {/* 选择目标连接器 */}
                 <div className="mb-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">目标连接器（合并到）</label>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-white/70 mb-1">目标连接器（合并到）</label>
                   <select
                     value={mergeConnTarget}
                     onChange={e => {
@@ -4933,7 +5007,7 @@ export default function ProjectDataView() {
                       setMergeConnTarget(id || '');
                       setMergeConnSources(prev => { const n = new Set(prev); n.delete(id); return n; });
                     }}
-                    className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                    className="w-full border border-gray-300 dark:border-white/20 rounded px-3 py-2 text-sm"
                   >
                     <option value="">请选择目标连接器</option>
                     {deviceConns.map(c => (
@@ -4945,10 +5019,10 @@ export default function ProjectDataView() {
                 {/* 选择源连接器 */}
                 {mergeConnTarget && (
                   <div className="mb-4">
-                    <label className="block text-sm font-medium text-gray-700 mb-1">要合并的连接器（多选）</label>
-                    <div className="border border-gray-200 rounded max-h-48 overflow-y-auto">
+                    <label className="block text-sm font-medium text-gray-700 dark:text-white/70 mb-1">要合并的连接器（多选）</label>
+                    <div className="border border-gray-200 dark:border-white/10 rounded max-h-48 overflow-y-auto">
                       {deviceConns.filter(c => c.id !== mergeConnTarget).map(c => (
-                        <label key={c.id} className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 cursor-pointer text-sm">
+                        <label key={c.id} className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 dark:hover:bg-white/[0.04] cursor-pointer text-sm">
                           <input
                             type="checkbox"
                             checked={mergeConnSources.has(c.id)}
@@ -4962,7 +5036,7 @@ export default function ProjectDataView() {
                             className="rounded"
                           />
                           <span>{c.设备端元器件编号}</span>
-                          <span className="text-gray-400 text-xs">（{c.pin_count ?? 0} 个针孔）</span>
+                          <span className="text-gray-400 dark:text-white/40 text-xs">（{c.pin_count ?? 0} 个针孔）</span>
                         </label>
                       ))}
                     </div>
@@ -4971,12 +5045,12 @@ export default function ProjectDataView() {
 
                 {/* 预览 */}
                 {mergeConnTarget && mergeConnSources.size > 0 && (
-                  <div className="bg-gray-50 border border-gray-200 rounded p-3 text-xs">
-                    <p className="font-medium text-gray-700 mb-2">合并预览</p>
-                    <p className="text-gray-600 mb-1">
+                  <div className="bg-gray-50 dark:bg-neutral-800 border border-gray-200 dark:border-white/10 rounded p-3 text-xs">
+                    <p className="font-medium text-gray-700 dark:text-white/70 mb-2">合并预览</p>
+                    <p className="text-gray-600 dark:text-white/60 mb-1">
                       目标 <span className="font-mono font-medium">{targetConn?.设备端元器件编号}</span> 合并后将包含：
                     </p>
-                    <ul className="ml-4 text-gray-600 space-y-0.5">
+                    <ul className="ml-4 text-gray-600 dark:text-white/60 space-y-0.5">
                       <li>原有针孔：{targetConn?.pin_count ?? 0} 个（编号不变）</li>
                       {sourceConns.map(sc => (
                         <li key={sc.id}>
@@ -4993,7 +5067,7 @@ export default function ProjectDataView() {
                     <p className="mt-2 text-red-600">
                       将删除 {mergeConnSources.size} 个连接器：{sourceConns.map(c => c.设备端元器件编号).join('、')}
                     </p>
-                    <p className="text-gray-500 mt-1">信号端点不受影响（pin_id 不变）</p>
+                    <p className="text-gray-500 dark:text-white/50 mt-1">信号端点不受影响（pin_id 不变）</p>
                   </div>
                 )}
               </div>
@@ -5003,31 +5077,42 @@ export default function ProjectDataView() {
         })()}
 
         {/* ── 信号弹窗 ── */}
-        {showSignalModal && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg max-w-3xl w-full max-h-[90vh] flex flex-col">
-              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
-                <h2 className="text-xl font-bold">{editingSignal ? '编辑信号' : '添加信号'}</h2>
-                <div className="flex gap-2">
-                  <button onClick={closeSignalModal} className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 text-sm">取消</button>
-                  {!editingSignal && (
-                    <button onClick={() => saveSignal(true)} className="px-4 py-2 bg-yellow-500 text-white rounded hover:bg-yellow-600 text-sm">保存为Draft</button>
+        {showSignalModal && (() => {
+          const sigDirty = JSON.stringify({ form: signalForm, endpoints: signalEndpoints }) !== signalFormSnapshot;
+          return (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-white dark:bg-neutral-900 rounded-lg max-w-3xl w-full max-h-[90vh] flex flex-col">
+              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 dark:border-white/10 shrink-0">
+                <h2 className="text-base font-bold text-black dark:text-white tracking-snug">{editingSignal ? '编辑信号' : '添加信号'}</h2>
+                <div className="flex items-center gap-2">
+                  {sigDirty && (
+                    <>
+                      {/* Draft 保存 */}
+                      {!editingSignal && (
+                        <button onClick={() => saveSignal(true)} className="btn-secondary text-xs !px-3 !py-1">保存为 Draft</button>
+                      )}
+                      {editingSignal && editingSignal.status === 'Draft' && (
+                        <button onClick={() => saveSignal(false, false)} className="btn-secondary text-xs !px-3 !py-1">保存为 Draft</button>
+                      )}
+                      {editingSignal && editingSignal.status !== 'Draft' && (
+                        <button onClick={() => saveSignal(true)} className="btn-secondary text-xs !px-3 !py-1">保存为 Draft</button>
+                      )}
+                      {/* 提交/保存 */}
+                      {(!editingSignal || editingSignal.status === 'Draft') && (
+                        <button
+                          onClick={() => editingSignal ? saveSignal(false, true) : saveSignal(false)}
+                          className="btn-primary text-xs !px-3 !py-1"
+                        >提交</button>
+                      )}
+                      {editingSignal && editingSignal.status !== 'Draft' && (
+                        <button onClick={() => saveSignal()} className="btn-primary text-xs !px-3 !py-1">保存</button>
+                      )}
+                      <div className="w-px h-4 bg-gray-200 mx-1" />
+                    </>
                   )}
-                  {editingSignal && editingSignal.status === 'Draft' && (
-                    <button onClick={() => saveSignal(false, false)} className="px-4 py-2 bg-yellow-500 text-white rounded hover:bg-yellow-600 text-sm">保存为Draft</button>
-                  )}
-                  {(!editingSignal || editingSignal.status === 'Draft') && (
-                    <button
-                      onClick={() => editingSignal ? saveSignal(false, true) : saveSignal(false)}
-                      className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm"
-                    >提交</button>
-                  )}
-                  {editingSignal && editingSignal.status !== 'Draft' && (
-                    <button onClick={() => saveSignal(true)} className="px-4 py-2 bg-yellow-500 text-white rounded hover:bg-yellow-600 text-sm">保存为Draft</button>
-                  )}
-                  {editingSignal && editingSignal.status !== 'Draft' && (
-                    <button onClick={() => saveSignal()} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm">保存</button>
-                  )}
+                  <button onClick={closeSignalModal} className="text-black/30 dark:text-white/30 hover:text-black dark:hover:text-white transition-colors" title="关闭">
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
                 </div>
               </div>
               <div className="flex-1 overflow-y-auto px-6 py-4">
@@ -5036,12 +5121,12 @@ export default function ProjectDataView() {
               <div className="grid grid-cols-2 gap-3 mb-4">
                 {/* Unique ID */}
                 <div>
-                  <label className="block text-xs text-gray-600 mb-1">Unique ID <span className="text-red-500">*</span></label>
+                  <label className="block text-xs text-gray-600 dark:text-white/60 mb-1">Unique ID <span className="text-red-500">*</span></label>
                   <input
                     type="text"
                     value={(signalForm as any).unique_id || ''}
                     onChange={e => setSignalForm({ ...signalForm, unique_id: e.target.value })}
-                    className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
+                    className="w-full border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-sm"
                   />
                 </div>
                 {/* 其余字段 */}
@@ -5074,7 +5159,7 @@ export default function ProjectDataView() {
                     return true;
                   }).map(f => (
                     <div key={f.key}>
-                      <label className="block text-xs text-gray-600 mb-1">
+                      <label className="block text-xs text-gray-600 dark:text-white/60 mb-1">
                         {f.label}{(f.key === '连接类型' || f.key === '是否成品线') ? <span className="text-red-500"> *</span> : ''}
                       </label>
                       {f.key === '连接类型' ? (() => {
@@ -5094,13 +5179,13 @@ export default function ProjectDataView() {
                           if (POWER_CONN_TYPES.has(newType)) updates['线类型'] = '功率线';
                           else if (SIGNAL_CONN_TYPES.has(newType)) updates['线类型'] = '信号线';
                           setSignalForm(updates);
-                        }} className="w-full border border-gray-300 rounded px-2 py-1 text-sm">
+                        }} className="w-full border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-sm">
                           <option value="">请选择</option>
                           {filteredConnTypes.map(v => <option key={v} value={v}>{v}</option>)}
                         </select>
                         );
                       })() : f.key === '是否成品线' ? (
-                        <select value={(signalForm as any)[f.key] || ''} onChange={e => setSignalForm({ ...signalForm, [f.key]: e.target.value })} className="w-full border border-gray-300 rounded px-2 py-1 text-sm">
+                        <select value={(signalForm as any)[f.key] || ''} onChange={e => setSignalForm({ ...signalForm, [f.key]: e.target.value })} className="w-full border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-sm">
                           <option value="">请选择</option>
                           {['Y', 'N'].map(v => <option key={v} value={v}>{v}</option>)}
                         </select>
@@ -5128,19 +5213,19 @@ export default function ProjectDataView() {
                             }
                             setSignalForm(updates);
                           }}
-                          className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
+                          className="w-full border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-sm"
                         >
                           <option value="">请选择</option>
                           <option value="功率线">功率线</option>
                           <option value="信号线">信号线</option>
                         </select>
                       ) : f.key === '协议标识' ? (
-                        <select value={(signalForm as any)['协议标识'] || ''} onChange={e => setSignalForm({ ...signalForm, '协议标识': e.target.value })} className="w-full border border-gray-300 rounded px-2 py-1 text-sm">
+                        <select value={(signalForm as any)['协议标识'] || ''} onChange={e => setSignalForm({ ...signalForm, '协议标识': e.target.value })} className="w-full border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-sm">
                           <option value="">请选择</option>
                           {(PROTOCOL_CONN_TYPES[connType] || []).map(v => <option key={v} value={v}>{v}</option>)}
                         </select>
                       ) : f.key === '极性' ? (
-                        <select value={(signalForm as any)[f.key] || ''} onChange={e => setSignalForm({ ...signalForm, [f.key]: e.target.value })} className="w-full border border-gray-300 rounded px-2 py-1 text-sm">
+                        <select value={(signalForm as any)[f.key] || ''} onChange={e => setSignalForm({ ...signalForm, [f.key]: e.target.value })} className="w-full border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-sm">
                           <option value="">请选择</option>
                           <option value="正极">正极</option>
                           <option value="负极">负极</option>
@@ -5148,7 +5233,7 @@ export default function ProjectDataView() {
                           <option value="N/A">N/A</option>
                         </select>
                       ) : f.key === '独立电源代码' ? (
-                        <select value={(signalForm as any)[f.key] || ''} onChange={e => setSignalForm({ ...signalForm, [f.key]: e.target.value })} className="w-full border border-gray-300 rounded px-2 py-1 text-sm">
+                        <select value={(signalForm as any)[f.key] || ''} onChange={e => setSignalForm({ ...signalForm, [f.key]: e.target.value })} className="w-full border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-sm">
                           <option value="">请选择</option>
                           {[
                             ['1EPP', '电推进系统供电线（左前/正级）'],
@@ -5187,7 +5272,7 @@ export default function ProjectDataView() {
                           ))}
                         </select>
                       ) : f.key === '敷设代码' ? (
-                        <select value={(signalForm as any)[f.key] || ''} onChange={e => setSignalForm({ ...signalForm, [f.key]: e.target.value })} className="w-full border border-gray-300 rounded px-2 py-1 text-sm">
+                        <select value={(signalForm as any)[f.key] || ''} onChange={e => setSignalForm({ ...signalForm, [f.key]: e.target.value })} className="w-full border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-sm">
                           <option value="">请选择</option>
                           {[
                             ['EFC', '电传飞控系统线路（含飞控功能供电线）'],
@@ -5199,7 +5284,7 @@ export default function ProjectDataView() {
                         </select>
                       ) : f.key === '电磁兼容代码' ? (
                         <>
-                          <select value={(signalForm as any)[f.key] || ''} onChange={e => setSignalForm({ ...signalForm, [f.key]: e.target.value })} className="w-full border border-gray-300 rounded px-2 py-1 text-sm">
+                          <select value={(signalForm as any)[f.key] || ''} onChange={e => setSignalForm({ ...signalForm, [f.key]: e.target.value })} className="w-full border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-sm">
                             <option value="">请选择</option>
                             {[
                               ['D', '直流电功率（TRU、蓄电池到汇流条，及直流供电线）'],
@@ -5218,7 +5303,7 @@ export default function ProjectDataView() {
                           )}
                         </>
                       ) : f.key === '余度代码' ? (
-                        <select value={(signalForm as any)[f.key] || ''} onChange={e => setSignalForm({ ...signalForm, [f.key]: e.target.value })} className="w-full border border-gray-300 rounded px-2 py-1 text-sm">
+                        <select value={(signalForm as any)[f.key] || ''} onChange={e => setSignalForm({ ...signalForm, [f.key]: e.target.value })} className="w-full border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-sm">
                           <option value="">请选择</option>
                           {[
                             ['A', '余度通道 A'],
@@ -5231,7 +5316,7 @@ export default function ProjectDataView() {
                           ))}
                         </select>
                       ) : f.key === '接地代码' ? (
-                        <select value={(signalForm as any)[f.key] || ''} onChange={e => setSignalForm({ ...signalForm, [f.key]: e.target.value })} className="w-full border border-gray-300 rounded px-2 py-1 text-sm">
+                        <select value={(signalForm as any)[f.key] || ''} onChange={e => setSignalForm({ ...signalForm, [f.key]: e.target.value })} className="w-full border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-sm">
                           <option value="">请选择</option>
                           <option value="A">A：机架地（设备机架/壳体接地）</option>
                           <option value="C">C：直流信号地（最大电流 ≤1A 的直流信号接地）</option>
@@ -5256,7 +5341,7 @@ export default function ProjectDataView() {
                               else if (sel) setSignalForm({ ...signalForm, 信号ATA: sel });
                               else setSignalForm({ ...signalForm, 信号ATA: '' });
                             }}
-                            className="w-20 border border-gray-300 rounded px-1 py-1 text-sm flex-shrink-0"
+                            className="w-20 border border-gray-300 dark:border-white/20 rounded px-1 py-1 text-sm flex-shrink-0"
                           >
                             <option value="">--</option>
                             {['21','23','24','25','27','30','31','32','33','34','42','45','46','52','86','90','92'].map(v => (
@@ -5278,13 +5363,13 @@ export default function ProjectDataView() {
                             className={`flex-1 border rounded px-2 py-1 text-sm ${
                               (() => {
                                 const v = ((signalForm as any)['信号ATA'] || '').trim();
-                                return v && v !== 'N/A' && !/^\d{2}-(\d{2}|XX)$/.test(v) ? 'border-red-400' : 'border-gray-300';
+                                return v && v !== 'N/A' && !/^\d{2}-(\d{2}|XX)$/.test(v) ? 'border-red-400' : 'border-gray-300 dark:border-white/20';
                               })()
                             }`}
                           />
                         </div>
                       ) : (
-                        <input type="text" value={(signalForm as any)[f.key] || ''} onChange={e => setSignalForm({ ...signalForm, [f.key]: e.target.value })} className="w-full border border-gray-300 rounded px-2 py-1 text-sm" />
+                        <input type="text" value={(signalForm as any)[f.key] || ''} onChange={e => setSignalForm({ ...signalForm, [f.key]: e.target.value })} className="w-full border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-sm" />
                       )}
                     </div>
                   ));
@@ -5292,9 +5377,9 @@ export default function ProjectDataView() {
               </div>
 
               {/* 信号端点构建器 */}
-              <div className="border border-gray-200 rounded-lg p-4">
+              <div className="border border-gray-200 dark:border-white/10 rounded-lg p-4">
                 <div className="flex justify-between items-center mb-3">
-                  <h3 className="font-medium text-sm text-gray-700">信号端点</h3>
+                  <h3 className="font-medium text-sm text-gray-700 dark:text-white/70">信号端点</h3>
                   <button
                     onClick={() => {
                       setSignalEndpoints([...signalEndpoints, { 设备编号: '', 设备端元器件编号: '', 针孔号: '', 信号名称: '', 信号定义: '' }]);
@@ -5303,20 +5388,20 @@ export default function ProjectDataView() {
                       setEpConnectorOptions(prev => [...prev, []]);
                       setEpPinOptions(prev => [...prev, []]);
                     }}
-                    className="text-xs text-blue-600 hover:text-blue-800"
+                    className="text-xs text-black dark:text-white hover:text-black/60 dark:hover:text-white/60"
                   >
                     + 添加端点
                   </button>
                 </div>
                 {signalEndpoints.map((ep, idx) => (
-                  <div key={idx} className="mb-4 p-3 bg-gray-50 rounded border border-gray-200">
+                  <div key={idx} className="mb-4 p-3 bg-gray-50 dark:bg-neutral-800 rounded border border-gray-200 dark:border-white/10">
                     <div className="flex justify-between items-center mb-2">
-                      <span className="text-xs font-medium text-gray-600">
+                      <span className="text-xs font-medium text-gray-600 dark:text-white/60">
                         端点 {idx + 1}
                         {ep.设备负责人 === user?.username
-                          ? <span className="ml-1 text-blue-600">（我负责的设备）</span>
+                          ? <span className="ml-1 text-black dark:text-white">（我负责的设备）</span>
                           : ep.设备负责人
-                            ? <span className="ml-1 text-gray-500">（{ep.设备负责人}）</span>
+                            ? <span className="ml-1 text-gray-500 dark:text-white/50">（{ep.设备负责人}）</span>
                             : null}
                         {ep.confirmed === 0 && <span className="ml-1.5 px-1.5 py-0.5 rounded bg-orange-100 text-orange-600 text-xs">待确认</span>}
                         {ep.confirmed === 1 && <span className="ml-1.5 px-1.5 py-0.5 rounded bg-green-100 text-green-700 text-xs">已确认</span>}
@@ -5334,7 +5419,7 @@ export default function ProjectDataView() {
                     <div className="grid grid-cols-5 gap-2">
                       {/* 设备选择 */}
                       <div className="relative">
-                        <label className="block text-xs text-gray-500 mb-0.5">设备编号</label>
+                        <label className="block text-xs text-gray-500 dark:text-white/50 mb-0.5">设备编号</label>
                         <>
                           <input
                             type="text"
@@ -5342,15 +5427,15 @@ export default function ProjectDataView() {
                             onChange={e => searchEpDevice(idx, e.target.value)}
                             onFocus={() => { if (!epDeviceSearch[idx] && !ep.设备编号) searchEpDevice(idx, ''); }}
                             placeholder="搜索设备..."
-                            className="w-full border border-gray-300 rounded px-2 py-1 text-xs"
+                            className="w-full border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-xs"
                           />
                           {epDeviceResults[idx]?.length > 0 && (
-                            <div className="absolute top-full left-0 right-0 bg-white border border-gray-200 rounded shadow-lg z-10 max-h-32 overflow-y-auto">
+                            <div className="absolute top-full left-0 right-0 bg-white dark:bg-neutral-900 border border-gray-200 dark:border-white/10 rounded shadow-lg z-10 max-h-32 overflow-y-auto">
                               {epDeviceResults[idx].map(d => (
                                 <button key={d.id} onClick={() => selectEpDevice(idx, d)}
-                                  className={`w-full text-left px-2 py-1 text-xs hover:bg-blue-50 ${d.设备负责人 === user?.username ? 'font-medium text-blue-700' : ''}`}>
+                                  className={`w-full text-left px-2 py-1 text-xs hover:bg-black/[0.03] dark:hover:bg-white/[0.06] ${d.设备负责人 === user?.username ? 'font-medium text-black dark:text-white' : ''}`}>
                                   {d.设备编号} {d.设备中文名称 ? `(${d.设备中文名称})` : ''}
-                                  {d.设备负责人 === user?.username && <span className="ml-1 text-blue-400">★</span>}
+                                  {d.设备负责人 === user?.username && <span className="ml-1 text-black/40 dark:text-white/40">★</span>}
                                 </button>
                               ))}
                             </div>
@@ -5359,15 +5444,15 @@ export default function ProjectDataView() {
                       </div>
                       {/* 设备负责人（其他组） */}
                       <div>
-                        <label className="block text-xs text-gray-500 mb-0.5">设备负责人</label>
-                        <div className="w-full border border-gray-200 bg-gray-50 rounded px-2 py-1 text-xs text-gray-600 min-h-[26px]">
+                        <label className="block text-xs text-gray-500 dark:text-white/50 mb-0.5">设备负责人</label>
+                        <div className="w-full border border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-neutral-800 rounded px-2 py-1 text-xs text-gray-600 dark:text-white/60 min-h-[26px]">
                           {ep.设备负责人 || '-'}
-                          {ep.设备负责人 && employeeNameMap[ep.设备负责人] && <span className="text-gray-400 ml-1">({employeeNameMap[ep.设备负责人]})</span>}
+                          {ep.设备负责人 && employeeNameMap[ep.设备负责人] && <span className="text-gray-400 dark:text-white/40 ml-1">({employeeNameMap[ep.设备负责人]})</span>}
                         </div>
                       </div>
                       {/* 连接器下拉 */}
                       <div>
-                        <label className="block text-xs text-gray-500 mb-0.5">设备端元器件编号</label>
+                        <label className="block text-xs text-gray-500 dark:text-white/50 mb-0.5">设备端元器件编号</label>
                         <select
                           value={ep.设备端元器件编号}
                           onChange={async e => {
@@ -5375,7 +5460,7 @@ export default function ProjectDataView() {
                             if (conn) await selectEpConnector(idx, conn);
                             else { const newEp = [...signalEndpoints]; newEp[idx] = { ...newEp[idx], 设备端元器件编号: e.target.value, 针孔号: '' }; setSignalEndpoints(newEp); }
                           }}
-                          className="w-full border border-gray-300 rounded px-2 py-1 text-xs"
+                          className="w-full border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-xs"
                         >
                           <option value="">选择连接器</option>
                           {(epConnectorOptions[idx] || []).map(c => <option key={c.id} value={c.设备端元器件编号}>{c.设备端元器件编号}</option>)}
@@ -5383,11 +5468,11 @@ export default function ProjectDataView() {
                       </div>
                       {/* 针孔下拉 */}
                       <div>
-                        <label className="block text-xs text-gray-500 mb-0.5">针孔号</label>
+                        <label className="block text-xs text-gray-500 dark:text-white/50 mb-0.5">针孔号</label>
                         <select
                           value={ep.针孔号}
                           onChange={e => { const newEp = [...signalEndpoints]; newEp[idx] = { ...newEp[idx], 针孔号: e.target.value }; setSignalEndpoints(newEp); }}
-                          className="w-full border border-gray-300 rounded px-2 py-1 text-xs"
+                          className="w-full border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-xs"
                         >
                           <option value="">选择针孔</option>
                           {(epPinOptions[idx] || []).map(p => <option key={p.id} value={p.针孔号}>{p.针孔号}</option>)}
@@ -5395,21 +5480,21 @@ export default function ProjectDataView() {
                       </div>
                       {/* 端接尺寸 */}
                       <div>
-                        <label className="block text-xs text-gray-500 mb-0.5">端接尺寸</label>
+                        <label className="block text-xs text-gray-500 dark:text-white/50 mb-0.5">端接尺寸</label>
                         <input
                           type="text"
                           value={ep.端接尺寸 || ''}
                           onChange={e => { const newEp = [...signalEndpoints]; newEp[idx] = { ...newEp[idx], 端接尺寸: e.target.value }; setSignalEndpoints(newEp); }}
-                          className="w-full border border-gray-300 rounded px-2 py-1 text-xs"
+                          className="w-full border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-xs"
                         />
                       </div>
                       {/* 屏蔽类型 */}
                       <div>
-                        <label className="block text-xs text-gray-500 mb-0.5">屏蔽类型</label>
+                        <label className="block text-xs text-gray-500 dark:text-white/50 mb-0.5">屏蔽类型</label>
                         <select
                           value={ep.屏蔽类型 || ''}
                           onChange={e => { const newEp = [...signalEndpoints]; newEp[idx] = { ...newEp[idx], 屏蔽类型: e.target.value }; setSignalEndpoints(newEp); }}
-                          className="w-full border border-gray-300 rounded px-2 py-1 text-xs"
+                          className="w-full border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-xs"
                         >
                           <option value="">选择</option>
                           <option value="无屏蔽">无屏蔽</option>
@@ -5421,7 +5506,7 @@ export default function ProjectDataView() {
                       {idx > 0 && (
                         <>
                           <div>
-                            <label className="block text-xs text-gray-500 mb-0.5">传输方向</label>
+                            <label className="block text-xs text-gray-500 dark:text-white/50 mb-0.5">传输方向</label>
                             <select
                               value={(ep as any)._edgeDirection || 'N/A'}
                               onChange={e => {
@@ -5429,7 +5514,7 @@ export default function ProjectDataView() {
                                 (newEp[idx] as any)._edgeDirection = e.target.value;
                                 setSignalEndpoints(newEp);
                               }}
-                              className="w-full border border-gray-300 rounded px-2 py-1 text-xs"
+                              className="w-full border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-xs"
                             >
                               <option value="N/A">N/A</option>
                               <option value="INPUT">INPUT</option>
@@ -5438,7 +5523,7 @@ export default function ProjectDataView() {
                             </select>
                           </div>
                           <div>
-                            <label className="block text-xs text-gray-500 mb-0.5">目标端点</label>
+                            <label className="block text-xs text-gray-500 dark:text-white/50 mb-0.5">目标端点</label>
                             <select
                               value={(ep as any)._edgeTarget ?? 0}
                               onChange={e => {
@@ -5446,7 +5531,7 @@ export default function ProjectDataView() {
                                 (newEp[idx] as any)._edgeTarget = parseInt(e.target.value);
                                 setSignalEndpoints(newEp);
                               }}
-                              className="w-full border border-gray-300 rounded px-2 py-1 text-xs"
+                              className="w-full border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-xs"
                             >
                               {signalEndpoints.map((other, oi) => oi !== idx ? (
                                 <option key={oi} value={oi}>端点{oi + 1}{other.设备编号 ? ` (${other.设备编号})` : ''}</option>
@@ -5457,22 +5542,22 @@ export default function ProjectDataView() {
                       )}
                       {/* 信号名称 */}
                       <div className="col-span-5">
-                        <label className="block text-xs text-gray-500 mb-0.5">端点信号名称</label>
+                        <label className="block text-xs text-gray-500 dark:text-white/50 mb-0.5">端点信号名称</label>
                         <input
                           type="text"
                           value={ep.信号名称 || ''}
                           onChange={e => { const newEp = [...signalEndpoints]; newEp[idx] = { ...newEp[idx], 信号名称: e.target.value }; setSignalEndpoints(newEp); }}
-                          className="w-full border border-gray-300 rounded px-2 py-1 text-xs"
+                          className="w-full border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-xs"
                         />
                       </div>
                       {/* 信号定义 */}
                       <div className="col-span-5">
-                        <label className="block text-xs text-gray-500 mb-0.5">信号定义</label>
+                        <label className="block text-xs text-gray-500 dark:text-white/50 mb-0.5">信号定义</label>
                         <input
                           type="text"
                           value={ep.信号定义 || ''}
                           onChange={e => { const newEp = [...signalEndpoints]; newEp[idx] = { ...newEp[idx], 信号定义: e.target.value }; setSignalEndpoints(newEp); }}
-                          className="w-full border border-gray-300 rounded px-2 py-1 text-xs"
+                          className="w-full border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-xs"
                         />
                       </div>
                     </div>
@@ -5483,7 +5568,8 @@ export default function ProjectDataView() {
               </div>
             </div>
           </div>
-        )}
+          );
+        })()}
       </div>
 
       {historyTarget && (
@@ -5498,13 +5584,13 @@ export default function ProjectDataView() {
       {/* ATA导出模态框 */}
       {showAtaExportModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl w-[600px] max-h-[80vh] flex flex-col">
+          <div className="bg-white dark:bg-neutral-900 rounded-lg shadow-xl w-[600px] max-h-[80vh] flex flex-col">
             <div className="flex items-center justify-between px-5 py-3 border-b">
               <h3 className="text-base font-semibold">WB导出 — 按设备选择信号端点对</h3>
-              <button onClick={() => setShowAtaExportModal(false)} className="text-gray-400 hover:text-gray-600 text-xl">×</button>
+              <button onClick={() => setShowAtaExportModal(false)} className="text-gray-400 dark:text-white/40 hover:text-gray-600 dark:text-white/60 text-xl">×</button>
             </div>
             <div className="px-5 py-3 border-b flex items-center gap-3">
-              <label className="text-sm text-gray-600 shrink-0">ATA前两位筛选：</label>
+              <label className="text-sm text-gray-600 dark:text-white/60 shrink-0">ATA前两位筛选：</label>
               <input
                 type="text"
                 placeholder="如：27"
@@ -5526,22 +5612,22 @@ export default function ProjectDataView() {
                 }}
                 className="border rounded px-2 py-1 text-sm w-24"
               />
-              <span className="text-sm text-gray-500">
+              <span className="text-sm text-gray-500 dark:text-white/50">
                 已选 {ataExportSelectedIds.size} 台设备 / 共 {ataExportDevices.length} 台
               </span>
               <button
                 onClick={() => setAtaExportSelectedIds(new Set(ataExportDevices.map(d => d.id)))}
-                className="ml-auto text-xs text-blue-600 hover:underline"
+                className="ml-auto text-xs text-black dark:text-white hover:underline"
               >全选</button>
               <button
                 onClick={() => setAtaExportSelectedIds(new Set())}
-                className="text-xs text-gray-500 hover:underline"
+                className="text-xs text-gray-500 dark:text-white/50 hover:underline"
               >清空</button>
             </div>
             <div className="flex-1 overflow-y-auto px-5 py-2">
               <table className="w-full text-xs">
                 <thead>
-                  <tr className="text-gray-500 border-b">
+                  <tr className="text-gray-500 dark:text-white/50 border-b">
                     <th className="py-1 w-8 text-left"></th>
                     <th className="py-1 text-left">设备编号</th>
                     <th className="py-1 text-left">设备LIN号</th>
@@ -5558,7 +5644,7 @@ export default function ProjectDataView() {
                     const ata = (d as any)['设备部件所属系统（4位ATA）'] || '';
                     const checked = ataExportSelectedIds.has(d.id);
                     return (
-                      <tr key={d.id} className="border-b border-gray-50 hover:bg-gray-50">
+                      <tr key={d.id} className="border-b border-gray-50 hover:bg-gray-50 dark:hover:bg-white/[0.04]">
                         <td className="py-0.5">
                           <input
                             type="checkbox"
@@ -5583,7 +5669,7 @@ export default function ProjectDataView() {
               </table>
             </div>
             <div className="px-5 py-3 border-t flex justify-end gap-2">
-              <button onClick={() => setShowAtaExportModal(false)} className="px-4 py-1.5 text-sm border rounded hover:bg-gray-50">取消</button>
+              <button onClick={() => setShowAtaExportModal(false)} className="px-4 py-1.5 text-sm border rounded hover:bg-gray-50 dark:hover:bg-white/[0.04]">取消</button>
               <button
                 disabled={ataExportSelectedIds.size === 0 || ataExportLoading}
                 onClick={async () => {

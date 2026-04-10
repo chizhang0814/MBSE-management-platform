@@ -290,7 +290,7 @@ export default function UserManagement() {
     return (
       <Layout>
         <div className="flex justify-center items-center h-64">
-          <div className="text-lg text-gray-600">加载中...</div>
+          <div className="text-lg text-gray-600 dark:text-white/60">加载中...</div>
         </div>
       </Layout>
     );
@@ -298,16 +298,16 @@ export default function UserManagement() {
 
   return (
     <Layout>
-      <div className="px-4 sm:px-0">
-        <h1 className="text-3xl font-bold text-gray-900 mb-6">用户管理</h1>
+      <div className="px-6 py-4">
+        <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-6">用户管理</h1>
 
         {/* 区域一：用户组权限说明 */}
-        <div className="bg-white shadow rounded-lg p-4 mb-6">
-          <h2 className="text-lg font-bold text-gray-800 mb-3">用户组权限说明</h2>
+        <div className="bg-white dark:bg-neutral-900 border border-gray-200 dark:border-white/10 rounded-lg p-4 mb-6">
+          <h2 className="text-lg font-bold text-gray-800 dark:text-white mb-3">用户组权限说明</h2>
           <div className="overflow-x-auto">
             <table className="min-w-full text-xs">
               <thead>
-                <tr className="bg-gray-50 text-gray-500">
+                <tr className="bg-gray-50 dark:bg-neutral-800 text-gray-500 dark:text-white/50">
                   <th className="px-3 py-2 text-left">权限</th>
                   <th className="px-3 py-2 text-center">总体组</th>
                   <th className="px-3 py-2 text-center">系统组</th>
@@ -316,7 +316,7 @@ export default function UserManagement() {
                   <th className="px-3 py-2 text-center">其他组</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100 text-gray-700">
+              <tbody className="divide-y divide-gray-100 dark:divide-white/10 text-gray-700 dark:text-white/70">
                 <tr><td className="px-3 py-1.5">添加/编辑/删除设备</td><td className="px-3 py-1.5 text-center">✅ 需审批</td><td className="px-3 py-1.5 text-center">—</td><td className="px-3 py-1.5 text-center">—</td><td className="px-3 py-1.5 text-center">—</td><td className="px-3 py-1.5 text-center">—</td></tr>
                 <tr><td className="px-3 py-1.5">添加/编辑/删除连接器</td><td className="px-3 py-1.5 text-center">✅ 需审批</td><td className="px-3 py-1.5 text-center">—</td><td className="px-3 py-1.5 text-center">—</td><td className="px-3 py-1.5 text-center">—</td><td className="px-3 py-1.5 text-center">—</td></tr>
                 <tr><td className="px-3 py-1.5">添加/编辑/删除针孔</td><td className="px-3 py-1.5 text-center">—</td><td className="px-3 py-1.5 text-center">✅ 自己设备</td><td className="px-3 py-1.5 text-center">—</td><td className="px-3 py-1.5 text-center">—</td><td className="px-3 py-1.5 text-center">—</td></tr>
@@ -332,25 +332,25 @@ export default function UserManagement() {
 
         {/* 区域二：待审批的权限申请 */}
         {permRequests.filter(r => r.status === 'pending').length > 0 && (
-          <div className="bg-white shadow rounded-lg p-4 mb-6">
-            <h2 className="text-lg font-bold text-gray-800 mb-3">待审批的权限申请</h2>
-            <table className="min-w-full divide-y divide-gray-200 text-sm">
-              <thead className="bg-gray-50">
+          <div className="bg-white dark:bg-neutral-900 border border-gray-200 dark:border-white/10 rounded-lg p-4 mb-6">
+            <h2 className="text-lg font-bold text-gray-800 dark:text-white mb-3">待审批的权限申请</h2>
+            <table className="min-w-full divide-y divide-gray-200 dark:divide-white/10 text-sm">
+              <thead className="bg-gray-50 dark:bg-neutral-800">
                 <tr>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">用户</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">申请项目</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">申请角色</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">申请时间</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">操作</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-white/50">用户</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-white/50">申请项目</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-white/50">申请角色</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-white/50">申请时间</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-white/50">操作</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100">
+              <tbody className="divide-y divide-gray-100 dark:divide-white/10">
                 {permRequests.filter(r => r.status === 'pending').map(req => (
                   <tr key={req.id}>
-                    <td className="px-4 py-2">{req.display_name || req.username} <span className="text-gray-400">({req.username})</span></td>
+                    <td className="px-4 py-2">{req.display_name || req.username} <span className="text-gray-400 dark:text-white/40">({req.username})</span></td>
                     <td className="px-4 py-2">{req.project_name}</td>
                     <td className="px-4 py-2">{req.project_role}</td>
-                    <td className="px-4 py-2 text-gray-500">{new Date(req.created_at).toLocaleString()}</td>
+                    <td className="px-4 py-2 text-gray-500 dark:text-white/50">{new Date(req.created_at).toLocaleString()}</td>
                     <td className="px-4 py-2 space-x-2">
                       <button onClick={() => handleReviewRequest(req.id, 'approve')} className="text-green-600 hover:text-green-900">批准</button>
                       <button onClick={() => handleReviewRequest(req.id, 'reject')} className="text-red-600 hover:text-red-900">驳回</button>
@@ -363,45 +363,45 @@ export default function UserManagement() {
         )}
 
         {/* 区域三：用户管理 */}
-        <div className="bg-white shadow rounded-lg overflow-hidden">
-          <div className="flex justify-between items-center px-4 py-3 border-b border-gray-200">
-            <h2 className="text-lg font-bold text-gray-800">用户列表</h2>
+        <div className="bg-white dark:bg-neutral-900 border border-gray-200 dark:border-white/10 rounded-lg overflow-hidden">
+          <div className="flex justify-between items-center px-4 py-3 border-b border-gray-200 dark:border-white/10">
+            <h2 className="text-lg font-bold text-gray-800 dark:text-white">用户列表</h2>
             {canManageUsers && (
-              <button onClick={() => handleOpenModal()} className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 text-sm">+ 添加用户</button>
+              <button onClick={() => handleOpenModal()} className="btn-primary">+ 添加用户</button>
             )}
           </div>
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
+          <table className="min-w-full divide-y divide-gray-200 dark:divide-white/10">
+            <thead className="bg-gray-50 dark:bg-neutral-800">
               <tr>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">用户名(EID)</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">姓名</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">部门</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">备注</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">角色</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">权限</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">创建时间</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-white/50 uppercase tracking-wider">ID</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-white/50 uppercase tracking-wider">用户名(EID)</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-white/50 uppercase tracking-wider">姓名</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-white/50 uppercase tracking-wider">部门</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-white/50 uppercase tracking-wider">备注</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-white/50 uppercase tracking-wider">角色</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-white/50 uppercase tracking-wider">权限</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-white/50 uppercase tracking-wider">创建时间</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-white/50 uppercase tracking-wider">操作</th>
               </tr>
             </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
+            <tbody className="bg-white dark:bg-neutral-900 divide-y divide-gray-200 dark:divide-white/10">
               {users.map((user) => (
                 <tr key={user.id}>
-                  <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">{user.id}</td>
-                  <td className="px-4 py-3 whitespace-nowrap text-sm font-mono text-gray-900">{user.username}</td>
-                  <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">{user.name || <span className="text-gray-300">-</span>}</td>
-                  <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">{user.department || <span className="text-gray-300">-</span>}</td>
-                  <td className="px-4 py-3 text-sm text-gray-500 max-w-xs truncate">{user.remarks || <span className="text-gray-300">-</span>}</td>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500 dark:text-white/50">{user.id}</td>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm font-mono text-gray-900 dark:text-white">{user.username}</td>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900 dark:text-white">{user.name || <span className="text-gray-300 dark:text-white/30">-</span>}</td>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500 dark:text-white/50">{user.department || <span className="text-gray-300 dark:text-white/30">-</span>}</td>
+                  <td className="px-4 py-3 text-sm text-gray-500 dark:text-white/50 max-w-xs truncate">{user.remarks || <span className="text-gray-300 dark:text-white/30">-</span>}</td>
                   <td className="px-4 py-3 whitespace-nowrap">
                     <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                      user.role === 'admin' ? 'bg-purple-100 text-purple-800' : 'bg-blue-100 text-blue-800'
+                      user.role === 'admin' ? 'bg-purple-100 text-purple-800' : 'bg-black/[0.06] dark:bg-white/[0.1] text-black dark:text-white'
                     }`}>
                       {user.role === 'admin' ? '管理员' : '普通用户'}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-sm text-gray-500">
+                  <td className="px-4 py-3 text-sm text-gray-500 dark:text-white/50">
                     {user.role === 'admin' ? (
-                      <span className="text-gray-400">不适用</span>
+                      <span className="text-gray-400 dark:text-white/40">不适用</span>
                     ) : (
                       <div className="space-y-1">
                         {user.permissions && user.permissions.length > 0 ? (
@@ -411,17 +411,17 @@ export default function UserManagement() {
                               {' → '}
                               <span>{perm.project_role}</span>
                               {perm.project_role === '总体组' && perm.can_approve && (
-                                <span className="ml-1 text-blue-600 font-medium">（审批）</span>
+                                <span className="ml-1 text-black dark:text-white font-medium">（审批）</span>
                               )}
                             </div>
                           ))
                         ) : (
-                          <span className="text-gray-400 text-xs">无权限</span>
+                          <span className="text-gray-400 dark:text-white/40 text-xs">无权限</span>
                         )}
                       </div>
                     )}
                   </td>
-                  <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500 dark:text-white/50">
                     {new Date(user.created_at).toLocaleString()}
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap text-sm font-medium space-x-2">
@@ -429,7 +429,7 @@ export default function UserManagement() {
                       <>
                         <button
                           onClick={() => handleOpenModal(user)}
-                          className="text-blue-600 hover:text-blue-900"
+                          className="text-black dark:text-white hover:text-black/60 dark:hover:text-white/60"
                         >
                           编辑
                         </button>
@@ -460,7 +460,7 @@ export default function UserManagement() {
         {/* 添加/编辑用户对话框 */}
         {showModal && (
           <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] flex flex-col">
+            <div className="bg-white dark:bg-neutral-900 rounded-lg border border-gray-200 dark:border-white/10 max-w-2xl w-full max-h-[90vh] flex flex-col">
               <div className="flex justify-between items-center px-6 pt-6 pb-4 shrink-0">
                 <h3 className="text-xl font-bold">
                   {editingUser ? '编辑用户' : '添加用户'}
@@ -469,14 +469,14 @@ export default function UserManagement() {
                   <button
                     type="button"
                     onClick={handleCloseModal}
-                    className="px-4 py-1.5 border border-gray-300 rounded-lg text-sm hover:bg-gray-50"
+                    className="btn-secondary"
                   >
                     取消
                   </button>
                   <button
                     type="submit"
                     form="user-form"
-                    className="px-4 py-1.5 bg-blue-500 text-white rounded-lg text-sm hover:bg-blue-600"
+                    className="btn-primary"
                   >
                     {editingUser ? '更新' : '创建'}
                   </button>
@@ -486,67 +486,67 @@ export default function UserManagement() {
               <form id="user-form" onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
                 <div className="space-y-4 flex-1 overflow-y-auto px-6">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">用户名（EID）</label>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-white/70 mb-2">用户名（EID）</label>
                     <input
                       type="text"
                       value={formData.username}
                       onChange={(e) => setFormData({ ...formData, username: e.target.value })}
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                      className="w-full border border-gray-300 dark:border-white/20 rounded-lg px-3 py-2 dark:bg-neutral-800 dark:text-white"
                       required
                     />
                   </div>
 
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">姓名</label>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-white/70 mb-2">姓名</label>
                       <input
                         type="text"
                         value={formData.name}
                         onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                        className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                        className="w-full border border-gray-300 dark:border-white/20 rounded-lg px-3 py-2 dark:bg-neutral-800 dark:text-white"
                         placeholder="员工姓名"
                       />
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">部门</label>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-white/70 mb-2">部门</label>
                       <input
                         type="text"
                         value={formData.department}
                         onChange={(e) => setFormData({ ...formData, department: e.target.value })}
-                        className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                        className="w-full border border-gray-300 dark:border-white/20 rounded-lg px-3 py-2 dark:bg-neutral-800 dark:text-white"
                         placeholder="所属部门"
                       />
                     </div>
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">备注</label>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-white/70 mb-2">备注</label>
                     <input
                       type="text"
                       value={formData.remarks}
                       onChange={(e) => setFormData({ ...formData, remarks: e.target.value })}
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                      className="w-full border border-gray-300 dark:border-white/20 rounded-lg px-3 py-2 dark:bg-neutral-800 dark:text-white"
                       placeholder="可选"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <label className="block text-sm font-medium text-gray-700 dark:text-white/70 mb-2">
                       密码
-                      {editingUser && <span className="text-gray-500 text-xs ml-2">（留空则不修改）</span>}
+                      {editingUser && <span className="text-gray-500 dark:text-white/50 text-xs ml-2">（留空则不修改）</span>}
                     </label>
                     <input
                       type="password"
                       value={formData.password}
                       onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                      className="w-full border border-gray-300 dark:border-white/20 rounded-lg px-3 py-2 dark:bg-neutral-800 dark:text-white"
                       required={!editingUser}
                       placeholder={editingUser ? '留空则不修改密码' : '请输入密码'}
                     />
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <label className="block text-sm font-medium text-gray-700 dark:text-white/70 mb-2">
                       角色
                     </label>
                     <select
@@ -554,7 +554,7 @@ export default function UserManagement() {
                       onChange={(e) =>
                         setFormData({ ...formData, role: e.target.value })
                       }
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                      className="w-full border border-gray-300 dark:border-white/20 rounded-lg px-3 py-2 dark:bg-neutral-800 dark:text-white"
                     >
                       <option value="admin">管理员</option>
                       <option value="user">普通用户</option>
@@ -563,14 +563,14 @@ export default function UserManagement() {
 
                   {formData.role === 'user' && (
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                      <label className="block text-sm font-medium text-gray-700 dark:text-white/70 mb-2">
                         权限管理
                       </label>
                       <div className="space-y-3">
                         {formData.permissions.map((perm, idx) => (
                           <div key={idx} className="flex gap-2 items-end">
                             <div className="flex-1 min-w-0">
-                              <label className="block text-xs text-gray-600 mb-1">项目名称</label>
+                              <label className="block text-xs text-gray-600 dark:text-white/60 mb-1">项目名称</label>
                               <select
                                 value={perm.project_name}
                                 onChange={(e) => {
@@ -591,7 +591,7 @@ export default function UserManagement() {
                                   newPerms[idx] = { ...newPerms[idx], project_name: newValue };
                                   setFormData({ ...formData, permissions: newPerms });
                                 }}
-                                className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                                className="w-full border border-gray-300 dark:border-white/20 rounded px-3 py-2 text-sm dark:bg-neutral-800 dark:text-white"
                               >
                                 <option value="">选择项目</option>
                                 {availableProjects.map((project) => (
@@ -602,7 +602,7 @@ export default function UserManagement() {
                               </select>
                             </div>
                             <div className="flex-1 min-w-0">
-                              <label className="block text-xs text-gray-600 mb-1">项目角色</label>
+                              <label className="block text-xs text-gray-600 dark:text-white/60 mb-1">项目角色</label>
                               <select
                                 disabled={!perm.project_name}
                                 value={perm.project_role}
@@ -627,7 +627,7 @@ export default function UserManagement() {
                                   newPerms[idx] = { ...newPerms[idx], project_role: newRole, can_approve };
                                   setFormData({ ...formData, permissions: newPerms });
                                 }}
-                                className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                                className="w-full border border-gray-300 dark:border-white/20 rounded px-3 py-2 text-sm dark:bg-neutral-800 dark:text-white"
                               >
                                 <option value="">选择角色</option>
                                 <option value="总体组">总体组</option>
@@ -645,7 +645,7 @@ export default function UserManagement() {
                               const isLastApprover = !!perm.can_approve && otherApproversCount === 0;
                               return (
                                 <div className="flex-shrink-0 pb-1">
-                                  <label className="block text-xs text-gray-600 mb-1 invisible">审批权</label>
+                                  <label className="block text-xs text-gray-600 dark:text-white/60 mb-1 invisible">审批权</label>
                                   <label className={`flex items-center gap-1.5 whitespace-nowrap select-none ${isLastApprover ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}>
                                     <input
                                       type="checkbox"
@@ -658,7 +658,7 @@ export default function UserManagement() {
                                       }}
                                       className="w-3.5 h-3.5"
                                     />
-                                    <span className="text-xs text-gray-600">
+                                    <span className="text-xs text-gray-600 dark:text-white/60">
                                       {isLastApprover ? '审批权（唯一，不可取消）' : '具有审批权'}
                                     </span>
                                   </label>
@@ -699,7 +699,7 @@ export default function UserManagement() {
                               ],
                             });
                           }}
-                          className="w-full py-2 border-2 border-dashed border-gray-300 rounded text-gray-600 hover:border-blue-500 hover:text-blue-500 text-sm"
+                          className="w-full py-2 border-2 border-dashed border-gray-300 dark:border-white/20 rounded text-gray-600 dark:text-white/60 hover:border-black dark:hover:border-white hover:text-black dark:hover:text-white text-sm"
                         >
                           + 添加权限
                         </button>

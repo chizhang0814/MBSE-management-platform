@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Layout from '../components/Layout';
 import { useAuth } from '../context/AuthContext';
 
@@ -108,6 +108,12 @@ export default function ProjectManagement() {
   const [editingConfigName, setEditingConfigName] = useState('');
   const [editingConfigDesc, setEditingConfigDesc] = useState('');
 
+  // 操作下拉菜单
+  const [openMenuId, setOpenMenuId] = useState<number | null>(null);
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+  const [activeSubMenu, setActiveSubMenu] = useState<string | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
   const isAdmin = user?.role === 'admin';
   const [myPermissions, setMyPermissions] = useState<{ project_name: string; project_role: string }[]>([]);
   const isZonti = myPermissions.some(p => p.project_role === '总体组');
@@ -122,6 +128,18 @@ export default function ProjectManagement() {
         .catch(() => {});
     }
   }, [user]);
+
+  // 点击菜单外部关闭
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setOpenMenuId(null);
+        setActiveSubMenu(null);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
 
   const checkSysmlApi = async () => {
     try {
@@ -470,14 +488,14 @@ export default function ProjectManagement() {
 
   return (
     <Layout>
-      <div className="px-4 py-6">
+      <div className="px-6 py-4">
         <div className="flex justify-between items-center mb-6">
-          <h1 className="text-2xl font-bold text-gray-900">项目管理</h1>
+          <h1 className="text-3xl font-bold text-gray-900 dark:text-white">项目管理</h1>
           {isAdmin && (
             <div className="flex gap-2">
               <button
                 onClick={() => { setFormData({ name: '', description: '' }); setEditingProject(null); setShowCreateModal(true); }}
-                className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700"
+                className="btn-primary bg-black text-white px-4 py-2 rounded-[50px] hover:bg-gray-800"
               >
                 创建项目
               </button>
@@ -493,89 +511,107 @@ export default function ProjectManagement() {
 
         {loading ? (
           <div className="text-center py-8">
-            <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
-            <p className="mt-2 text-gray-600">加载中...</p>
+            <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-black" />
+            <p className="mt-2 text-gray-600 dark:text-white/60">加载中...</p>
           </div>
         ) : projects.length === 0 ? (
-          <div className="text-center py-8 text-gray-500">
+          <div className="text-center py-8 text-gray-500 dark:text-white/50">
             <p className="text-lg">暂无项目</p>
             <p className="text-sm mt-2">点击"创建项目"按钮开始创建第一个项目</p>
           </div>
         ) : (
-          <div className="bg-white shadow rounded-lg overflow-hidden">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
+          <div className="bg-white dark:bg-neutral-900 border border-gray-200 dark:border-white/10 rounded-lg overflow-hidden">
+            <table className="min-w-full divide-y divide-gray-200 dark:divide-white/10">
+              <thead className="bg-gray-50 dark:bg-neutral-800">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">项目名称</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">描述</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">设备数</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">创建者</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">创建时间</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">操作</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-white/50 uppercase">项目名称</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-white/50 uppercase">描述</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-white/50 uppercase">设备数</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-white/50 uppercase">创建者</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-white/50 uppercase">创建时间</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-white/50 uppercase">操作</th>
                 </tr>
               </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
+              <tbody className="bg-white dark:bg-neutral-900 divide-y divide-gray-200 dark:divide-white/10">
                 {projects.map((project) => (
-                  <tr key={project.id}>
+                  <tr key={project.id} className={`transition-colors ${openMenuId === project.id ? 'bg-black/[0.08] dark:bg-white/[0.12]' : 'hover:bg-black/[0.03] dark:hover:bg-white/[0.06]'}`}>
                     <td className="px-6 py-4 whitespace-nowrap font-medium">{project.name}</td>
-                    <td className="px-6 py-4 text-sm text-gray-500">{project.description || '-'}</td>
+                    <td className="px-6 py-4 text-sm text-gray-500 dark:text-white/50">{project.description || '-'}</td>
                     <td className="px-6 py-4 whitespace-nowrap">{project.device_count ?? '-'}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm">{project.created_by_name}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm">{new Date(project.created_at).toLocaleDateString()}</td>
-                    <td className="px-6 py-4 text-sm space-x-2">
-                      <button onClick={() => openDownloadModal(project.id, project.name)} className="text-indigo-600 hover:text-indigo-800">下载</button>
-                      {isAdmin && (
-                        <span className="inline-flex flex-col">
-                          <button onClick={() => handleExportSysml(project.id, project.name)} className="text-teal-600 hover:text-teal-800">导出SysML</button>
-                          <button
-                            onClick={() => handleSyncSysml(project.id)}
-                            disabled={!sysmlApiAvailable || syncingProjects.has(project.id)}
-                            className={`${sysmlApiAvailable && !syncingProjects.has(project.id) ? 'text-teal-600 hover:text-teal-800' : 'text-gray-400 cursor-not-allowed'}`}
-                            title={!sysmlApiAvailable ? 'SysML v2 API 不可用' : '同步到SysML v2仓库'}
-                          >
-                            {syncingProjects.has(project.id) ? '同步中...' : '同步SysML'}
-                          </button>
-                        </span>
-                      )}
-                      {(isAdmin || isZonti) && (
-                        <>
-                          <span className="inline-flex flex-col">
-                            <button onClick={() => { setImportPhase('devices'); setShowImportModal(project.id); setImportFiles([]); setImportResults([]); }}
-                              className="text-blue-600 hover:text-blue-800">导入电设备清单</button>
-                            <button onClick={() => { setUpdateProjectId(project.id); setUpdateType('devices'); setUpdateFile(null); setUpdateResult(null); setShowUpdateModal(true); }}
-                              className="text-orange-600 hover:text-orange-800">更新电设备清单</button>
-                          </span>
-                          <span className="inline-flex flex-col">
-                            <button onClick={() => { setImportPhase('connectors'); setShowImportModal(project.id); setImportFiles([]); setImportResults([]); }}
-                              className="text-blue-600 hover:text-blue-800">导入设备端元器件清单</button>
-                            <button onClick={() => { setUpdateProjectId(project.id); setUpdateType('connectors'); setUpdateFile(null); setUpdateResult(null); setShowUpdateModal(true); }}
-                              className="text-orange-600 hover:text-orange-800">更新设备端元器件清单</button>
-                          </span>
-                          <span className="inline-flex flex-col">
-                            <button onClick={() => { setImportPhase('signals'); setShowImportModal(project.id); setImportFiles([]); setImportResults([]); }}
-                              className="text-blue-600 hover:text-blue-800">导入电气接口清单</button>
-                            <button onClick={() => { setUpdateProjectId(project.id); setUpdateType('signals'); setUpdateFile(null); setUpdateResult(null); setShowUpdateModal(true); }}
-                              className="text-orange-600 hover:text-orange-800">更新电气接口清单</button>
-                          </span>
-                          <span className="inline-flex flex-col">
-                            <button
-                              onClick={() => { setImportListProjectId(project.id); setImportListResult(null); setImportListFile(null); setShowImportListModal(true); }}
-                              className="text-purple-600 hover:text-purple-800"
-                            >导入全机设备清单</button>
-                            <button
-                              onClick={() => { setListSearch(''); openViewList(project.id); }}
-                              className="text-cyan-600 hover:text-cyan-800"
-                            >查看全机设备清单</button>
-                          </span>
-                        </>
-                      )}
-                      <button onClick={() => openConfigModal(project.id)} className="text-violet-600 hover:text-violet-800">添加构型</button>
-                      {(isAdmin || isZonti) && (
-                        <button onClick={() => handleEdit(project)} className="text-green-600 hover:text-green-800">编辑</button>
-                      )}
-                      {isAdmin && (
-                        <button onClick={() => handleDelete(project.id)} className="text-red-600 hover:text-red-800">删除</button>
-                      )}
+                    <td className="px-6 py-4 text-sm">
+                      <div className="relative inline-block" ref={openMenuId === project.id ? menuRef : undefined}>
+                        <button
+                          onClick={(e) => {
+                            if (openMenuId === project.id) { setOpenMenuId(null); setActiveSubMenu(null); return; }
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            setMenuPos({ top: rect.bottom + 4, left: window.innerWidth - rect.right });
+                            setOpenMenuId(project.id);
+                            setActiveSubMenu(null);
+                          }}
+                          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-pill border border-gray-200 text-sm hover:bg-black/[0.04] dark:hover:bg-white/[0.06] transition-colors"
+                        >
+                          操作
+                          <svg className={`w-3.5 h-3.5 transition-transform ${openMenuId === project.id ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                        </button>
+
+                        {openMenuId === project.id && (
+                          <div className="fixed w-52 bg-white dark:bg-neutral-900 border border-gray-200 dark:border-white/10 rounded-lg shadow-lg z-[9999] py-1 text-left max-h-[70vh] overflow-y-auto" style={{ top: menuPos.top, right: menuPos.left }}>
+                            {/* 导出 */}
+                            <div className="px-3 py-1.5 text-[10px] font-mono uppercase tracking-wider text-black/30 dark:text-white/30">导出</div>
+                            <button onClick={() => { openDownloadModal(project.id, project.name); setOpenMenuId(null); }}
+                              className="w-full text-left px-3 py-1.5 text-sm hover:bg-black/[0.04] dark:hover:bg-white/[0.06] transition-colors">下载 Excel</button>
+                            {isAdmin && (<>
+                              <button onClick={() => { handleExportSysml(project.id, project.name); setOpenMenuId(null); }}
+                                className="w-full text-left px-3 py-1.5 text-sm hover:bg-black/[0.04] dark:hover:bg-white/[0.06] transition-colors">导出 SysML</button>
+                              <button
+                                onClick={() => { handleSyncSysml(project.id); setOpenMenuId(null); }}
+                                disabled={!sysmlApiAvailable || syncingProjects.has(project.id)}
+                                className={`w-full text-left px-3 py-1.5 text-sm transition-colors ${sysmlApiAvailable && !syncingProjects.has(project.id) ? 'hover:bg-black/[0.04]' : 'text-black/20 dark:text-white/20 cursor-not-allowed'}`}
+                              >{syncingProjects.has(project.id) ? '同步中...' : '同步 SysML'}</button>
+                            </>)}
+
+                            {(isAdmin || isZonti) && (<>
+                              <div className="border-t border-gray-100 dark:border-white/10 mt-1 mb-1" />
+                              <div className="px-3 py-1.5 text-[10px] font-mono uppercase tracking-wider text-black/30 dark:text-white/30">导入</div>
+                              <button onClick={() => { setImportPhase('devices'); setShowImportModal(project.id); setImportFiles([]); setImportResults([]); setOpenMenuId(null); }}
+                                className="w-full text-left px-3 py-1.5 text-sm hover:bg-black/[0.04] dark:hover:bg-white/[0.06] transition-colors">电设备清单</button>
+                              <button onClick={() => { setImportPhase('connectors'); setShowImportModal(project.id); setImportFiles([]); setImportResults([]); setOpenMenuId(null); }}
+                                className="w-full text-left px-3 py-1.5 text-sm hover:bg-black/[0.04] dark:hover:bg-white/[0.06] transition-colors">设备端元器件清单</button>
+                              <button onClick={() => { setImportPhase('signals'); setShowImportModal(project.id); setImportFiles([]); setImportResults([]); setOpenMenuId(null); }}
+                                className="w-full text-left px-3 py-1.5 text-sm hover:bg-black/[0.04] dark:hover:bg-white/[0.06] transition-colors">电气接口清单</button>
+                              <button onClick={() => { setImportListProjectId(project.id); setImportListResult(null); setImportListFile(null); setShowImportListModal(true); setOpenMenuId(null); }}
+                                className="w-full text-left px-3 py-1.5 text-sm hover:bg-black/[0.04] dark:hover:bg-white/[0.06] transition-colors">全机设备清单</button>
+
+                              <div className="border-t border-gray-100 dark:border-white/10 mt-1 mb-1" />
+                              <div className="px-3 py-1.5 text-[10px] font-mono uppercase tracking-wider text-black/30 dark:text-white/30">更新</div>
+                              <button onClick={() => { setUpdateProjectId(project.id); setUpdateType('devices'); setUpdateFile(null); setUpdateResult(null); setShowUpdateModal(true); setOpenMenuId(null); }}
+                                className="w-full text-left px-3 py-1.5 text-sm hover:bg-black/[0.04] dark:hover:bg-white/[0.06] transition-colors">电设备清单</button>
+                              <button onClick={() => { setUpdateProjectId(project.id); setUpdateType('connectors'); setUpdateFile(null); setUpdateResult(null); setShowUpdateModal(true); setOpenMenuId(null); }}
+                                className="w-full text-left px-3 py-1.5 text-sm hover:bg-black/[0.04] dark:hover:bg-white/[0.06] transition-colors">设备端元器件清单</button>
+                              <button onClick={() => { setUpdateProjectId(project.id); setUpdateType('signals'); setUpdateFile(null); setUpdateResult(null); setShowUpdateModal(true); setOpenMenuId(null); }}
+                                className="w-full text-left px-3 py-1.5 text-sm hover:bg-black/[0.04] dark:hover:bg-white/[0.06] transition-colors">电气接口清单</button>
+                            </>)}
+
+                            <div className="border-t border-gray-100 dark:border-white/10 mt-1 mb-1" />
+                            <div className="px-3 py-1.5 text-[10px] font-mono uppercase tracking-wider text-black/30 dark:text-white/30">管理</div>
+                            <button onClick={() => { setListSearch(''); openViewList(project.id); setOpenMenuId(null); }}
+                              className="w-full text-left px-3 py-1.5 text-sm hover:bg-black/[0.04] dark:hover:bg-white/[0.06] transition-colors">查看全机设备清单</button>
+                            <button onClick={() => { openConfigModal(project.id); setOpenMenuId(null); }}
+                              className="w-full text-left px-3 py-1.5 text-sm hover:bg-black/[0.04] dark:hover:bg-white/[0.06] transition-colors">添加构型</button>
+                            {(isAdmin || isZonti) && (
+                              <button onClick={() => { handleEdit(project); setOpenMenuId(null); }}
+                                className="w-full text-left px-3 py-1.5 text-sm hover:bg-black/[0.04] dark:hover:bg-white/[0.06] transition-colors">编辑项目</button>
+                            )}
+                            {isAdmin && (<>
+                              <div className="border-t border-gray-100 dark:border-white/10 mt-1 mb-1" />
+                              <button onClick={() => { handleDelete(project.id); setOpenMenuId(null); }}
+                                className="w-full text-left px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 transition-colors">删除项目</button>
+                            </>)}
+                          </div>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -587,11 +623,11 @@ export default function ProjectManagement() {
         {/* 复制项目对话框 */}
         {showCloneModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg max-w-lg w-full flex flex-col">
-              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
+            <div className="bg-white dark:bg-neutral-900 rounded-lg max-w-lg w-full flex flex-col">
+              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-white/10 shrink-0">
                 <h2 className="text-xl font-bold">复制项目</h2>
                 <div className="flex gap-2">
-                  <button onClick={() => setShowCloneModal(false)} className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50 text-sm">取消</button>
+                  <button onClick={() => setShowCloneModal(false)} className="btn-secondary px-4 py-2 border border-black rounded-[50px] hover:bg-gray-50 dark:hover:bg-white/[0.04] text-sm">取消</button>
                   <button
                     onClick={handleClone}
                     disabled={cloning || !cloneSourceId || !cloneNewName.trim() || projects.some(p => p.name === cloneNewName.trim())}
@@ -601,7 +637,7 @@ export default function ProjectManagement() {
               </div>
               <div className="px-6 py-4">
               <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-1">选择源项目 *</label>
+                <label className="block text-sm font-medium text-gray-700 dark:text-white/70 mb-1">选择源项目 *</label>
                 <select
                   value={cloneSourceId}
                   onChange={e => {
@@ -610,7 +646,7 @@ export default function ProjectManagement() {
                     const src = projects.find(p => p.id === id);
                     if (src) setCloneNewName(src.name + '(副本)');
                   }}
-                  className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full border border-gray-300 dark:border-white/20 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-black dark:bg-neutral-800 dark:text-white"
                 >
                   <option value="">请选择项目</option>
                   {projects.map(p => (
@@ -619,13 +655,13 @@ export default function ProjectManagement() {
                 </select>
               </div>
               <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-1">新项目名称 *</label>
+                <label className="block text-sm font-medium text-gray-700 dark:text-white/70 mb-1">新项目名称 *</label>
                 <input
                   type="text"
                   value={cloneNewName}
                   onChange={e => setCloneNewName(e.target.value)}
                   placeholder="输入新项目名称"
-                  className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full border border-gray-300 dark:border-white/20 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-black dark:bg-neutral-800 dark:text-white"
                 />
                 {cloneNewName.trim() && projects.some(p => p.name === cloneNewName.trim()) && (
                   <p className="text-red-500 text-xs mt-1">项目名称已存在，请修改</p>
@@ -639,13 +675,13 @@ export default function ProjectManagement() {
         {/* 批量更新弹窗 */}
         {showUpdateModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg max-w-lg w-full max-h-[80vh] flex flex-col">
-              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
+            <div className="bg-white dark:bg-neutral-900 rounded-lg max-w-lg w-full max-h-[80vh] flex flex-col">
+              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-white/10 shrink-0">
                 <h2 className="text-xl font-bold">
                   {updateType === 'devices' ? '更新电设备清单' : updateType === 'connectors' ? '更新设备端元器件清单' : '更新电气接口清单'}
                 </h2>
                 <div className="flex gap-2">
-                  <button onClick={() => setShowUpdateModal(false)} className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 text-sm">关闭</button>
+                  <button onClick={() => setShowUpdateModal(false)} className="btn-secondary px-4 py-2 border border-black rounded-[50px] hover:bg-gray-50 dark:hover:bg-white/[0.04] text-sm">关闭</button>
                   {!updateResult && (
                     <button onClick={handleUpdate} disabled={updating || !updateFile}
                       className="px-4 py-2 bg-orange-600 text-white rounded hover:bg-orange-700 disabled:bg-gray-400 text-sm">
@@ -657,14 +693,14 @@ export default function ProjectManagement() {
               <div className="flex-1 overflow-y-auto px-6 py-4">
                 {!updateResult ? (
                   <>
-                    <div className="mb-4 text-sm text-gray-600">
+                    <div className="mb-4 text-sm text-gray-600 dark:text-white/60">
                       {updateType === 'devices' && <p>上传 Excel 文件，通过 <b>设备LIN号（DOORS）</b> 匹配设备并更新对应列。Excel 中有值的列才会被更新，空列保持原值。</p>}
                       {updateType === 'connectors' && <p>上传 Excel 文件，通过 <b>设备LIN号（DOORS）</b> + <b>设备端元器件编号</b> 匹配连接器并更新对应列。</p>}
                       {updateType === 'signals' && <p>上传 Excel 文件，通过 <b>连接器（从）+ 针孔号（从）</b> 和 <b>连接器（到）+ 针孔号（到）</b> 定位信号并更新属性。</p>}
                     </div>
                     <input type="file" accept=".xlsx,.xls"
                       onChange={e => setUpdateFile(e.target.files?.[0] || null)}
-                      className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                      className="w-full border border-gray-300 dark:border-white/20 rounded px-3 py-2 text-sm dark:bg-neutral-800 dark:text-white"
                     />
                   </>
                 ) : updateResult.error ? (
@@ -673,15 +709,15 @@ export default function ProjectManagement() {
                   <div>
                     <div className="mb-3 space-y-1">
                       <p className="text-green-700 font-medium">更新成功 {updateResult.updated} 条</p>
-                      {updateResult.unchanged > 0 && <p className="text-gray-500">数据无变化 {updateResult.unchanged} 条</p>}
+                      {updateResult.unchanged > 0 && <p className="text-gray-500 dark:text-white/50">数据无变化 {updateResult.unchanged} 条</p>}
                       {updateResult.notFound > 0 && <p className="text-yellow-700">未匹配（跳过）{updateResult.notFound} 条</p>}
-                      {updateResult.skipped > 0 && <p className="text-gray-500">ERN跳过 {updateResult.skipped} 条</p>}
+                      {updateResult.skipped > 0 && <p className="text-gray-500 dark:text-white/50">ERN跳过 {updateResult.skipped} 条</p>}
                     </div>
                     {updateResult.errors?.length > 0 && (
-                      <div className="border border-gray-200 rounded p-2 max-h-60 overflow-y-auto">
-                        <p className="text-sm font-medium text-gray-600 mb-1">详细信息：</p>
+                      <div className="border border-gray-200 dark:border-white/10 rounded p-2 max-h-60 overflow-y-auto">
+                        <p className="text-sm font-medium text-gray-600 dark:text-white/60 mb-1">详细信息：</p>
                         {updateResult.errors.map((e: string, i: number) => (
-                          <p key={i} className="text-xs text-gray-500">{e}</p>
+                          <p key={i} className="text-xs text-gray-500 dark:text-white/50">{e}</p>
                         ))}
                       </div>
                     )}
@@ -695,22 +731,22 @@ export default function ProjectManagement() {
         {/* 下载配置弹窗 */}
         {showDownloadModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg max-w-2xl w-full max-h-[85vh] flex flex-col">
-              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
+            <div className="bg-white dark:bg-neutral-900 rounded-lg max-w-2xl w-full max-h-[85vh] flex flex-col">
+              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-white/10 shrink-0">
                 <h2 className="text-xl font-bold">下载项目数据 - {downloadProjectName}</h2>
                 <div className="flex gap-2">
-                  <button onClick={() => setShowDownloadModal(false)} className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 text-sm">取消</button>
+                  <button onClick={() => setShowDownloadModal(false)} className="btn-secondary px-4 py-2 border border-black rounded-[50px] hover:bg-gray-50 dark:hover:bg-white/[0.04] text-sm">取消</button>
                   <button
                     onClick={executeDownload}
                     disabled={downloading || !Object.values(downloadSheets).some(v => v)}
-                    className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-400 text-sm"
+                    className="btn-primary px-4 py-2 bg-black text-white rounded-[50px] hover:bg-gray-800 disabled:bg-gray-400 text-sm"
                   >{downloading ? '下载中...' : '下载'}</button>
                 </div>
               </div>
               <div className="flex-1 overflow-y-auto px-6 py-4">
                 {DOWNLOAD_SHEETS.map(sheet => (
-                  <div key={sheet.key} className="mb-4 border border-gray-200 rounded-lg overflow-hidden">
-                    <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 border-b border-gray-200">
+                  <div key={sheet.key} className="mb-4 border border-gray-200 dark:border-white/10 rounded-lg overflow-hidden">
+                    <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 border-b border-gray-200 dark:border-white/10">
                       <input
                         type="checkbox"
                         checked={downloadSheets[sheet.key] || false}
@@ -719,15 +755,15 @@ export default function ProjectManagement() {
                       />
                       <span className="font-medium text-sm">{sheet.name}</span>
                       {sheet.cols.length > 0 && downloadSheets[sheet.key] && (
-                        <span className="text-xs text-gray-400 ml-auto">
+                        <span className="text-xs text-gray-400 dark:text-white/40 ml-auto">
                           {downloadCols[sheet.key]?.size || 0} / {sheet.cols.length} 列
                           <button
                             onClick={() => setDownloadCols(prev => ({ ...prev, [sheet.key]: new Set(sheet.cols) }))}
-                            className="ml-2 text-blue-500 hover:text-blue-700"
+                            className="ml-2 text-black/60 dark:text-white/60 hover:text-black dark:hover:text-white"
                           >全选</button>
                           <button
                             onClick={() => setDownloadCols(prev => ({ ...prev, [sheet.key]: new Set() }))}
-                            className="ml-1 text-blue-500 hover:text-blue-700"
+                            className="ml-1 text-black/60 dark:text-white/60 hover:text-black dark:hover:text-white"
                           >清空</button>
                         </span>
                       )}
@@ -735,7 +771,7 @@ export default function ProjectManagement() {
                     {sheet.cols.length > 0 && downloadSheets[sheet.key] && (
                       <div className="px-3 py-2 grid grid-cols-3 gap-1">
                         {sheet.cols.map(col => (
-                          <label key={col} className="flex items-center gap-1 text-xs cursor-pointer hover:bg-gray-50 px-1 py-0.5 rounded">
+                          <label key={col} className="flex items-center gap-1 text-xs cursor-pointer hover:bg-gray-50 dark:hover:bg-white/[0.04] px-1 py-0.5 rounded">
                             <input
                               type="checkbox"
                               checked={downloadCols[sheet.key]?.has(col) || false}
@@ -754,7 +790,7 @@ export default function ProjectManagement() {
                       </div>
                     )}
                     {sheet.cols.length === 0 && downloadSheets[sheet.key] && (
-                      <div className="px-3 py-2 text-xs text-gray-400">导出全部列（不可选择）</div>
+                      <div className="px-3 py-2 text-xs text-gray-400 dark:text-white/40">导出全部列（不可选择）</div>
                     )}
                   </div>
                 ))}
@@ -766,34 +802,34 @@ export default function ProjectManagement() {
         {/* 创建/编辑项目对话框 */}
         {showCreateModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg max-w-lg w-full flex flex-col">
+            <div className="bg-white dark:bg-neutral-900 rounded-lg max-w-lg w-full flex flex-col">
               <form onSubmit={handleSubmit} className="flex flex-col">
-                <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
+                <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-white/10 shrink-0">
                   <h2 className="text-xl font-bold">{editingProject ? '编辑项目' : '创建项目'}</h2>
                   <div className="flex gap-2">
-                    <button type="button" onClick={() => { setShowCreateModal(false); setEditingProject(null); }} className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50 text-sm">取消</button>
-                    <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-sm">
+                    <button type="button" onClick={() => { setShowCreateModal(false); setEditingProject(null); }} className="btn-secondary px-4 py-2 border border-black rounded-[50px] hover:bg-gray-50 dark:hover:bg-white/[0.04] text-sm">取消</button>
+                    <button type="submit" className="btn-primary px-4 py-2 bg-black text-white rounded-[50px] hover:bg-gray-800 text-sm">
                       {editingProject ? '更新' : '创建'}
                     </button>
                   </div>
                 </div>
                 <div className="px-6 py-4">
                   <div className="mb-4">
-                    <label className="block text-sm font-medium text-gray-700 mb-1">项目名称 *</label>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-white/70 mb-1">项目名称 *</label>
                     <input
                       type="text"
                       value={formData.name}
                       onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                      className="w-full border border-gray-300 rounded-md px-3 py-2"
+                      className="w-full border border-gray-300 dark:border-white/20 rounded-md px-3 py-2 dark:bg-neutral-800 dark:text-white"
                       required
                     />
                   </div>
                   <div className="mb-4">
-                    <label className="block text-sm font-medium text-gray-700 mb-1">描述</label>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-white/70 mb-1">描述</label>
                     <textarea
                       value={formData.description}
                       onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                      className="w-full border border-gray-300 rounded-md px-3 py-2"
+                      className="w-full border border-gray-300 dark:border-white/20 rounded-md px-3 py-2 dark:bg-neutral-800 dark:text-white"
                       rows={3}
                     />
                   </div>
@@ -806,12 +842,12 @@ export default function ProjectManagement() {
         {/* 导入数据对话框 */}
         {showImportModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg p-6 max-w-xl w-full max-h-[85vh] overflow-y-auto">
+            <div className="bg-white dark:bg-neutral-900 rounded-lg p-6 max-w-xl w-full max-h-[85vh] overflow-y-auto">
               <h2 className="text-xl font-bold mb-4">
                 {importPhase === 'devices' ? '导入电设备清单' : importPhase === 'connectors' ? '导入设备端元器件清单' : '导入电气接口清单'}
               </h2>
 
-              <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded text-sm text-blue-700">
+              <div className="mb-4 p-3 bg-black/[0.03] dark:bg-white/[0.06] border border-black/10 dark:border-white/10 rounded text-sm text-black/70 dark:text-white/70">
                 {importPhase === 'devices' && (
                   <p>读取 Sheet <strong>「1-电设备清单」</strong>（第1行列名，第2行填写说明，第3行起为数据）。导入后自动校验，不合规的标记为 Draft。</p>
                 )}
@@ -824,7 +860,7 @@ export default function ProjectManagement() {
               </div>
 
               <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className="block text-sm font-medium text-gray-700 dark:text-white/70 mb-1">
                   选择 Excel 文件（.xlsx，可多选）
                 </label>
                 <input
@@ -832,17 +868,17 @@ export default function ProjectManagement() {
                   accept=".xlsx"
                   multiple
                   onChange={(e) => { setImportFiles(Array.from(e.target.files || [])); setImportResults([]); }}
-                  className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
+                  className="w-full border border-gray-300 dark:border-white/20 rounded-md px-3 py-2 text-sm dark:bg-neutral-800 dark:text-white"
                   disabled={importing}
                 />
                 {importFiles.length > 0 && (
-                  <p className="mt-1 text-xs text-gray-500">已选择 {importFiles.length} 个文件</p>
+                  <p className="mt-1 text-xs text-gray-500 dark:text-white/50">已选择 {importFiles.length} 个文件</p>
                 )}
               </div>
 
               {/* 进度提示 */}
               {importing && importProgress && (
-                <p className="mb-3 text-sm text-blue-600">正在处理：{importProgress}</p>
+                <p className="mb-3 text-sm text-black/60 dark:text-white/60">正在处理：{importProgress}</p>
               )}
 
               {/* 导入结果 */}
@@ -862,7 +898,7 @@ export default function ProjectManagement() {
                       }
                     }
                     return (
-                      <div className="mb-3 px-3 py-2 bg-blue-50 border border-blue-200 rounded text-sm font-medium text-blue-800">
+                      <div className="mb-3 px-3 py-2 bg-black/[0.03] dark:bg-white/[0.06] border border-black/10 dark:border-white/10 rounded text-sm font-medium text-black dark:text-white">
                         导入完成：新增 {totalSuccess} 条
                         {totalSkipped > 0 && ` / 跳过 ${totalSkipped} 条`}
                         {totalErrors > 0 && ` / 未导入 ${totalErrors} 条`}
@@ -873,7 +909,7 @@ export default function ProjectManagement() {
                   <div className="space-y-3 max-h-64 overflow-y-auto">
                   {importResults.map((fileResult, fi) => (
                     <div key={fi} className="border rounded p-2">
-                      <p className="text-xs font-semibold text-gray-700 mb-1 truncate" title={fileResult.fileName}>{fileResult.fileName}</p>
+                      <p className="text-xs font-semibold text-gray-700 dark:text-white/70 mb-1 truncate" title={fileResult.fileName}>{fileResult.fileName}</p>
                       {fileResult.error ? (
                         <p className="text-xs text-red-600">{fileResult.error}</p>
                       ) : (
@@ -891,7 +927,7 @@ export default function ProjectManagement() {
                               {errorList.length > 0 && ` / 未导入 ${errorList.length} 条`}
                               {warningList.length > 0 && ` / 校验警告 ${warningList.length} 条`}
                               {skippedList.length > 0 && (
-                                <ul className="mt-0.5 space-y-0.5 max-h-16 overflow-y-auto text-gray-600">
+                                <ul className="mt-0.5 space-y-0.5 max-h-16 overflow-y-auto text-gray-600 dark:text-white/60">
                                   {skippedList.slice(0, 10).map((s: string, idx: number) => <li key={idx}>• {s}</li>)}
                                   {skippedList.length > 10 && <li>... 还有 {skippedList.length - 10} 条</li>}
                                 </ul>
@@ -927,7 +963,7 @@ export default function ProjectManagement() {
               <div className="flex justify-end gap-2">
                 <button
                   onClick={() => { setShowImportModal(null); setImportFiles([]); setImportResults([]); setImportProgress(''); }}
-                  className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50"
+                  className="btn-secondary px-4 py-2 border border-black rounded-[50px] hover:bg-gray-50"
                   disabled={importing}
                 >
                   {importResults.length > 0 && !importing ? '关闭' : '取消'}
@@ -936,7 +972,7 @@ export default function ProjectManagement() {
                   <button
                     onClick={handleImport}
                     disabled={!importFiles.length || importing}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+                    className="btn-primary px-4 py-2 bg-black text-white rounded-[50px] hover:bg-gray-800 disabled:opacity-50"
                   >
                     {importing ? `导入中 (${importResults.length}/${importFiles.length})...` : '开始导入'}
                   </button>
@@ -950,11 +986,11 @@ export default function ProjectManagement() {
       {/* 导入全机设备清单弹窗 */}
       {showImportListModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-[520px] max-h-[80vh] overflow-y-auto shadow-xl">
+          <div className="bg-white dark:bg-neutral-900 rounded-lg p-6 w-[520px] max-h-[80vh] overflow-y-auto border border-gray-200 dark:border-white/10">
             <h2 className="text-lg font-bold mb-3">导入全机设备清单</h2>
             {!importListResult ? (
               <>
-                <p className="text-sm text-gray-500 mb-4">
+                <p className="text-sm text-gray-500 dark:text-white/50 mb-4">
                   请上传 DOORS 导出的 Excel 文件，Sheet 名须为 <strong>00设备编号管理</strong>。<br />
                   读取列：Object Identifier、系统名称、电设备编号、设备编号、LIN号、Object Text、设备布置区域、飞机构型、是否有EICD、是否是用电设备、类型（共 11 列，缺失列填"-"）。<br />
                   若某行与数据库中已有记录的 11 列内容完全相同则跳过。
@@ -962,10 +998,10 @@ export default function ProjectManagement() {
                 <input
                   type="file" accept=".xlsx,.xls"
                   onChange={e => setImportListFile(e.target.files?.[0] || null)}
-                  className="w-full border border-gray-300 rounded px-2 py-1 text-sm mb-4"
+                  className="w-full border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-sm dark:bg-neutral-800 dark:text-white mb-4"
                 />
                 <div className="flex justify-end space-x-2">
-                  <button onClick={() => setShowImportListModal(false)} className="px-4 py-1.5 border rounded text-sm">取消</button>
+                  <button onClick={() => setShowImportListModal(false)} className="btn-secondary px-4 py-1.5 border border-black rounded-[50px] text-sm">取消</button>
                   <button
                     onClick={handleImportList}
                     disabled={!importListFile || importListLoading}
@@ -986,7 +1022,7 @@ export default function ProjectManagement() {
                 <div className="flex justify-end">
                   <button
                     onClick={() => { setShowImportListModal(false); setImportListResult(null); }}
-                    className="px-4 py-1.5 bg-gray-100 rounded text-sm"
+                    className="px-4 py-1.5 bg-gray-100 dark:bg-neutral-800 dark:text-white rounded text-sm"
                   >关闭</button>
                 </div>
               </>
@@ -998,7 +1034,7 @@ export default function ProjectManagement() {
       {/* 查看全机设备清单弹窗 */}
       {showViewListModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 flex flex-col shadow-xl" style={{ width: '98vw', maxWidth: '1800px', maxHeight: '90vh' }}>
+          <div className="bg-white dark:bg-neutral-900 rounded-lg p-6 flex flex-col border border-gray-200 dark:border-white/10" style={{ width: '98vw', maxWidth: '1800px', maxHeight: '90vh' }}>
             <div className="flex justify-between items-center mb-3">
               <h2 className="text-lg font-bold">全机设备清单（{aircraftDevices.length} 条）</h2>
               <div className="flex items-center gap-3">
@@ -1006,7 +1042,7 @@ export default function ProjectManagement() {
                   onClick={() => { setEditingListRow(null); setListRowForm({}); setShowListEditModal(true); }}
                   className="px-3 py-1 bg-green-600 text-white rounded text-sm hover:bg-green-700"
                 >+ 新增</button>
-                <button onClick={() => setShowViewListModal(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
+                <button onClick={() => setShowViewListModal(false)} className="text-gray-400 dark:text-white/40 hover:text-gray-600 dark:hover:text-white/60 text-xl leading-none">✕</button>
               </div>
             </div>
             <div className="flex space-x-2 mb-3">
@@ -1015,7 +1051,7 @@ export default function ProjectManagement() {
                 onChange={e => setListSearch(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && viewListProjectId && openViewList(viewListProjectId, listSearch)}
                 placeholder="搜索设备编号/LIN号/系统名称/Object Identifier..."
-                className="flex-1 border border-gray-300 rounded px-3 py-1.5 text-sm"
+                className="flex-1 border border-gray-300 dark:border-white/20 rounded px-3 py-1.5 text-sm dark:bg-neutral-800 dark:text-white"
               />
               <button
                 onClick={() => viewListProjectId && openViewList(viewListProjectId, listSearch)}
@@ -1024,23 +1060,23 @@ export default function ProjectManagement() {
             </div>
             <div className="overflow-auto flex-1">
               <table className="min-w-full text-xs border-collapse">
-                <thead className="bg-gray-50 sticky top-0">
+                <thead className="bg-gray-50 dark:bg-neutral-800 sticky top-0">
                   <tr>
                     {['Object Identifier','系统名称','电设备编号','设备编号（DOORS）','设备LIN号（DOORS）','Object Text','设备布置区域','飞机构型','是否有EICD','是否是用电设备','类型'].map(h => (
-                      <th key={h} className="px-3 py-2 text-left text-gray-500 border-b whitespace-nowrap font-medium">{h}</th>
+                      <th key={h} className="px-3 py-2 text-left text-gray-500 dark:text-white/50 border-b dark:border-white/10 whitespace-nowrap font-medium">{h}</th>
                     ))}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-100">
+                <tbody className="divide-y divide-gray-100 dark:divide-white/10">
                   {aircraftDevices.length === 0 ? (
-                    <tr><td colSpan={11} className="px-3 py-4 text-center text-gray-400">暂无数据</td></tr>
+                    <tr><td colSpan={11} className="px-3 py-4 text-center text-gray-400 dark:text-white/40">暂无数据</td></tr>
                   ) : (
                     aircraftDevices.map(row => (
-                      <tr key={row.id} className="hover:bg-gray-50">
+                      <tr key={row.id} className="hover:bg-gray-50 dark:bg-neutral-800">
                         <td className="px-3 py-1.5">
                           <button
                             onClick={() => { setEditingListRow(row); setListRowForm({ ...row }); setShowListEditModal(true); }}
-                            className="text-blue-600 hover:text-blue-800 hover:underline text-left"
+                            className="text-black dark:text-white hover:text-black/60 dark:hover:text-white/60 hover:underline text-left"
                           >{row.object_identifier || '-'}</button>
                         </td>
                         <td className="px-3 py-1.5">{row['系统名称'] || '-'}</td>
@@ -1066,7 +1102,7 @@ export default function ProjectManagement() {
       {/* ── 全机设备清单 编辑/新增 弹窗 ── */}
       {showListEditModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60]">
-          <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-[85vh] overflow-y-auto shadow-xl">
+          <div className="bg-white dark:bg-neutral-900 rounded-lg p-6 w-full max-w-2xl max-h-[85vh] overflow-y-auto border border-gray-200 dark:border-white/10">
             <h2 className="text-lg font-bold mb-4">{editingListRow ? '编辑设备清单行' : '新增设备清单行'}</h2>
             <div className="grid grid-cols-2 gap-3">
               {[
@@ -1083,19 +1119,19 @@ export default function ProjectManagement() {
                 { key: '类型', label: '类型' },
               ].map(f => (
                 <div key={f.key}>
-                  <label className="block text-xs text-gray-600 mb-1">{f.label}</label>
+                  <label className="block text-xs text-gray-600 dark:text-white/60 mb-1">{f.label}</label>
                   <input
                     type="text"
                     value={listRowForm[f.key] || ''}
                     onChange={e => setListRowForm({ ...listRowForm, [f.key]: e.target.value })}
-                    className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
+                    className="w-full border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-sm dark:bg-neutral-800 dark:text-white"
                   />
                 </div>
               ))}
             </div>
             <div className="flex justify-end gap-2 mt-4">
-              <button onClick={() => setShowListEditModal(false)} className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 text-sm">取消</button>
-              <button onClick={saveListRow} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm">保存</button>
+              <button onClick={() => setShowListEditModal(false)} className="btn-secondary px-4 py-2 border border-black rounded-[50px] hover:bg-gray-50 dark:hover:bg-white/[0.04] text-sm">取消</button>
+              <button onClick={saveListRow} className="btn-primary px-4 py-2 bg-black text-white rounded-[50px] hover:bg-gray-800 text-sm">保存</button>
             </div>
           </div>
         </div>
@@ -1103,20 +1139,20 @@ export default function ProjectManagement() {
       {/* 构型管理弹窗 */}
       {showConfigModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-lg max-h-[80vh] flex flex-col shadow-xl">
+          <div className="bg-white dark:bg-neutral-900 rounded-lg p-6 w-full max-w-lg max-h-[80vh] flex flex-col border border-gray-200 dark:border-white/10">
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-lg font-bold">构型管理</h2>
-              <button onClick={() => setShowConfigModal(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
+              <button onClick={() => setShowConfigModal(false)} className="text-gray-400 dark:text-white/40 hover:text-gray-600 dark:hover:text-white/60 text-xl leading-none">✕</button>
             </div>
 
             {/* 已有构型列表 */}
             <div className="flex-1 overflow-y-auto mb-4 min-h-0">
               {configLoading ? (
-                <p className="text-sm text-gray-400 text-center py-4">加载中...</p>
+                <p className="text-sm text-gray-400 dark:text-white/40 text-center py-4">加载中...</p>
               ) : configurations.length === 0 ? (
-                <p className="text-sm text-gray-400 text-center py-4">暂无构型，请在下方添加</p>
+                <p className="text-sm text-gray-400 dark:text-white/40 text-center py-4">暂无构型，请在下方添加</p>
               ) : (
-                <ul className="divide-y divide-gray-100">
+                <ul className="divide-y divide-gray-100 dark:divide-white/10">
                   {configurations.map((c, idx) => {
                     const n = idx + 1;
                     const circled = n <= 20
@@ -1146,11 +1182,11 @@ export default function ProjectManagement() {
                                 type="text"
                                 value={editingConfigDesc}
                                 onChange={e => setEditingConfigDesc(e.target.value)}
-                                className="flex-1 border border-gray-300 rounded px-2 py-1 text-sm"
+                                className="flex-1 border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-sm dark:bg-neutral-800 dark:text-white"
                                 placeholder="备注说明（可选）"
                               />
                               <button onClick={handleSaveEditConfig} disabled={!editingConfigName.trim()} className="px-3 py-1 bg-violet-600 text-white rounded text-xs hover:bg-violet-700 disabled:opacity-50">保存</button>
-                              <button onClick={() => setEditingConfigId(null)} className="px-3 py-1 border border-gray-300 rounded text-xs hover:bg-gray-50">取消</button>
+                              <button onClick={() => setEditingConfigId(null)} className="btn-secondary px-3 py-1 border border-black rounded-[50px] text-xs hover:bg-gray-50 dark:bg-neutral-800">取消</button>
                             </div>
                           </div>
                         ) : (
@@ -1158,7 +1194,7 @@ export default function ProjectManagement() {
                             <div>
                               <span className="mr-1.5 text-violet-600 font-medium">{circled}</span>
                               <span className="font-medium text-sm">{c.name}</span>
-                              {c.description && <span className="ml-2 text-xs text-gray-500">{c.description}</span>}
+                              {c.description && <span className="ml-2 text-xs text-gray-500 dark:text-white/50">{c.description}</span>}
                             </div>
                             <div className="flex gap-3 ml-4">
                               <button
@@ -1180,8 +1216,8 @@ export default function ProjectManagement() {
             </div>
 
             {/* 新增构型表单 */}
-            <div className="border-t pt-4">
-              <p className="text-xs font-medium text-gray-600 mb-2">新增构型</p>
+            <div className="border-t dark:border-white/10 pt-4">
+              <p className="text-xs font-medium text-gray-600 dark:text-white/60 mb-2">新增构型</p>
               <div className="flex gap-2 mb-2">
                 <input
                   type="text"
@@ -1189,7 +1225,7 @@ export default function ProjectManagement() {
                   onChange={e => setConfigName(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && handleAddConfig()}
                   placeholder="构型名称（必填）"
-                  className="flex-1 border border-gray-300 rounded px-2 py-1.5 text-sm"
+                  className="flex-1 border border-gray-300 dark:border-white/20 rounded px-2 py-1.5 text-sm dark:bg-neutral-800 dark:text-white"
                 />
               </div>
               <div className="flex gap-2">
@@ -1198,7 +1234,7 @@ export default function ProjectManagement() {
                   value={configDesc}
                   onChange={e => setConfigDesc(e.target.value)}
                   placeholder="备注说明（可选）"
-                  className="flex-1 border border-gray-300 rounded px-2 py-1.5 text-sm"
+                  className="flex-1 border border-gray-300 dark:border-white/20 rounded px-2 py-1.5 text-sm dark:bg-neutral-800 dark:text-white"
                 />
                 <button
                   onClick={handleAddConfig}

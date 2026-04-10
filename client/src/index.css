@@ -2,19 +2,100 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
-  margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+@layer base {
+  body {
+    margin: 0;
+    font-family: 'Inter', 'Noto Sans SC', system-ui, 'Helvetica Neue', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-feature-settings: "kern" 1;
+    letter-spacing: -0.14px;
+    color: #000000;
+    background-color: #ffffff;
+  }
+
+  /* Dark mode base */
+  .dark body,
+  html.dark body {
+    color: #ffffff;
+    background-color: #000000;
+  }
+
+  code {
+    font-family: 'JetBrains Mono', 'SF Mono', Menlo, Monaco, Consolas, monospace;
+  }
+
+  /* Dashed focus indicators — Figma signature */
+  *:focus-visible {
+    outline: 2px dashed #000000;
+    outline-offset: 2px;
+  }
+  .dark *:focus-visible {
+    outline-color: #ffffff;
+  }
+
+  /* Remove default blue focus rings */
+  input:focus, textarea:focus, select:focus, button:focus {
+    outline: none;
+    box-shadow: none;
+  }
+  input:focus-visible, textarea:focus-visible, select:focus-visible {
+    outline: 2px dashed #000000;
+    outline-offset: 1px;
+  }
+  .dark input:focus-visible, .dark textarea:focus-visible, .dark select:focus-visible {
+    outline-color: #ffffff;
+  }
 }
 
-code {
-  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
-    monospace;
+/* Hide scrollbar but keep scrollable */
+.scrollbar-hide::-webkit-scrollbar { display: none; }
+.scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+
+@layer components {
+  /* Primary button — light: black pill, dark: white pill (per DESIGN.md White Pill) */
+  .btn-primary {
+    @apply bg-black text-white px-5 py-2 rounded-pill text-sm font-medium
+           hover:bg-gray-800 transition-colors
+           disabled:bg-gray-400 disabled:cursor-not-allowed
+           dark:bg-white dark:text-black dark:hover:bg-gray-200
+           dark:disabled:bg-gray-600 dark:disabled:text-gray-400;
+  }
+
+  /* Secondary button — light: white + black border, dark: glass light (per DESIGN.md Glass Light) */
+  .btn-secondary {
+    @apply bg-white text-black border border-black px-5 py-2 rounded-pill text-sm font-medium
+           hover:bg-gray-100 transition-colors
+           dark:bg-white/[0.16] dark:text-white dark:border-white/30
+           dark:hover:bg-white/[0.24];
+  }
+
+  /* Ghost button — minimal */
+  .btn-ghost {
+    @apply text-black px-3 py-2 rounded-pill text-sm font-medium
+           hover:bg-gray-100 transition-colors
+           dark:text-white dark:hover:bg-white/[0.08];
+  }
+
+  /* Glass dark button (per DESIGN.md Glass Dark) */
+  .btn-glass-dark {
+    @apply bg-black/[0.08] text-black rounded-full p-2
+           hover:bg-black/[0.15] transition-colors
+           dark:bg-white/[0.16] dark:text-white dark:hover:bg-white/[0.24];
+  }
+
+  /* Mono label — uppercase technical labels */
+  .mono-label {
+    @apply font-mono text-xs uppercase tracking-wide font-normal;
+  }
+
+  /* Input field styling */
+  .input-field {
+    @apply w-full px-3 py-2 border border-gray-300 rounded-lg text-sm
+           focus-visible:outline-dashed focus-visible:outline-2 focus-visible:outline-black
+           focus:border-black transition-colors
+           dark:bg-black dark:border-white/20 dark:text-white
+           dark:focus:border-white dark:focus-visible:outline-white
+           dark:placeholder-white/30;
+  }
 }
-
-
-

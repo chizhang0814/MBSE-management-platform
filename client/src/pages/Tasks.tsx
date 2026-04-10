@@ -195,7 +195,7 @@ export default function Tasks() {
       case 'pending':
         return 'bg-yellow-100 text-yellow-800';
       case 'submitted':
-        return 'bg-blue-100 text-blue-800';
+        return 'bg-black/[0.06] dark:bg-white/[0.1] text-black dark:text-white';
       case 'completed':
         return 'bg-green-100 text-green-800';
       case 'no_change':
@@ -228,7 +228,7 @@ export default function Tasks() {
     return (
       <Layout>
         <div className="flex justify-center items-center h-64">
-          <div className="text-lg text-gray-600">加载中...</div>
+          <div className="text-lg text-gray-600 dark:text-white/60">加载中...</div>
         </div>
       </Layout>
     );
@@ -236,32 +236,32 @@ export default function Tasks() {
 
   return (
     <Layout>
-      <div className="px-4 sm:px-0">
-        <h1 className="text-3xl font-bold text-gray-900 mb-6">任务管理</h1>
+      <div className="px-6 py-4">
+        <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-6">任务管理</h1>
 
-        <div className="bg-white shadow overflow-hidden sm:rounded-md">
+        <div className="bg-white dark:bg-neutral-900 border border-gray-200 dark:border-white/10 overflow-hidden sm:rounded-md">
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
+            <table className="min-w-full divide-y divide-gray-200 dark:divide-white/10">
+              <thead className="bg-gray-50 dark:bg-neutral-800">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">ID</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">物品编码</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">物品名称</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-white/50 uppercase">ID</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-white/50 uppercase">物品编码</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-white/50 uppercase">物品名称</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-white/50 uppercase">
                     指派人
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">状态</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">创建时间</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">操作</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-white/50 uppercase">状态</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-white/50 uppercase">创建时间</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-white/50 uppercase">操作</th>
                 </tr>
               </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
+              <tbody className="bg-white dark:bg-neutral-900 divide-y divide-gray-200 dark:divide-white/10">
                 {tasks.map((task) => (
                   <tr key={task.id}>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{task.id}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{task.item_code}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{task.item_name}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">{task.id}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">{task.item_code}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">{task.item_name}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
                       {user?.role === 'admin' ? task.assigned_to_name : task.assigned_by_name}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
@@ -269,13 +269,13 @@ export default function Tasks() {
                         {getStatusText(task.status)}
                       </span>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-white/50">
                       {new Date(task.created_at).toLocaleString()}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                       <button
                         onClick={() => handleViewDetail(task.id)}
-                        className="text-blue-600 hover:text-blue-900"
+                        className="text-black dark:text-white hover:text-black/60 dark:hover:text-white/60"
                       >
                         查看详情
                       </button>
@@ -290,7 +290,7 @@ export default function Tasks() {
         {/* 任务详情对话框 */}
         {selectedTask && (
           <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50 overflow-y-auto">
-            <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full p-6 my-8">
+            <div className="bg-white dark:bg-neutral-900 rounded-lg shadow-xl max-w-2xl w-full p-6 my-8">
               <div className="flex justify-between items-center mb-4">
                 <h3 className="text-xl font-bold">任务详情</h3>
                 <button
@@ -298,7 +298,7 @@ export default function Tasks() {
                     setSelectedTask(null);
                     setShowReview(false);
                   }}
-                  className="text-gray-500 hover:text-gray-700"
+                  className="text-gray-500 dark:text-white/50 hover:text-gray-700 dark:hover:text-white/70"
                 >
                   ✕
                 </button>
@@ -306,34 +306,34 @@ export default function Tasks() {
 
               <div className="space-y-4">
                 <div>
-                  <p className="text-sm text-gray-500">物品编码</p>
+                  <p className="text-sm text-gray-500 dark:text-white/50">物品编码</p>
                   <p className="font-semibold">{selectedTask.item_code}</p>
                 </div>
                 <div>
-                  <p className="text-sm text-gray-500">物品名称</p>
+                  <p className="text-sm text-gray-500 dark:text-white/50">物品名称</p>
                   <p className="font-semibold">{selectedTask.item_name}</p>
                 </div>
                 <div>
-                  <p className="text-sm text-gray-500">规格</p>
+                  <p className="text-sm text-gray-500 dark:text-white/50">规格</p>
                   <p className="font-semibold">{selectedTask.specification}</p>
                 </div>
                 <div>
-                  <p className="text-sm text-gray-500">单位</p>
+                  <p className="text-sm text-gray-500 dark:text-white/50">单位</p>
                   <p className="font-semibold">{selectedTask.unit}</p>
                 </div>
                 <div>
-                  <p className="text-sm text-gray-500">价格</p>
+                  <p className="text-sm text-gray-500 dark:text-white/50">价格</p>
                   <p className="font-semibold">¥{selectedTask.price}</p>
                 </div>
                 <div>
-                  <p className="text-sm text-gray-500">状态</p>
+                  <p className="text-sm text-gray-500 dark:text-white/50">状态</p>
                   <p className={`inline-block px-2 py-1 rounded text-xs ${getStatusColor(selectedTask.status)}`}>
                     {getStatusText(selectedTask.status)}
                   </p>
                 </div>
                 {selectedTask.notes && (
                   <div>
-                    <p className="text-sm text-gray-500">备注</p>
+                    <p className="text-sm text-gray-500 dark:text-white/50">备注</p>
                     <p className="font-semibold">{selectedTask.notes}</p>
                   </div>
                 )}
@@ -343,7 +343,7 @@ export default function Tasks() {
                 <div className="mt-6">
                   <button
                     onClick={() => setShowReview(!showReview)}
-                    className="w-full bg-blue-500 text-white py-2 rounded-lg hover:bg-blue-600"
+                    className="w-full btn-primary py-2"
                   >
                     {showReview ? '取消审查' : '开始审查'}
                   </button>
@@ -374,72 +374,72 @@ export default function Tasks() {
                   </div>
 
                   {needsChange && (
-                    <div className="space-y-4 bg-gray-50 p-4 rounded">
+                    <div className="space-y-4 bg-gray-50 dark:bg-neutral-800 p-4 rounded">
                       <h5 className="font-semibold mb-2">修改内容：</h5>
                       <div>
-                        <label className="block text-sm text-gray-700 mb-1">物品编码</label>
+                        <label className="block text-sm text-gray-700 dark:text-white/70 mb-1">物品编码</label>
                         <input
                           type="text"
                           value={formData.item_code}
                           onChange={(e) => setFormData({ ...formData, item_code: e.target.value })}
-                          className="w-full border border-gray-300 rounded px-3 py-2"
+                          className="w-full border border-gray-300 dark:border-white/20 rounded px-3 py-2 dark:bg-neutral-800 dark:text-white"
                         />
                       </div>
                       <div>
-                        <label className="block text-sm text-gray-700 mb-1">物品名称</label>
+                        <label className="block text-sm text-gray-700 dark:text-white/70 mb-1">物品名称</label>
                         <input
                           type="text"
                           value={formData.item_name}
                           onChange={(e) => setFormData({ ...formData, item_name: e.target.value })}
-                          className="w-full border border-gray-300 rounded px-3 py-2"
+                          className="w-full border border-gray-300 dark:border-white/20 rounded px-3 py-2 dark:bg-neutral-800 dark:text-white"
                         />
                       </div>
                       <div>
-                        <label className="block text-sm text-gray-700 mb-1">描述</label>
+                        <label className="block text-sm text-gray-700 dark:text-white/70 mb-1">描述</label>
                         <input
                           type="text"
                           value={formData.description}
                           onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                          className="w-full border border-gray-300 rounded px-3 py-2"
+                          className="w-full border border-gray-300 dark:border-white/20 rounded px-3 py-2 dark:bg-neutral-800 dark:text-white"
                         />
                       </div>
                       <div>
-                        <label className="block text-sm text-gray-700 mb-1">规格</label>
+                        <label className="block text-sm text-gray-700 dark:text-white/70 mb-1">规格</label>
                         <input
                           type="text"
                           value={formData.specification}
                           onChange={(e) => setFormData({ ...formData, specification: e.target.value })}
-                          className="w-full border border-gray-300 rounded px-3 py-2"
+                          className="w-full border border-gray-300 dark:border-white/20 rounded px-3 py-2 dark:bg-neutral-800 dark:text-white"
                         />
                       </div>
                       <div>
-                        <label className="block text-sm text-gray-700 mb-1">单位</label>
+                        <label className="block text-sm text-gray-700 dark:text-white/70 mb-1">单位</label>
                         <input
                           type="text"
                           value={formData.unit}
                           onChange={(e) => setFormData({ ...formData, unit: e.target.value })}
-                          className="w-full border border-gray-300 rounded px-3 py-2"
+                          className="w-full border border-gray-300 dark:border-white/20 rounded px-3 py-2 dark:bg-neutral-800 dark:text-white"
                         />
                       </div>
                       <div>
-                        <label className="block text-sm text-gray-700 mb-1">价格</label>
+                        <label className="block text-sm text-gray-700 dark:text-white/70 mb-1">价格</label>
                         <input
                           type="number"
                           step="0.01"
                           value={formData.price}
                           onChange={(e) => setFormData({ ...formData, price: e.target.value })}
-                          className="w-full border border-gray-300 rounded px-3 py-2"
+                          className="w-full border border-gray-300 dark:border-white/20 rounded px-3 py-2 dark:bg-neutral-800 dark:text-white"
                         />
                       </div>
                     </div>
                   )}
 
                   <div className="mt-4">
-                    <label className="block text-sm text-gray-700 mb-2">审查原因/备注</label>
+                    <label className="block text-sm text-gray-700 dark:text-white/70 mb-2">审查原因/备注</label>
                     <textarea
                       value={reason}
                       onChange={(e) => setReason(e.target.value)}
-                      className="w-full border border-gray-300 rounded px-3 py-2"
+                      className="w-full border border-gray-300 dark:border-white/20 rounded px-3 py-2 dark:bg-neutral-800 dark:text-white"
                       rows={3}
                       required
                     />
@@ -448,7 +448,7 @@ export default function Tasks() {
                   <div className="mt-4 flex space-x-3">
                     <button
                       onClick={handleSubmitReview}
-                      className="flex-1 bg-blue-500 text-white py-2 rounded-lg hover:bg-blue-600"
+                      className="flex-1 btn-primary py-2"
                     >
                       提交审查结果
                     </button>
@@ -462,12 +462,12 @@ export default function Tasks() {
                   <h4 className="font-bold mb-4">待确认的修改</h4>
                   {changeLogs.map((log: ChangeLog) => (
                     <div key={log.id} className="bg-yellow-50 border border-yellow-200 rounded p-4 mb-4">
-                      <p className="text-sm text-gray-600 mb-2">修改原因：{log.reason}</p>
+                      <p className="text-sm text-gray-600 dark:text-white/60 mb-2">修改原因：{log.reason}</p>
                       <div className="grid grid-cols-2 gap-4 text-sm">
                         <div>
-                          <p className="font-semibold text-gray-700 mb-1">原值</p>
+                          <p className="font-semibold text-gray-700 dark:text-white/70 mb-1">原值</p>
                           {log.old_values && Object.entries(JSON.parse(log.old_values)).map(([key, value]: [string, any]) => (
-                            <p key={key} className="text-gray-600">
+                            <p key={key} className="text-gray-600 dark:text-white/60">
                               {key}: {value}
                             </p>
                           ))}
@@ -475,7 +475,7 @@ export default function Tasks() {
                         <div>
                           <p className="font-semibold text-green-700 mb-1">新值</p>
                           {log.new_values && Object.entries(JSON.parse(log.new_values)).map(([key, value]: [string, any]) => (
-                            <p key={key} className="text-gray-600">
+                            <p key={key} className="text-gray-600 dark:text-white/60">
                               {key}: {value}
                             </p>
                           ))}
