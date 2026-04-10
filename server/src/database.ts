@@ -1367,6 +1367,56 @@ export class Database {
       }
     } catch (e: any) { console.log('Migration: rename connection types:', e.message); }
 
+    // ── 针孔屏蔽类型归一化 ──
+    try {
+      const pinUpdates: [string, string | null][] = [
+        ['非屏蔽', '无屏蔽'],
+        ['单芯非屏蔽', '无屏蔽'],
+        ['双层屏蔽', '360°屏蔽'],
+      ];
+      let pinChanged = 0;
+      for (const [from, to] of pinUpdates) {
+        const r = await this.run(`UPDATE pins SET "屏蔽类型" = ? WHERE "屏蔽类型" = ?`, [to, from]);
+        pinChanged += r.changes;
+      }
+      // 360°屏蔽（长文本）→ 360°屏蔽
+      const r1 = await this.run(`UPDATE pins SET "屏蔽类型" = '360°屏蔽' WHERE "屏蔽类型" LIKE '360°屏蔽（%'`);
+      pinChanged += r1.changes;
+      // "1" → NULL
+      const r2 = await this.run(`UPDATE pins SET "屏蔽类型" = NULL WHERE "屏蔽类型" = '1'`);
+      pinChanged += r2.changes;
+      if (pinChanged > 0) console.log(`Database migration: 针孔屏蔽类型归一化 ${pinChanged} 条`);
+    } catch (e: any) { console.log('Migration: pin shield type:', e.message); }
+
+    // ── 推荐导线线型归一化 ──
+    try {
+      const sigUpdates: [string, string | null][] = [
+        ['三芯屏蔽线', '三绞屏蔽线'],
+        ['2TWSH双扭绞屏蔽线', '双绞屏蔽线'],
+        ['双芯屏蔽线', '双绞屏蔽线'],
+        ['双铰屏蔽线', '双绞屏蔽线'],
+        ['双扭绞屏蔽线', '双绞屏蔽线'],
+        ['双绞屏蔽', '双绞屏蔽线'],
+        ['三铰屏蔽线', '三绞屏蔽线'],
+        ['三绞屏蔽', '三绞屏蔽线'],
+        ['单芯线', '单芯非屏蔽线'],
+        ['非屏蔽单芯线', '单芯非屏蔽线'],
+        ['单芯无屏蔽线', '单芯非屏蔽线'],
+      ];
+      let sigChanged = 0;
+      for (const [from, to] of sigUpdates) {
+        const r = await this.run(`UPDATE signals SET "推荐导线线型" = ? WHERE "推荐导线线型" = ?`, [to, from]);
+        sigChanged += r.changes;
+      }
+      // 置空的
+      const nullUpdates = ['其他（CEC-RWC-18664的4芯差分线缆）', 'SW单线', '四芯屏蔽线'];
+      for (const v of nullUpdates) {
+        const r = await this.run(`UPDATE signals SET "推荐导线线型" = NULL WHERE "推荐导线线型" = ?`, [v]);
+        sigChanged += r.changes;
+      }
+      if (sigChanged > 0) console.log(`Database migration: 推荐导线线型归一化 ${sigChanged} 条`);
+    } catch (e: any) { console.log('Migration: wire type:', e.message); }
+
     // 初始化默认用户（不再创建示例数据）
     await this.initDefaultData();
   }
