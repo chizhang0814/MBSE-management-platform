@@ -114,26 +114,74 @@ export function signalRoutes(db: Database) {
 
   // ── 辅助：根据连接类型生成 unique_id ──────────────────────
 
-  async function generateUniqueId(db: Database, projectId: number, connectionType: string): Promise<string> {
-    let prefix = '';
-    if (connectionType === '1to1信号' || connectionType === '1to1') prefix = 'DATA_';
-    else if (connectionType === '网络') prefix = 'NET_';
-    else if (connectionType === 'ERN' || connectionType === '接地') prefix = 'ERN_';
-    else return `SIG_${Date.now()}`;
+  /**
+   * 提取设备 ATA 前 2 位数字，异常时返回 '00'
+   */
+  function extractATA2(ata: string | null | undefined): string {
+    if (!ata) return '00';
+    const m = ata.match(/^(\d{2})/);
+    return m ? m[1] : '00';
+  }
 
+  /**
+   * 查项目内某个 ATA 前 2 位的最大 4 位序号
+   * 扫描所有 unique_id 中出现的 N{ata2}{4位} 和 -{ata2}{4位} 模式
+   */
+  async function getMaxSeqForATA(db: Database, projectId: number, ata2: string): Promise<number> {
     const rows = await db.query(
-      `SELECT unique_id FROM signals WHERE project_id = ? AND unique_id LIKE ? AND unique_id IS NOT NULL`,
-      [projectId, `${prefix}%`]
+      `SELECT unique_id FROM signals WHERE project_id = ? AND unique_id IS NOT NULL`,
+      [projectId]
     );
-    let maxNum = 0;
+    let max = 0;
+    const pattern1 = new RegExp(`N${ata2}(\\d{4})`, 'g');  // N{ata2}{4位}
+    const pattern2 = new RegExp(`-${ata2}(\\d{4})`, 'g');   // -{ata2}{4位}
     for (const r of rows) {
-      const match = r.unique_id?.match(new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\d+)$`));
-      if (match) {
-        const n = parseInt(match[1], 10);
-        if (n > maxNum) maxNum = n;
-      }
+      const uid = r.unique_id || '';
+      let m;
+      while ((m = pattern1.exec(uid)) !== null) { const n = parseInt(m[1]); if (n > max) max = n; }
+      pattern1.lastIndex = 0;
+      while ((m = pattern2.exec(uid)) !== null) { const n = parseInt(m[1]); if (n > max) max = n; }
+      pattern2.lastIndex = 0;
     }
-    return `${prefix}${String(maxNum + 1).padStart(5, '0')}`;
+    return max;
+  }
+
+  /**
+   * 根据端点设备 ATA 自动生成信号 Unique ID
+   * 格式: N{ATA_A前2位}{4位序号_A}-{ATA_B前2位}{4位序号_B}[-子编号]
+   */
+  async function generateSignalUniqueId(
+    db: Database, projectId: number,
+    resolvedEndpoints: Array<{ deviceId: number }>,
+    suffix?: string  // 子编号如 '-1', '-2'
+  ): Promise<string> {
+    // 取前两个端点的设备 ATA
+    let ata_a = '00', ata_b = '00';
+    const epATAs: Array<{ ata: string; isERN: boolean }> = [];
+    for (const ep of resolvedEndpoints.slice(0, 2)) {
+      const dev = await db.get(
+        `SELECT "设备部件所属系统（4位ATA）" as ata, "设备LIN号（DOORS）" as lin FROM devices WHERE id = ?`,
+        [ep.deviceId]
+      );
+      epATAs.push({
+        ata: extractATA2(dev?.ata),
+        isERN: (dev?.lin || '') === SPECIAL_ERN_LIN,
+      });
+    }
+
+    if (epATAs.length >= 2) {
+      ata_a = epATAs[0].isERN ? epATAs[1].ata : epATAs[0].ata;
+      ata_b = epATAs[1].isERN ? epATAs[0].ata : epATAs[1].ata;
+    } else if (epATAs.length === 1) {
+      ata_a = epATAs[0].isERN ? '00' : epATAs[0].ata;
+      ata_b = ata_a;
+    }
+
+    const seqA = await getMaxSeqForATA(db, projectId, ata_a) + 1;
+    const seqB = await getMaxSeqForATA(db, projectId, ata_b) + 1;
+
+    const uid = `N${ata_a}${String(seqA).padStart(4, '0')}-${ata_b}${String(seqB).padStart(4, '0')}`;
+    return suffix ? uid + suffix : uid;
   }
 
   // ── 构建端点摘要 ──────────────────────────────────────────
@@ -684,8 +732,12 @@ export function signalRoutes(db: Database) {
       }
 
       // ── 无重叠，正常新建 ────────────────────────────────
-      if (!signalFields.unique_id) {
-        return res.status(400).json({ error: 'Unique ID 不能为空' });
+      // 非 admin 自动生成 Unique ID（保存时生成，防并发）
+      if (role !== 'admin' || !signalFields.unique_id?.trim()) {
+        signalFields.unique_id = await generateSignalUniqueId(
+          db, project_id,
+          resolved.map(r => ({ deviceId: r.deviceId }))
+        );
       }
       const dupSignal = await db.get(
         'SELECT id FROM signals WHERE project_id = ? AND unique_id = ?',
@@ -808,6 +860,8 @@ export function signalRoutes(db: Database) {
       const { endpoints, version, submit: shouldSubmit, forceDraft, draft: _draft, ...fields } = req.body;
       delete fields.id; delete fields.project_id; delete fields.created_at; delete fields.status;
       delete fields.pending_item_type; delete fields['导线等级']; delete fields.edges; delete fields.signal_group; delete fields.approval_request_id;
+      // 非 admin 不允许修改 unique_id
+      if (role !== 'admin') delete fields.unique_id;
       if (!PROTOCOL_CONNECTION_TYPES.has(fields['连接类型'])) {
         fields['协议标识'] = null;
       }

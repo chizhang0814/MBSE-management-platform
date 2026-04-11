@@ -1437,10 +1437,10 @@ export default function ProjectDataView() {
     const sf = signalForm as any;
     // 草稿允许跳过必填校验
     if (!isDraft) {
-      if (!editingSignal && !sf.unique_id?.trim()) { alert('Unique ID 不能为空'); return; }
+      if (isAdmin && !editingSignal && !sf.unique_id?.trim()) { alert('Unique ID 不能为空'); return; }
       if (!sf['是否成品线']) { alert('是否成品线不能为空'); return; }
     } else {
-      if (!sf.unique_id?.trim()) { alert('草稿也需要填写 Unique ID'); return; }
+      if (isAdmin && !sf.unique_id?.trim()) { alert('草稿也需要填写 Unique ID'); return; }
     }
     // 电磁兼容代码 X 必须搭配 ESS 敷设代码
     if (sf['电磁兼容代码'] === 'X' && sf['敷设代码'] !== 'ESS') {
@@ -5187,13 +5187,25 @@ export default function ProjectDataView() {
               <div className="grid grid-cols-2 gap-3 mb-4">
                 {/* Unique ID */}
                 <div>
-                  <label className="block text-xs text-gray-600 dark:text-white/60 mb-1">Unique ID <span className="text-red-500">*</span></label>
-                  <input
-                    type="text"
-                    value={(signalForm as any).unique_id || ''}
-                    onChange={e => setSignalForm({ ...signalForm, unique_id: e.target.value })}
-                    className="w-full border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-sm"
-                  />
+                  <label className="block text-xs text-gray-600 dark:text-white/60 mb-1">
+                    Unique ID {isAdmin && <span className="text-red-500">*</span>}
+                    {!isAdmin && <span className="text-gray-400 dark:text-white/30 text-xs ml-1">（保存时自动生成）</span>}
+                  </label>
+                  {isAdmin ? (
+                    <input
+                      type="text"
+                      value={(signalForm as any).unique_id || ''}
+                      onChange={e => setSignalForm({ ...signalForm, unique_id: e.target.value })}
+                      className="w-full border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-sm"
+                    />
+                  ) : (
+                    <input
+                      type="text"
+                      value={editingSignal ? ((signalForm as any).unique_id || '') : '（保存时自动生成）'}
+                      readOnly
+                      className="w-full border border-gray-200 dark:border-white/10 rounded px-2 py-1 text-sm bg-gray-50 dark:bg-white/5 text-gray-500 dark:text-white/40 cursor-not-allowed"
+                    />
+                  )}
                 </div>
                 {/* 其余字段 */}
                 {(() => {

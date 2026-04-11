@@ -268,7 +268,9 @@ export function approvalRoutes(db: Database) {
           const restoreStatus = approvalReq.entity_type === 'signal' ? 'Active' : 'normal';
           await db.run(`UPDATE ${entityTable} SET status = ? WHERE id = ?`, [restoreStatus, approvalReq.entity_id]);
         } else {
-          await db.run(`UPDATE ${entityTable} SET status = 'Draft' WHERE id = ?`, [approvalReq.entity_id]);
+          // 编辑操作被拒绝：恢复到提交前的原始状态
+          const originalStatus = (() => { try { return JSON.parse(approvalReq.old_payload)?.status || 'Draft'; } catch { return 'Draft'; } })();
+          await db.run(`UPDATE ${entityTable} SET status = ? WHERE id = ?`, [originalStatus, approvalReq.entity_id]);
         }
       }
 
