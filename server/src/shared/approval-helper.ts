@@ -96,17 +96,23 @@ export async function isPinFrozen(db: Database, pinId: number): Promise<string |
   );
   if (pinReq) return `该针孔正在${pinReq.action_type === 'edit_pin' ? '修改' : '删除'}审批中，不可操作`;
 
-  // 4. 检查 pin 是否属于正在审批中的信号的端点
-  const sigReq = await db.get(
-    `SELECT ar.action_type, s.unique_id FROM approval_requests ar
-     JOIN signals s ON ar.entity_id = s.id
-     JOIN signal_endpoints se ON se.signal_id = s.id
-     WHERE se.pin_id = ? AND ar.entity_type = 'signal' AND ar.status = 'pending'
-     AND ar.action_type IN ('create_signal', 'edit_signal', 'delete_signal')
-     LIMIT 1`,
+  // 4. 检查 pin 是否属于正在审批中的信号的端点（ERN 设备的 pin 跳过此检查，因为 ERN 是共享设备）
+  const pinDevice = await db.get(
+    `SELECT d."设备LIN号（DOORS）" as lin FROM pins p JOIN connectors c ON p.connector_id = c.id JOIN devices d ON c.device_id = d.id WHERE p.id = ?`,
     [pinId]
   );
-  if (sigReq) return `关联信号 ${sigReq.unique_id || ''} 正在审批中，不可操作`;
+  if (pinDevice?.lin !== SPECIAL_ERN_LIN) {
+    const sigReq = await db.get(
+      `SELECT ar.action_type, s.unique_id FROM approval_requests ar
+       JOIN signals s ON ar.entity_id = s.id
+       JOIN signal_endpoints se ON se.signal_id = s.id
+       WHERE se.pin_id = ? AND ar.entity_type = 'signal' AND ar.status = 'pending'
+       AND ar.action_type IN ('create_signal', 'edit_signal', 'delete_signal')
+       LIMIT 1`,
+      [pinId]
+    );
+    if (sigReq) return `关联信号 ${sigReq.unique_id || ''} 正在审批中，不可操作`;
+  }
 
   return null;
 }
