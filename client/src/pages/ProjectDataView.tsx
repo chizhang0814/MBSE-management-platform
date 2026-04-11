@@ -3154,7 +3154,7 @@ export default function ProjectDataView() {
                 <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50 w-8">#</th>
                 {sgCheckMode && <th className="px-1 py-2 text-center text-xs text-gray-500 dark:text-white/50 w-8"></th>}
                 {!sgCheckMode && filterMode === 'my_tasks' && <th className="px-1 py-2 text-center text-xs text-gray-500 dark:text-white/50 w-8"></th>}
-                <th className="py-2 text-xs text-gray-500 dark:text-white/50 w-5">组</th>
+                <th className="py-2 text-xs text-gray-500 dark:text-white/50 w-6">组</th>
                 <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50 w-8"></th>
                 <th className="px-4 py-2 text-left text-xs text-gray-500 dark:text-white/50 max-w-[120px]">Unique ID</th>
                 <th className="px-4 py-2 text-left text-xs text-gray-500 dark:text-white/50 w-[200px]">状态</th>
@@ -3170,34 +3170,24 @@ export default function ProjectDataView() {
                 <th className="px-4 py-2 text-left text-xs text-gray-500 dark:text-white/50 w-[130px]">操作</th>
               </tr>
               <tr className="bg-white dark:bg-neutral-900 border-b">
-                <th className="px-2 py-1"></th>
-                {sgCheckMode && <th className="px-1 py-1"></th>}
-                {!sgCheckMode && filterMode === 'my_tasks' && <th className="px-1 py-1 w-8"></th>}
-                <th className="p-0 w-5">
+                <th className="px-1 py-1"></th>
+                <th className="p-0 w-6">
                   <select
                     value={sgGroupFilter}
                     onChange={e => setSgGroupFilter(e.target.value)}
-                    className="w-full text-xs border border-gray-300 dark:border-white/20 rounded py-0.5 px-0 focus:outline-none focus:border-black bg-white dark:bg-black text-black dark:text-white"
-                    title="按分组类型筛选"
+                    className="w-full text-xs border border-gray-300 dark:border-white/20 rounded py-0.5 px-0 focus:outline-none"
+                    title="按分组筛选"
                   >
-                    <option value="" className="bg-white dark:bg-neutral-900 text-black dark:text-white">全部</option>
-                    <option value="_grouped" className="bg-white dark:bg-neutral-900 text-black dark:text-white">已分组</option>
-                    <option value="_ungrouped" className="bg-white dark:bg-neutral-900 text-black dark:text-white">未分组</option>
-                    {([
-                      { type: 'ARINC 429', prefix: 'A_429_', bg: 'rgba(224,231,255,0.7)', text: '#4f46e5' },
-                      { type: 'CAN Bus', prefix: 'CAN_Bus_', bg: 'rgba(254,243,199,0.7)', text: '#b45309' },
-                      { type: '电源（低压）', prefix: 'PWR_LV_', bg: 'rgba(254,226,226,0.7)', text: '#dc2626' },
-                      { type: '电源（高压）', prefix: 'PWR_HV_', bg: 'rgba(254,202,202,0.7)', text: '#991b1b' },
-                      { type: 'RS-422', prefix: 'RS422_', bg: 'rgba(245,243,255,0.7)', text: '#6d28d9' },
-                      { type: 'RS-422（全双工）', prefix: 'RS422_F_', bg: 'rgba(237,233,254,0.7)', text: '#7c3aed' },
-                      { type: 'RS-485', prefix: 'RS485_', bg: 'rgba(204,251,241,0.7)', text: '#0f766e' },
-                      { type: '以太网（百兆）', prefix: 'ETH100_', bg: 'rgba(220,252,231,0.7)', text: '#15803d' },
-                      { type: '以太网（千兆）', prefix: 'ETH1000_', bg: 'rgba(224,242,254,0.7)', text: '#0369a1' },
-                    ]).map(({ type, prefix, bg, text }) =>
-                      <option key={type} value={prefix} style={{ backgroundColor: bg, color: text }}>{type}</option>
+                    <option value="">全部</option>
+                    <option value="_grouped">已分组</option>
+                    <option value="_ungrouped">未分组</option>
+                    {(['A_429_','CAN_Bus_','PWR_LV_','PWR_HV_','RS422_','RS422_F_','RS485_','ETH100_','ETH1000_'] as const).map(p =>
+                      <option key={p} value={p}>{p.replace(/_$/, '')}</option>
                     )}
                   </select>
                 </th>
+                {sgCheckMode && <th className="px-1 py-1"></th>}
+                {!sgCheckMode && filterMode === 'my_tasks' && <th className="px-1 py-1 w-8"></th>}
                 <th className="px-2 py-1"></th>
                 {/* Unique ID */}
                 <th className="px-4 py-1 max-w-[120px]">
@@ -3299,12 +3289,16 @@ export default function ProjectDataView() {
                     {groupInfo?.pos === 'first' && displayIndex > 0 && (
                       <tr><td colSpan={99} className="h-2 bg-transparent p-0 border-none" /></tr>
                     )}
+                    {/* 分组视觉：左边框色条 + 序号列组名 */}
                     <tr
                       className={`hover:bg-gray-50 dark:hover:bg-white/[0.04] ${
                         hasTodo(signal) || signalDetails[signal.id]?.endpoints?.some(ep => hasTodo(ep))
                           ? 'bg-orange-100'
-                          : isExpanded ? 'bg-green-50' : ''
-                      } cursor-pointer${groupInfo && groupInfo.pos !== 'last' && groupInfo.pos !== 'solo' ? ' !border-b-0' : ''}`}
+                          : isExpanded ? 'bg-green-50 dark:bg-white/[0.06]' : ''
+                      } cursor-pointer`}
+                      style={groupInfo ? {
+                        borderLeft: `3px solid ${(() => { const gn = (signal as any).signal_group || ''; const gp = Object.keys({'A_429_':'#818cf8','CAN_Bus_':'#f59e0b','PWR_LV_':'#ef4444','PWR_HV_':'#dc2626','RS422_F_':'#8b5cf6','RS422_':'#a78bfa','RS485_':'#14b8a6','ETH100_':'#22c55e','ETH1000_':'#0ea5e9'}).find(p => gn.startsWith(p)); return gp ? ({'A_429_':'#818cf8','CAN_Bus_':'#f59e0b','PWR_LV_':'#ef4444','PWR_HV_':'#dc2626','RS422_F_':'#8b5cf6','RS422_':'#a78bfa','RS485_':'#14b8a6','ETH100_':'#22c55e','ETH1000_':'#0ea5e9'} as any)[gp] : '#818cf8'; })()}`,
+                      } : undefined}
                       onDoubleClick={async () => {
                         if (!isExpanded) {
                           setExpandedSignalId(signal.id);
@@ -3314,38 +3308,14 @@ export default function ProjectDataView() {
                         else { setExpandedSignalId(null); }
                       }}
                     >
-                      <td className="text-center text-xs p-0 relative">
+                      <td className="px-2 py-2 text-center text-xs">
                         {groupInfo ? (() => {
-                          const GROUP_COLORS: Record<string, { border: string; text: string; bg: string }> = {
-                            'A_429_':   { border: '#818cf8', text: '#4f46e5', bg: 'rgba(224,231,255,0.45)' },   // indigo
-                            'CAN_Bus_': { border: '#f59e0b', text: '#b45309', bg: 'rgba(254,243,199,0.45)' },   // amber
-                            'PWR_LV_':  { border: '#ef4444', text: '#dc2626', bg: 'rgba(254,226,226,0.45)' },   // red
-                            'PWR_HV_':  { border: '#dc2626', text: '#991b1b', bg: 'rgba(254,202,202,0.45)' },   // red-dark
-                            'RS422_F_': { border: '#8b5cf6', text: '#7c3aed', bg: 'rgba(237,233,254,0.45)' },   // violet
-                            'RS422_':   { border: '#a78bfa', text: '#6d28d9', bg: 'rgba(245,243,255,0.45)' },   // violet-light
-                            'RS485_':   { border: '#14b8a6', text: '#0f766e', bg: 'rgba(204,251,241,0.45)' },   // teal
-                            'ETH100_':  { border: '#22c55e', text: '#15803d', bg: 'rgba(220,252,231,0.45)' },   // green
-                            'ETH1000_': { border: '#0ea5e9', text: '#0369a1', bg: 'rgba(224,242,254,0.45)' },   // sky
-                          };
-                          const gName = (signal as any).signal_group || '';
-                          const prefix = Object.keys(GROUP_COLORS).find(p => gName.startsWith(p));
-                          const colors = prefix ? GROUP_COLORS[prefix] : { border: '#818cf8', text: '#4f46e5', bg: 'rgba(224,231,255,0.45)' };
-                          return (
-                          <>
-                            <span className="block py-2 font-medium relative z-0" style={{ color: colors.text }}>{displayIndex + 1}</span>
-                            <div
-                              className={`absolute inset-0 pointer-events-none z-10 border-solid ${
-                                groupInfo.pos === 'solo' ? 'border-2 rounded-md m-0.5' :
-                                groupInfo.pos === 'first' ? 'border-l-2 border-r-2 border-t-2 rounded-t-md mx-0.5 mt-0.5' :
-                                groupInfo.pos === 'last' ? 'border-l-2 border-r-2 border-b-2 rounded-b-md mx-0.5 mb-0.5' :
-                                'border-l-2 border-r-2 mx-0.5'
-                              }`}
-                              style={{ borderColor: colors.border, backgroundColor: colors.bg }}
-                            />
-                          </>
-                          );
+                          const gn = (signal as any).signal_group || '';
+                          const gp = Object.keys({'A_429_':'#4f46e5','CAN_Bus_':'#b45309','PWR_LV_':'#dc2626','PWR_HV_':'#991b1b','RS422_F_':'#7c3aed','RS422_':'#6d28d9','RS485_':'#0f766e','ETH100_':'#15803d','ETH1000_':'#0369a1'}).find(p => gn.startsWith(p));
+                          const textColor = gp ? ({'A_429_':'#4f46e5','CAN_Bus_':'#b45309','PWR_LV_':'#dc2626','PWR_HV_':'#991b1b','RS422_F_':'#7c3aed','RS422_':'#6d28d9','RS485_':'#0f766e','ETH100_':'#15803d','ETH1000_':'#0369a1'} as any)[gp] : '#4f46e5';
+                          return <span className="font-medium" style={{ color: textColor }}>{displayIndex + 1}</span>;
                         })() : (
-                          <span className="text-gray-400 dark:text-white/40 block py-2">{displayIndex + 1}</span>
+                          <span className="text-gray-400 dark:text-white/40">{displayIndex + 1}</span>
                         )}
                       </td>
                       {sgCheckMode && (
@@ -3381,41 +3351,30 @@ export default function ProjectDataView() {
                           )}
                         </td>
                       )}
-                      {/* 组名跨行竖排显示 */}
-                      {groupInfo?.pos === 'first' && (() => {
-                        const gName = (signal as any).signal_group || '';
-                        const prefix = Object.keys({
-                          'A_429_': '#4f46e5', 'CAN_Bus_': '#b45309', 'PWR_LV_': '#dc2626', 'PWR_HV_': '#991b1b',
-                          'RS422_F_': '#7c3aed', 'RS422_': '#6d28d9', 'RS485_': '#0f766e', 'ETH100_': '#15803d', 'ETH1000_': '#0369a1',
-                        }).find(p => gName.startsWith(p));
-                        const color = prefix ? ({
-                          'A_429_': '#4f46e5', 'CAN_Bus_': '#b45309', 'PWR_LV_': '#dc2626', 'PWR_HV_': '#991b1b',
-                          'RS422_F_': '#7c3aed', 'RS422_': '#6d28d9', 'RS485_': '#0f766e', 'ETH100_': '#15803d', 'ETH1000_': '#0369a1',
-                        } as any)[prefix] : '#4f46e5';
-                        return (
-                          <td rowSpan={groupInfo.groupSize} className="p-0 w-5 relative">
+                      {/* 组名独立列 */}
+                      <td className="p-0 text-center w-6">
+                        {groupInfo?.pos === 'first' && (() => {
+                          const gn = (signal as any).signal_group || '';
+                          const gp = Object.keys({'A_429_':'#4f46e5','CAN_Bus_':'#b45309','PWR_LV_':'#dc2626','PWR_HV_':'#991b1b','RS422_F_':'#7c3aed','RS422_':'#6d28d9','RS485_':'#0f766e','ETH100_':'#15803d','ETH1000_':'#0369a1'}).find(p => gn.startsWith(p));
+                          const textColor = gp ? ({'A_429_':'#4f46e5','CAN_Bus_':'#b45309','PWR_LV_':'#dc2626','PWR_HV_':'#991b1b','RS422_F_':'#7c3aed','RS422_':'#6d28d9','RS485_':'#0f766e','ETH100_':'#15803d','ETH1000_':'#0369a1'} as any)[gp] : '#4f46e5';
+                          return (
                             <button
-                              className="absolute inset-0 flex items-center justify-center cursor-pointer hover:opacity-80"
-                              style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
+                              className="font-mono whitespace-nowrap hover:opacity-70"
+                              style={{ color: textColor, fontSize: '9px', writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
                               title="点击解散该信号组"
                               onClick={async (e) => {
                                 e.stopPropagation();
-                                if (!confirm(`确定解散信号组「${gName}」吗？`)) return;
+                                if (!confirm(`确定解散信号组「${gn}」吗？`)) return;
                                 try {
-                                  const res = await fetch(`/api/signals/group/${encodeURIComponent(gName)}?project_id=${selectedProjectId}`, {
-                                    method: 'DELETE', headers: API_HEADERS(),
-                                  });
+                                  const res = await fetch(`/api/signals/group/${encodeURIComponent(gn)}?project_id=${selectedProjectId}`, { method: 'DELETE', headers: API_HEADERS() });
                                   if (res.ok) { loadSignals(); }
                                   else { alert((await res.json()).error || '解散失败'); }
                                 } catch { alert('操作失败'); }
                               }}
-                            >
-                              <span className="font-mono text-xs font-medium whitespace-nowrap" style={{ color, fontSize: '10px' }}>{gName}</span>
-                            </button>
-                          </td>
-                        );
-                      })()}
-                      {!groupInfo && <td className="w-0 p-0" />}
+                            >{gn}</button>
+                          );
+                        })()}
+                      </td>
                       <td className="px-2 py-2 text-center">
                         <button
                           onClick={async () => {
@@ -3481,8 +3440,10 @@ export default function ProjectDataView() {
                       const completionItems = items.filter((i: any) => i.item_type === 'completion');
                       const approvalItems = items.filter((i: any) => i.item_type === 'approval');
                       return (
-                        <tr key={`${signal.id}-approval`}>
-                          <td colSpan={11} className="px-0 py-0 bg-yellow-50 border-b border-yellow-200">
+                        <tr key={`${signal.id}-approval`}
+                          style={groupInfo ? { borderLeft: `3px solid ${(() => { const gn = (signal as any).signal_group || ''; const gp = Object.keys({'A_429_':'#818cf8','CAN_Bus_':'#f59e0b','PWR_LV_':'#ef4444','PWR_HV_':'#dc2626','RS422_F_':'#8b5cf6','RS422_':'#a78bfa','RS485_':'#14b8a6','ETH100_':'#22c55e','ETH1000_':'#0ea5e9'}).find(p => gn.startsWith(p)); return gp ? ({'A_429_':'#818cf8','CAN_Bus_':'#f59e0b','PWR_LV_':'#ef4444','PWR_HV_':'#dc2626','RS422_F_':'#8b5cf6','RS422_':'#a78bfa','RS485_':'#14b8a6','ETH100_':'#22c55e','ETH1000_':'#0ea5e9'} as any)[gp] : '#818cf8'; })()}` } : undefined}
+                        >
+                          <td colSpan={11} className="px-0 py-0 bg-yellow-50 dark:bg-yellow-900/20 border-b border-yellow-200 dark:border-yellow-800">
                             <div className="pl-8 pr-4 py-3">
                               {request.project_name && <div className="text-xs text-black dark:text-white font-medium mb-1">项目：{request.project_name}</div>}
                               <div className="text-xs font-semibold text-gray-600 dark:text-white/60 mb-2">审批进度（{request.action_type}）</div>
@@ -3529,8 +3490,10 @@ export default function ProjectDataView() {
                     })()}
 
                     {isExpanded && detail && (
-                      <tr key={`${signal.id}-detail`}>
-                        <td colSpan={11} className="px-0 py-0 bg-green-50">
+                      <tr key={`${signal.id}-detail`}
+                        style={groupInfo ? { borderLeft: `3px solid ${(() => { const gn = (signal as any).signal_group || ''; const gp = Object.keys({'A_429_':'#818cf8','CAN_Bus_':'#f59e0b','PWR_LV_':'#ef4444','PWR_HV_':'#dc2626','RS422_F_':'#8b5cf6','RS422_':'#a78bfa','RS485_':'#14b8a6','ETH100_':'#22c55e','ETH1000_':'#0ea5e9'}).find(p => gn.startsWith(p)); return gp ? ({'A_429_':'#818cf8','CAN_Bus_':'#f59e0b','PWR_LV_':'#ef4444','PWR_HV_':'#dc2626','RS422_F_':'#8b5cf6','RS422_':'#a78bfa','RS485_':'#14b8a6','ETH100_':'#22c55e','ETH1000_':'#0ea5e9'} as any)[gp] : '#818cf8'; })()}` } : undefined}
+                      >
+                        <td colSpan={11} className="px-0 py-0 bg-green-50 dark:bg-white/[0.04]">
                           <div className="pl-8 pr-4 py-3 text-xs">
 
                             {/* 导入更新 diff */}
