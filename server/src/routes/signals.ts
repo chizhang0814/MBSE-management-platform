@@ -996,7 +996,40 @@ export function signalRoutes(db: Database) {
       );
       const oldDeviceIds = new Set(oldEndpoints.map(e => e.device_id));
       const hasUnconfirmedEndpoints = oldEndpoints.some(e => !e.confirmed);
-      const endpointsChanged = Array.isArray(endpoints);
+
+      // 解析新端点并比较，判断端点是否真正发生了变化
+      const resolvedForItems: Array<{ deviceId: number; pinId: number | null }> = [];
+      let newEndpointDeviceIds: number[] = [];
+      let endpointsChanged = false;
+
+      if (Array.isArray(endpoints)) {
+        // 先解析新端点的 device_id 和 pin_id
+        for (const ep of endpoints) {
+          if (!ep.设备编号) continue;
+          const device = await db.get(`SELECT id FROM devices WHERE project_id = ? AND "设备编号" = ?`, [signal.project_id, ep.设备编号]);
+          if (!device) continue;
+          let pinId: number | null = null;
+          if (ep.设备端元器件编号 && ep.针孔号) {
+            const pin = await db.get(`SELECT p.id FROM pins p JOIN connectors c ON p.connector_id = c.id WHERE c.device_id = ? AND c."设备端元器件编号" = ? AND p."针孔号" = ?`, [device.id, ep.设备端元器件编号, ep.针孔号]);
+            if (pin) pinId = pin.id;
+          }
+          resolvedForItems.push({ deviceId: device.id, pinId });
+          if (!oldDeviceIds.has(device.id)) {
+            newEndpointDeviceIds.push(device.id);
+          }
+        }
+
+        // 比较新旧端点集合（device_id + pin_id 组合）来判断是否真正变化
+        const oldEpSet = new Set(oldEndpoints.map(e => `${e.device_id}:${e.pin_id ?? 'null'}`));
+        const newEpSet = new Set(resolvedForItems.map(e => `${e.deviceId}:${e.pinId ?? 'null'}`));
+        if (oldEpSet.size !== newEpSet.size) {
+          endpointsChanged = true;
+        } else {
+          for (const key of newEpSet) {
+            if (!oldEpSet.has(key)) { endpointsChanged = true; break; }
+          }
+        }
+      }
 
       // 检查：有未确认端点时，不允许仅修改信号属性
       if (!endpointsChanged && hasUnconfirmedEndpoints) {
@@ -1014,28 +1047,12 @@ export function signalRoutes(db: Database) {
         await db.run(`UPDATE signals SET status = 'Pending', import_status = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [signalId]);
       }
 
-      // 替换端点并计算新增端点
-      const resolvedForItems: Array<{ deviceId: number; pinId: number | null }> = [];
-      let newEndpointDeviceIds: number[] = [];
-
-      if (endpointsChanged) {
+      // 替换端点（总是替换以更新信号名称等端点属性）
+      if (Array.isArray(endpoints)) {
         await replaceEndpointsWithEdges(signalId, signal.project_id, endpoints);
-        for (const ep of endpoints) {
-          if (!ep.设备编号) continue;
-          const device = await db.get(`SELECT id FROM devices WHERE project_id = ? AND "设备编号" = ?`, [signal.project_id, ep.设备编号]);
-          if (!device) continue;
-          let pinId: number | null = null;
-          if (ep.设备端元器件编号 && ep.针孔号) {
-            const pin = await db.get(`SELECT p.id FROM pins p JOIN connectors c ON p.connector_id = c.id WHERE c.device_id = ? AND c."设备端元器件编号" = ? AND p."针孔号" = ?`, [device.id, ep.设备端元器件编号, ep.针孔号]);
-            if (pin) pinId = pin.id;
-          }
-          resolvedForItems.push({ deviceId: device.id, pinId });
-          // 识别新增的端点设备
-          if (!oldDeviceIds.has(device.id)) {
-            newEndpointDeviceIds.push(device.id);
-          }
-        }
-      } else {
+      }
+      // 如果前端没传 endpoints，用旧端点数据
+      if (resolvedForItems.length === 0) {
         oldEndpoints.forEach(e => resolvedForItems.push({ deviceId: e.device_id, pinId: e.pin_id }));
       }
 
