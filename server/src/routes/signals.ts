@@ -178,7 +178,13 @@ export function signalRoutes(db: Database) {
     }
 
     const seqA = await getMaxSeqForATA(db, projectId, ata_a) + 1;
-    const seqB = await getMaxSeqForATA(db, projectId, ata_b) + 1;
+    let seqB: number;
+    if (ata_b === ata_a) {
+      // 同ATA章节或ERN取对端ATA导致两端相同时，B端序号需在A端基础上继续递增
+      seqB = seqA + 1;
+    } else {
+      seqB = await getMaxSeqForATA(db, projectId, ata_b) + 1;
+    }
 
     const uid = `N${ata_a}${String(seqA).padStart(4, '0')}-${ata_b}${String(seqB).padStart(4, '0')}`;
     return suffix ? uid + suffix : uid;

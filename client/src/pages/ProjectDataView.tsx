@@ -5511,7 +5511,7 @@ export default function ProjectDataView() {
                         {ep.confirmed === 0 && <span className="ml-1.5 px-1.5 py-0.5 rounded bg-orange-100 text-orange-600 text-xs">待确认</span>}
                         {ep.confirmed === 1 && <span className="ml-1.5 px-1.5 py-0.5 rounded bg-green-100 text-green-700 text-xs">已确认</span>}
                       </span>
-                      {signalEndpoints.length > 1 && (
+                      {signalEndpoints.length > 2 && (
                         <button onClick={() => {
                           setSignalEndpoints(signalEndpoints.filter((_, i) => i !== idx));
                           setEpDeviceSearch(prev => prev.filter((_, i) => i !== idx));
