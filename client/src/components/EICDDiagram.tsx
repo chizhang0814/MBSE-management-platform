@@ -592,8 +592,21 @@ export default function EICDDiagram({ mainDevice, remoteDevices, connections }: 
 
       const approved = isApprovedStatus(conn.signalStatus);
       const pathD = connectionPath(from, to);
-      const midX = (from.x + to.x) / 2;
-      const midY = (from.y + to.y) / 2;
+
+      // Calculate bezier midpoint
+      const dx = to.x - from.x;
+      const dy = to.y - from.y;
+      let midX = (from.x + to.x) / 2;
+      let midY = (from.y + to.y) / 2;
+
+      // For bezier curves (non-horizontal connections), adjust midX to account for control points
+      if (Math.abs(dy) >= 2) {
+        const cpOffset = Math.min(Math.abs(dx) * 0.45, 120);
+        // Bezier curve midpoint formula at t=0.5:
+        // midX = (from.x + 3*(from.x + cpOffset) + 3*(to.x - cpOffset) + to.x) / 8
+        midX = (from.x + 3 * (from.x + cpOffset) + 3 * (to.x - cpOffset) + to.x) / 8;
+        // midY remains the same: (from.y + to.y) / 2
+      }
 
       // Connection line
       elements.push(
