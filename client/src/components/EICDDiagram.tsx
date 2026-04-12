@@ -54,22 +54,41 @@ const MIN_PIN_LABEL_W = 36;
 
 /* ───────── Colour Palette ───────── */
 
-const COL = {
-  deviceBorder: '#374151',
-  deviceFill: '#FFFFFF',
-  deviceHeaderBg: '#F3F4F6',
-  connectorFill: '#F9FAFB',
-  connectorBorder: '#D1D5DB',
-  pinFill: '#EEF2FF',
-  pinBorder: '#6366F1',
-  pinText: '#3730A3',
-  approvedLine: '#059669',
-  pendingLine: '#9CA3AF',
-  labelBg: '#FFFFFF',
-  labelText: '#374151',
-  headerText: '#111827',
-  connHeaderText: '#4B5563',
-};
+function getColors(dark: boolean) {
+  return dark ? {
+    bg: '#171717',
+    deviceBorder: '#525252',
+    deviceFill: '#262626',
+    deviceHeaderBg: '#1C1C1C',
+    connectorFill: '#1C1C1C',
+    connectorBorder: '#404040',
+    pinFill: '#312E81',
+    pinBorder: '#818CF8',
+    pinText: '#A5B4FC',
+    approvedLine: '#34D399',
+    pendingLine: '#737373',
+    labelBg: '#262626',
+    labelText: '#D4D4D4',
+    headerText: '#F5F5F5',
+    connHeaderText: '#D4D4D4',
+  } : {
+    bg: '#FFFFFF',
+    deviceBorder: '#374151',
+    deviceFill: '#FFFFFF',
+    deviceHeaderBg: '#F3F4F6',
+    connectorFill: '#F9FAFB',
+    connectorBorder: '#D1D5DB',
+    pinFill: '#EEF2FF',
+    pinBorder: '#6366F1',
+    pinText: '#3730A3',
+    approvedLine: '#059669',
+    pendingLine: '#9CA3AF',
+    labelBg: '#FFFFFF',
+    labelText: '#374151',
+    headerText: '#111827',
+    connHeaderText: '#4B5563',
+  };
+}
 
 /* ───────── Helper: text width approximation ───────── */
 
@@ -217,6 +236,8 @@ function isApprovedStatus(status: string): boolean {
 
 export default function EICDDiagram({ mainDevice, remoteDevices, connections }: EICDDiagramProps) {
   const svgRef = useRef<SVGSVGElement>(null);
+  const isDark = document.documentElement.classList.contains('dark');
+  const COL = getColors(isDark);
 
   /* ── Layout computation ── */
   const layout = useMemo(() => {
@@ -714,7 +735,7 @@ export default function EICDDiagram({ mainDevice, remoteDevices, connections }: 
           style={{ minWidth: layout.svgWidth, minHeight: layout.svgHeight }}
         >
           {/* Background */}
-          <rect width={layout.svgWidth} height={layout.svgHeight} fill="white" />
+          <rect width={layout.svgWidth} height={layout.svgHeight} fill={COL.bg} />
 
           {/* Main device */}
           {renderDevice(
