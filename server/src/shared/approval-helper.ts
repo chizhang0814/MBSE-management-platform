@@ -600,8 +600,27 @@ export async function checkAndAdvancePhase(db: Database, approvalRequestId: numb
     } catch {}
   }
 
+  const approvedTitle = `审批通过：${label2} — ${entDesc2}`;
+  const approvedMsg = `${entDesc2}的「${label2}」请求已审批通过，记录已生效。${cascadeInfo}`;
+  // 通知请求人
   await db.run(
     `INSERT INTO notifications (recipient_username, type, title, message) VALUES (?, 'approval_approved', ?, ?)`,
-    [req.requester_username, `审批通过：${label2} — ${entDesc2}`, `您提交的${entDesc2}的「${label2}」请求已审批通过，记录已生效。${cascadeInfo}`]
+    [req.requester_username, approvedTitle, approvedMsg]
   );
+  // 信号类型：额外通知所有端点设备负责人（排除请求人自己避免重复）
+  if (req.entity_type === 'signal' && req.entity_id) {
+    const epOwners = await db.query(
+      `SELECT DISTINCT d."设备负责人" as owner
+       FROM signal_endpoints se
+       JOIN devices d ON se.device_id = d.id
+       WHERE se.signal_id = ? AND d."设备负责人" IS NOT NULL AND d."设备负责人" != ?`,
+      [req.entity_id, req.requester_username]
+    );
+    for (const row of epOwners) {
+      await db.run(
+        `INSERT INTO notifications (recipient_username, type, title, message) VALUES (?, 'approval_approved', ?, ?)`,
+        [row.owner, approvedTitle, approvedMsg]
+      );
+    }
+  }
 }
