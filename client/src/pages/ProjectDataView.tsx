@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import Layout from '../components/Layout';
 import HistoryModal from '../components/HistoryModal';
+import EICDModal from '../components/EICDModal';
 import { useAuth } from '../context/AuthContext';
 
 // ── 类型定义 ─────────────────────────────────────────────
@@ -226,6 +227,7 @@ export default function ProjectDataView() {
   const [devices, setDevices] = useState<DeviceRow[]>([]);
   const [statusSummary, setStatusSummary] = useState<{ devices: { normal: number; Draft: number }; connectors: { normal: number; Draft: number }; pins: { normal: number; Draft: number } } | null>(null);
   const [historyTarget, setHistoryTarget] = useState<{ entityTable: string; entityId: number; entityLabel: string } | null>(null);
+  const [eicdTarget, setEicdTarget] = useState<{ deviceId: number; projectId: number; label: string } | null>(null);
   const [deviceFilters, setDeviceFilters] = useState<Record<string, string>>({});
   const [deviceSortOrder, setDeviceSortOrder] = useState<'desc' | 'asc'>('desc');
   const [signalSortOrder, setSignalSortOrder] = useState<'desc' | 'asc'>('desc');
@@ -1942,7 +1944,7 @@ export default function ProjectDataView() {
                           );
                         })()}
                       </td>
-                      <td className="px-4 py-2 text-center">
+                      <td className="px-4 py-2 text-center whitespace-nowrap">
                         <button
                           id={index === 0 ? 'tour-device-expand' : undefined}
                           onClick={async () => {
@@ -1956,6 +1958,17 @@ export default function ProjectDataView() {
                           className="text-gray-400 dark:text-white/40 hover:text-black dark:hover:text-white font-mono text-xs"
                         >
                           {isExpanded ? '▼' : '▶'}
+                        </button>
+                        <button
+                          onClick={() => setEicdTarget({
+                            deviceId: device.id,
+                            projectId: device.project_id,
+                            label: `${device.设备编号}${device.设备中文名称 ? ' (' + device.设备中文名称 + ')' : ''}`
+                          })}
+                          className="ml-1 text-gray-400 dark:text-white/40 hover:text-indigo-600 dark:hover:text-indigo-400 text-xs"
+                          title="查看EICD连接图"
+                        >
+                          👁
                         </button>
                       </td>
                       <td className="px-2 py-2 font-medium text-sm max-w-[90px] truncate" title={device.设备编号}>{device.设备编号}</td>
@@ -5747,6 +5760,15 @@ export default function ProjectDataView() {
           entityId={historyTarget.entityId}
           entityLabel={historyTarget.entityLabel}
           onClose={() => setHistoryTarget(null)}
+        />
+      )}
+
+      {eicdTarget && (
+        <EICDModal
+          deviceId={eicdTarget.deviceId}
+          projectId={eicdTarget.projectId}
+          deviceLabel={eicdTarget.label}
+          onClose={() => setEicdTarget(null)}
         />
       )}
 
