@@ -39,7 +39,7 @@ export interface EICDDiagramProps {
 
 const PIN_SIZE = 16;
 const PIN_GAP = 6;
-const CONN_PADDING_X = 12;
+const CONN_PADDING_X = 14;
 const CONN_PADDING_Y = 8;
 const CONN_HEADER_H = 22;
 const CONN_GAP = 14;
@@ -131,20 +131,13 @@ function buildPinPositions(
   devX: number,
   devY: number,
   pinsOnRight: boolean,
-  filteredConnectorIds?: Set<number>
 ): Map<number, PinPosition> {
   const positions = new Map<number, PinPosition>();
-  const devW = deviceWidth(
-    filteredConnectorIds
-      ? device.connectors.filter(c => filteredConnectorIds.has(c.id))
-      : device.connectors,
-    deviceHeaderText(device)
-  );
+  const devW = deviceWidth(device.connectors, deviceHeaderText(device));
 
   let cy = devY + DEV_HEADER_H + DEV_PADDING_Y;
 
   for (const conn of device.connectors) {
-    if (filteredConnectorIds && !filteredConnectorIds.has(conn.id)) continue;
     const cH = connectorHeight(conn.pins.length);
 
     let pinY = cy + CONN_HEADER_H + CONN_PADDING_Y;
@@ -401,7 +394,6 @@ export default function EICDDiagram({ mainDevice, remoteDevices, connections }: 
     x: number,
     y: number,
     w: number,
-    _h: number,
     pinsOnRight: boolean
   ) {
     const h = deviceHeight(device.connectors);
@@ -593,20 +585,8 @@ export default function EICDDiagram({ mainDevice, remoteDevices, connections }: 
       const approved = isApprovedStatus(conn.signalStatus);
       const pathD = connectionPath(from, to);
 
-      // Calculate bezier midpoint
-      const dx = to.x - from.x;
-      const dy = to.y - from.y;
-      let midX = (from.x + to.x) / 2;
-      let midY = (from.y + to.y) / 2;
-
-      // For bezier curves (non-horizontal connections), adjust midX to account for control points
-      if (Math.abs(dy) >= 2) {
-        const cpOffset = Math.min(Math.abs(dx) * 0.45, 120);
-        // Bezier curve midpoint formula at t=0.5:
-        // midX = (from.x + 3*(from.x + cpOffset) + 3*(to.x - cpOffset) + to.x) / 8
-        midX = (from.x + 3 * (from.x + cpOffset) + 3 * (to.x - cpOffset) + to.x) / 8;
-        // midY remains the same: (from.y + to.y) / 2
-      }
+      const midX = (from.x + to.x) / 2;
+      const midY = (from.y + to.y) / 2;
 
       // Connection line
       elements.push(
@@ -742,13 +722,12 @@ export default function EICDDiagram({ mainDevice, remoteDevices, connections }: 
             layout.mainX,
             layout.mainY,
             layout.mainW,
-            layout.mainH,
             true
           )}
 
           {/* Remote devices */}
           {layout.remoteLayouts.map(rl =>
-            renderDevice(rl.device, rl.x, rl.y, rl.w, rl.h, false)
+            renderDevice(rl.device, rl.x, rl.y, rl.w, false)
           )}
 
           {/* Connections */}
