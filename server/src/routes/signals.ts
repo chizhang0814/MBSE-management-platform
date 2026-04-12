@@ -1062,9 +1062,31 @@ export function signalRoutes(db: Database) {
         oldEndpoints.forEach(e => resolvedForItems.push({ deviceId: e.device_id, pinId: e.pin_id }));
       }
 
+      // 精确计算哪些设备的端点发生了变化（新增设备 或 同设备pin变了）
+      // 仅删除端点（保留端点不变）不需要 completion
+      let changedDeviceIds: number[] | undefined;
+      if (endpointsChanged) {
+        const oldEpMap = new Map<number, Set<string>>(); // deviceId -> Set<pinId>
+        for (const e of oldEndpoints) {
+          if (!oldEpMap.has(e.device_id)) oldEpMap.set(e.device_id, new Set());
+          oldEpMap.get(e.device_id)!.add(String(e.pin_id ?? 'null'));
+        }
+        changedDeviceIds = [];
+        for (const { deviceId, pinId } of resolvedForItems) {
+          const oldPins = oldEpMap.get(deviceId);
+          if (!oldPins) {
+            // 新增的设备
+            changedDeviceIds.push(deviceId);
+          } else if (!oldPins.has(String(pinId ?? 'null'))) {
+            // 同设备但pin变了
+            changedDeviceIds.push(deviceId);
+          }
+          // else: 该端点完全没变，不需要completion
+        }
+      }
       const items = await buildSignalApprovalItems(db, signal.project_id, username, resolvedForItems, {
         endpointsChanged,
-        newEndpointDeviceIds: newEndpointDeviceIds.length > 0 ? newEndpointDeviceIds : undefined,
+        newEndpointDeviceIds: changedDeviceIds && changedDeviceIds.length > 0 ? changedDeviceIds : (endpointsChanged ? [] : undefined),
       });
 
       await submitChangeRequest(db, {
