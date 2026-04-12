@@ -1418,14 +1418,14 @@ export class Database {
       if (sigChanged > 0) console.log(`Database migration: 推荐导线线型归一化 ${sigChanged} 条`);
     } catch (e: any) { console.log('Migration: wire type:', e.message); }
 
-    // ── 清理不必要的 edit_signal completion 项（V2 审批逻辑迁移）──
+    // ── 清理不必要的信号 completion 项（V2 审批逻辑迁移）──
     try {
-      // 找出 edit_signal 的 pending completion 项，其信号端点已全部完整
+      // 找出所有信号相关的 pending completion 项，其信号端点已全部完整（pin_id 非空且 confirmed=1）
       const staleCompletions: any[] = await this.query(`
         SELECT ai.id as item_id, ar.id as req_id, ar.entity_id
         FROM approval_items ai
         JOIN approval_requests ar ON ai.approval_request_id = ar.id
-        WHERE ar.action_type = 'edit_signal'
+        WHERE ar.action_type IN ('create_signal', 'edit_signal')
           AND ar.status = 'pending'
           AND ar.current_phase = 'completion'
           AND ai.item_type = 'completion'
