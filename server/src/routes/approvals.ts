@@ -259,17 +259,77 @@ export function approvalRoutes(db: Database) {
         : approvalReq.entity_type === 'signal' ? 'signals' : null;
 
       if (entityTable && approvalReq.entity_id) {
+        const oldData = (() => { try { return JSON.parse(approvalReq.old_payload || '{}'); } catch { return {}; } })();
+
         if (approvalReq.action_type === 'request_device_management') {
           // 管理权申请被拒绝：恢复申请前的原始状态
-          const originalStatus = (() => { try { return JSON.parse(approvalReq.old_payload)?.status || 'normal'; } catch { return 'normal'; } })();
+          const originalStatus = oldData.status || 'normal';
           await db.run(`UPDATE devices SET status = ? WHERE id = ?`, [originalStatus, approvalReq.entity_id]);
+
+        } else if (approvalReq.action_type.startsWith('create_')) {
+          // 创建操作被拒绝：回退到 Draft 状态（保留数据供用户修改后重新提交）
+          await db.run(`UPDATE ${entityTable} SET status = 'Draft' WHERE id = ?`, [approvalReq.entity_id]);
+
         } else if (approvalReq.action_type.startsWith('delete_')) {
-          // 删除操作被拒绝：恢复为正常状态
-          const restoreStatus = approvalReq.entity_type === 'signal' ? 'Active' : 'normal';
-          await db.run(`UPDATE ${entityTable} SET status = ? WHERE id = ?`, [restoreStatus, approvalReq.entity_id]);
+          // 删除操作被拒绝：恢复到提交前的原始状态
+          const originalStatus = oldData.status || (approvalReq.entity_type === 'signal' ? 'Active' : 'normal');
+          await db.run(`UPDATE ${entityTable} SET status = ? WHERE id = ?`, [originalStatus, approvalReq.entity_id]);
+
+        } else if (approvalReq.action_type === 'edit_signal') {
+          // 信号编辑被拒绝：恢复字段 + 状态 + 端点 + 边
+          // 信号编辑时字段和端点都在提交审批前就已写入，需要全部回滚
+
+          // 1. 恢复信号字段（从 old_payload 中取出原始字段值）
+          const restoreFields: Record<string, any> = {};
+          const skipKeys = new Set(['id', 'project_id', 'created_at', '_oldEndpoints', '_oldEdges']);
+          for (const [k, v] of Object.entries(oldData)) {
+            if (!skipKeys.has(k)) restoreFields[k] = v;
+          }
+          if (Object.keys(restoreFields).length > 0) {
+            const setClauses = Object.keys(restoreFields).map(k => `"${k}" = ?`).join(', ');
+            await db.run(
+              `UPDATE signals SET ${setClauses} WHERE id = ?`,
+              [...Object.values(restoreFields), approvalReq.entity_id]
+            );
+          }
+
+          // 2. 恢复端点
+          if (oldData._oldEndpoints?.length > 0) {
+            await db.run('DELETE FROM signal_edges WHERE signal_id = ?', [approvalReq.entity_id]);
+            await db.run('DELETE FROM signal_endpoints WHERE signal_id = ?', [approvalReq.entity_id]);
+            const epIdMap: Record<number, number> = {};
+            for (const ep of oldData._oldEndpoints) {
+              const res = await db.run(
+                `INSERT INTO signal_endpoints (signal_id, device_id, pin_id, endpoint_index, "端接尺寸", "信号名称", "信号定义", input, output, confirmed)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [approvalReq.entity_id, ep.device_id, ep.pin_id, ep.endpoint_index, ep['端接尺寸'], ep['信号名称'], ep['信号定义'], ep.input ?? 0, ep.output ?? 0, ep.confirmed ?? 1]
+              );
+              epIdMap[ep.endpoint_index] = res.lastID;
+            }
+            // 3. 恢复边
+            if (oldData._oldEdges?.length > 0) {
+              for (const edge of oldData._oldEdges) {
+                const fromId = epIdMap[edge.from_index];
+                const toId = epIdMap[edge.to_index];
+                if (fromId && toId) {
+                  await db.run(
+                    `INSERT INTO signal_edges (signal_id, from_endpoint_id, to_endpoint_id, direction, source_info) VALUES (?, ?, ?, ?, ?)`,
+                    [approvalReq.entity_id, fromId, toId, edge.direction, edge.source_info]
+                  );
+                }
+              }
+            }
+          } else {
+            // 没有旧端点数据（旧审批请求），仅恢复状态
+            const originalStatus = oldData.status || 'Active';
+            await db.run(`UPDATE signals SET status = ? WHERE id = ?`, [originalStatus, approvalReq.entity_id]);
+          }
+
         } else {
-          // 编辑操作被拒绝：恢复到提交前的原始状态
-          const originalStatus = (() => { try { return JSON.parse(approvalReq.old_payload)?.status || 'Draft'; } catch { return 'Draft'; } })();
+          // edit_device, edit_connector, edit_pin 被拒绝：
+          // 这些操作只改了 status=Pending，字段未写入（存在 payload 中审批通过才应用）
+          // 拒绝时只需恢复 status
+          const originalStatus = oldData.status || 'normal';
           await db.run(`UPDATE ${entityTable} SET status = ? WHERE id = ?`, [originalStatus, approvalReq.entity_id]);
         }
       }

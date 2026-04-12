@@ -1053,6 +1053,25 @@ export function signalRoutes(db: Database) {
         await db.run(`UPDATE signals SET status = 'Pending', import_status = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [signalId]);
       }
 
+      // 保存旧端点详情供拒绝时恢复（必须在替换之前查询）
+      const oldEndpointDetails = await db.query(
+        `SELECT id, device_id, pin_id, endpoint_index, "端接尺寸", "信号名称", "信号定义", input, output, confirmed
+         FROM signal_endpoints WHERE signal_id = ?`, [signalId]
+      );
+      // 用 endpoint_index 替代 endpoint_id 保存边关系，便于恢复时映射
+      const oldEpIdToIdx: Record<number, number> = {};
+      for (const ep of oldEndpointDetails) oldEpIdToIdx[ep.id] = ep.endpoint_index;
+      const rawEdges = await db.query(
+        `SELECT from_endpoint_id, to_endpoint_id, direction, source_info
+         FROM signal_edges WHERE signal_id = ?`, [signalId]
+      );
+      const oldEdgeDetails = rawEdges.map((e: any) => ({
+        from_index: oldEpIdToIdx[e.from_endpoint_id] ?? -1,
+        to_index: oldEpIdToIdx[e.to_endpoint_id] ?? -1,
+        direction: e.direction,
+        source_info: e.source_info,
+      })).filter((e: any) => e.from_index >= 0 && e.to_index >= 0);
+
       // 替换端点（总是替换以更新信号名称等端点属性）
       if (Array.isArray(endpoints)) {
         await replaceEndpointsWithEdges(signalId, signal.project_id, endpoints);
@@ -1096,7 +1115,7 @@ export function signalRoutes(db: Database) {
         actionType: 'edit_signal',
         entityType: 'signal',
         entityId: signalId,
-        oldPayload: signal,
+        oldPayload: { ...signal, _oldEndpoints: oldEndpointDetails, _oldEdges: oldEdgeDetails },
         newPayload: fields,
         items,
       });

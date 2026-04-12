@@ -1706,23 +1706,22 @@ export default function ProjectDataView() {
         const hasAnyFilter = Object.values(deviceFilters).some(v => v) || configFilterSelected.length > 0;
         return (
         <div className="bg-white dark:bg-neutral-900 rounded-lg shadow">
-          <table className="text-sm table-fixed" style={{ width: 'max-content', minWidth: '100%' }}>
+          <table className="min-w-full text-sm table-fixed">
             <colgroup>
               <col style={{ width: 32 }} />{/* 勾选框 */}
               <col style={{ width: 40 }} />{/* 展开 */}
-              <col style={{ width: 200 }} />{/* 设备编号 */}
+              <col style={{ width: 150 }} />{/* 设备编号 */}
               <col style={{ width: 100 }} />{/* 构型 */}
-              <col style={{ width: 200 }} />{/* 状态 */}
-              <col style={{ width: 150 }} />{/* LIN号 */}
-              <col style={{ width: 250 }} />{/* 设备中文名称 */}
-              <col style={{ width: 100 }} />{/* ATA */}
+              <col style={{ width: 150 }} />{/* 状态 */}
+              <col style={{ width: 120 }} />{/* LIN号 */}
+              <col />{/* 设备中文名称 - 弹性 */}
+              <col style={{ width: 70 }} />{/* ATA */}
               <col style={{ width: 50 }} />{/* DAL */}
               <col style={{ width: 50 }} />{/* 等级 */}
               <col style={{ width: 150 }} />{/* 设备负责人 */}
               <col style={{ width: 60 }} />{/* 连接器数 */}
               <col style={{ width: 120 }} />{/* 最后更新 */}
               <col style={{ width: 130 }} />{/* 操作 */}
-              <col />{/* 右侧弹性占位 */}
             </colgroup>
             <thead className="bg-gray-50 dark:bg-neutral-800 sticky top-0 z-10">
               <tr>
@@ -1743,13 +1742,12 @@ export default function ProjectDataView() {
                   最后更新 {deviceSortOrder === 'desc' ? '▼' : '▲'}
                 </th>
                 <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50">操作</th>
-                <th></th>
               </tr>
               <tr className="bg-white dark:bg-neutral-900 border-b">
                 <th className="px-1 py-1"></th>
                 <th className="px-2 py-1"></th>
                 {['设备编号'].map(col => (
-                  <th key={col} className="px-2 py-1 max-w-[90px]">
+                  <th key={col} className="px-2 py-1">
                     <div className="relative">
                       <input
                         type="text"
@@ -1765,7 +1763,7 @@ export default function ProjectDataView() {
                     </div>
                   </th>
                 ))}
-                <th className="px-2 py-1 max-w-[80px]">
+                <th className="px-2 py-1">
                   <div className="relative">
                     <button
                       onClick={() => setConfigFilterOpen(o => !o)}
@@ -1827,7 +1825,7 @@ export default function ProjectDataView() {
                   const isATA = col === '设备部件所属系统（4位ATA）';
                   const isLIN = col === '设备LIN号（DOORS）';
                   return (
-                  <th key={col} className={`px-2 py-1 ${isDAL ? 'max-w-[60px]' : isATA ? 'max-w-[70px]' : isLIN ? 'max-w-[100px]' : ''}`}>
+                  <th key={col} className="px-2 py-1">
                     <div className="relative">
                       <input
                         type="text"
@@ -1844,7 +1842,7 @@ export default function ProjectDataView() {
                   </th>
                   );
                 })}
-                <th className="px-2 py-1 max-w-[50px]">
+                <th className="px-2 py-1">
                   <select
                     value={deviceFilters['设备等级'] || ''}
                     onChange={e => setDeviceFilters(prev => ({ ...prev, '设备等级': e.target.value }))}
@@ -1857,7 +1855,7 @@ export default function ProjectDataView() {
                 {['设备负责人'].map(col => {
                   const narrow = true;
                   return (
-                  <th key={col} className={`px-2 py-1 ${narrow ? 'max-w-[80px]' : ''}`}>
+                  <th key={col} className="px-2 py-1">
                     <div className="relative">
                       <input
                         type="text"
@@ -1874,7 +1872,7 @@ export default function ProjectDataView() {
                   </th>
                   );
                 })}
-                <th className="px-2 py-1 max-w-[60px]">
+                <th className="px-2 py-1">
                   <div className="relative">
                     <input
                       type="text"
@@ -1898,7 +1896,6 @@ export default function ProjectDataView() {
                       <button onClick={() => setDeviceFilters({})} className="text-xs text-gray-400 dark:text-white/40 hover:text-red-500">全部清除</button>
                     )}
                   </th>
-                <th></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 dark:divide-white/10">
@@ -1958,8 +1955,8 @@ export default function ProjectDataView() {
                           {isExpanded ? '▼' : '▶'}
                         </button>
                       </td>
-                      <td className="px-2 py-2 font-medium text-sm max-w-[90px] truncate" title={device.设备编号}>{device.设备编号}</td>
-                      <td className="px-2 py-2 text-sm max-w-[80px]">
+                      <td className="px-2 py-2 font-medium text-sm truncate max-w-0 overflow-hidden" title={device.设备编号}>{device.设备编号}</td>
+                      <td className="px-2 py-2 text-sm">
                         {projectConfigurations.length === 0
                           ? <span className="text-gray-300 dark:text-white/30">—</span>
                           : (() => {
@@ -1999,18 +1996,18 @@ export default function ProjectDataView() {
                         )}
                         {/* 已导入/已更新标签暂时隐藏 */}
                       </td>
-                      <td className="px-2 py-2 text-gray-600 dark:text-white/60 text-sm max-w-[100px] truncate" title={device['设备LIN号（DOORS）'] || '-'}>{device['设备LIN号（DOORS）'] || '-'}</td>
+                      <td className="px-2 py-2 text-gray-600 dark:text-white/60 text-sm truncate max-w-0 overflow-hidden" title={device['设备LIN号（DOORS）'] || '-'}>{device['设备LIN号（DOORS）'] || '-'}</td>
                       <td className="px-2 py-2 text-gray-700 dark:text-white/70 text-sm">{device.设备中文名称 || '-'}</td>
-                      <td className="px-2 py-2 text-gray-600 dark:text-white/60 text-sm max-w-[70px] truncate" title={device['设备部件所属系统（4位ATA）'] || '-'}>{device['设备部件所属系统（4位ATA）'] || '-'}</td>
-                      <td className="px-2 py-2 text-gray-600 dark:text-white/60 text-sm max-w-[60px] truncate" title={device.设备DAL || '-'}>{device.设备DAL || '-'}</td>
-                      <td className="px-2 py-2 text-gray-600 dark:text-white/60 text-sm max-w-[50px] text-center">{device.设备等级 || '-'}</td>
-                      <td className="px-2 py-2 text-gray-600 dark:text-white/60 text-sm max-w-[80px] truncate" title={`${device.设备负责人 || '-'}${device.设备负责人姓名 ? ` (${device.设备负责人姓名})` : ''}`}>
+                      <td className="px-2 py-2 text-gray-600 dark:text-white/60 text-sm truncate max-w-0 overflow-hidden" title={device['设备部件所属系统（4位ATA）'] || '-'}>{device['设备部件所属系统（4位ATA）'] || '-'}</td>
+                      <td className="px-2 py-2 text-gray-600 dark:text-white/60 text-sm truncate max-w-0 overflow-hidden" title={device.设备DAL || '-'}>{device.设备DAL || '-'}</td>
+                      <td className="px-2 py-2 text-gray-600 dark:text-white/60 text-sm text-center">{device.设备等级 || '-'}</td>
+                      <td className="px-2 py-2 text-gray-600 dark:text-white/60 text-sm truncate max-w-0 overflow-hidden" title={`${device.设备负责人 || '-'}${device.设备负责人姓名 ? ` (${device.设备负责人姓名})` : ''}`}>
                         {device.设备负责人 || '-'}
                         {device.设备负责人姓名 && <span className="text-gray-400 dark:text-white/40 ml-1">({device.设备负责人姓名})</span>}
                       </td>
-                      <td className="px-2 py-2 text-gray-600 dark:text-white/60 text-sm text-center max-w-[60px]">{device.connector_count ?? 0}</td>
-                      <td className="px-2 py-2 text-gray-400 dark:text-white/40 text-xs max-w-[90px] truncate">{(device as any).updated_at ? new Date((device as any).updated_at).toLocaleDateString() : '-'}</td>
-                      <td className="px-2 py-2 space-x-2 whitespace-nowrap w-[130px]">
+                      <td className="px-2 py-2 text-gray-600 dark:text-white/60 text-sm text-center">{device.connector_count ?? 0}</td>
+                      <td className="px-2 py-2 text-gray-400 dark:text-white/40 text-xs truncate">{(device as any).updated_at ? new Date((device as any).updated_at).toLocaleDateString() : '-'}</td>
+                      <td className="px-2 py-2 space-x-2 whitespace-nowrap">
                         {(() => {
                           const isERN = (device as any)['设备LIN号（DOORS）'] === SPECIAL_ERN_LIN;
                           if (isERN) return <span className="text-xs text-gray-400 dark:text-white/40">固有ERN</span>;
@@ -2032,14 +2029,13 @@ export default function ProjectDataView() {
                           </>);
                         })()}
                         </td>
-                        <td></td>
                     </tr>
 
                     {isExpanded && (
                       <>
                     {/* 设备详情 */}
                     <tr>
-                      <td colSpan={15} className="px-0 py-0 bg-gray-50 dark:bg-neutral-800 border-b border-gray-200 dark:border-white/10">
+                      <td colSpan={14} className="px-0 py-0 bg-gray-50 dark:bg-neutral-800 border-b border-gray-200 dark:border-white/10">
                         <div className="pl-8 pr-4 py-3">
                           {/* 导入更新 diff */}
                           {(device as any).import_status === 'updated' && (() => {
@@ -3178,23 +3174,22 @@ export default function ProjectDataView() {
               ? `显示 ${filteredSignals.length} / ${signals.length} 条信号`
               : `已载入 ${Math.min(signalDisplayCount, filteredSignals.length)} / ${signalTotal} 条信号`}
           </div>
-          <table className="text-sm table-fixed" style={{ width: 'max-content', minWidth: '100%' }}>
+          <table className="min-w-full text-sm table-fixed">
             <colgroup>
-              <col style={{ width: 32 }} />{/* 勾选框/占位 */}
+              {!sgCheckMode && <col style={{ width: 32 }} />}{/* 勾选框/占位 */}
               <col style={{ width: 32 }} />{/* # 序号 */}
               {sgCheckMode && <col style={{ width: 32 }} />}{/* 分组勾选 */}
               <col style={{ width: 24 }} />{/* 组名 */}
               <col style={{ width: 32 }} />{/* 色带 */}
-              <col style={{ width: 250 }} />{/* Unique ID */}
-              <col style={{ width: 200 }} />{/* 状态 */}
-              <col style={{ width: 300 }} />{/* 信号名称摘要 */}
-              <col style={{ width: 80 }} />{/* 连接类型 */}
-              <col style={{ width: 70 }} />{/* 导线等级 */}
-              <col style={{ width: 300 }} />{/* 端点摘要 */}
-              <col style={{ width: 90 }} />{/* 创建人 */}
+              <col style={{ width: 200 }} />{/* Unique ID */}
+              <col style={{ width: 100 }} />{/* 状态 */}
+              <col style={{ width: 260 }} />{/* 信号名称摘要 */}
+              <col style={{ width: 120 }} />{/* 连接类型 */}
+              <col style={{ width: 65 }} />{/* 导线等级 */}
+              <col style={{ minWidth: 260 }} />{/* 端点摘要 - 弹性 */}
+              <col style={{ width: 80 }} />{/* 创建人 */}
               <col style={{ width: 90 }} />{/* 最后更新 */}
               <col style={{ width: 130 }} />{/* 操作 */}
-              <col />{/* 右侧弹性占位 */}
             </colgroup>
             <thead className="bg-gray-50 dark:bg-neutral-800 sticky top-[29px] z-10">
               <tr>
@@ -3215,7 +3210,6 @@ export default function ProjectDataView() {
                   最后更新 {signalSortOrder === 'desc' ? '▼' : '▲'}
                 </th>
                 <th className="px-4 py-2 text-left text-xs text-gray-500 dark:text-white/50">操作</th>
-                <th></th>
               </tr>
               <tr className="bg-white dark:bg-neutral-900 border-b">
                 {!sgCheckMode && <th className="px-1 py-1"></th>}
@@ -3238,7 +3232,7 @@ export default function ProjectDataView() {
                 {sgCheckMode && <th className="px-1 py-1"></th>}
                 <th className="px-2 py-1"></th>
                 {/* Unique ID */}
-                <th className="px-4 py-1 max-w-[120px]">
+                <th className="px-4 py-1">
                   <div className="relative">
                     <input type="text" placeholder="筛选..." value={signalFilters['unique_id'] || ''}
                       onChange={e => setSignalFilters(prev => ({ ...prev, unique_id: e.target.value }))}
@@ -3250,7 +3244,7 @@ export default function ProjectDataView() {
                   </div>
                 </th>
                 {/* 状态 */}
-                <th className="px-4 py-1 w-[200px]">
+                <th className="px-4 py-1">
                   <select value={signalFilters['_status'] || ''}
                     onChange={e => setSignalFilters(prev => ({ ...prev, _status: e.target.value }))}
                     className="w-full px-1 py-0.5 text-xs border border-gray-300 dark:border-white/20 rounded focus:outline-none focus:border-black dark:focus:border-white bg-white dark:bg-neutral-800 dark:text-white">
@@ -3275,7 +3269,7 @@ export default function ProjectDataView() {
                   </th>
                 ))}
                 {/* 导线等级 - 下拉菜单筛选 */}
-                <th className="px-4 py-1 w-[90px]">
+                <th className="px-4 py-1">
                   <select value={signalFilters['导线等级'] || ''}
                     onChange={e => setSignalFilters(prev => ({ ...prev, '导线等级': e.target.value }))}
                     className="w-full px-1 py-0.5 text-xs border border-gray-300 dark:border-white/20 rounded focus:outline-none focus:border-black dark:focus:border-white bg-white dark:bg-neutral-800 dark:text-white">
@@ -3308,7 +3302,6 @@ export default function ProjectDataView() {
                     <button onClick={() => setSignalFilters({})} className="text-xs text-gray-400 dark:text-white/40 hover:text-red-500">全部清除</button>
                   )}
                 </th>
-                <th></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 dark:divide-white/10">
@@ -3440,8 +3433,8 @@ export default function ProjectDataView() {
                           {isExpanded ? '▼' : '▶'}
                         </button>
                       </td>
-                      <td className="px-4 py-2 font-mono text-xs max-w-[120px] truncate" title={signal.unique_id || '-'}>{signal.unique_id || '-'}</td>
-                      <td className="px-4 py-2 w-[200px]">
+                      <td className="px-4 py-2 font-mono text-xs truncate max-w-0 overflow-hidden" title={signal.unique_id || '-'}>{signal.unique_id || '-'}</td>
+                      <td className="px-4 py-2">
                         {signal.status === 'Draft' && (
                           <span className="px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700 text-xs font-semibold">Draft</span>
                         )}
@@ -3457,13 +3450,13 @@ export default function ProjectDataView() {
                         )}
                         {/* 已导入/已更新标签暂时隐藏 */}
                       </td>
-                      <td className="px-4 py-2 text-xs max-w-[180px] truncate" title={signal.信号名称摘要 || '-'}>{signal.信号名称摘要 || '-'}</td>
-                      <td className="px-4 py-2 text-gray-600 dark:text-white/60 w-[80px] truncate" title={signal.连接类型 || '-'}>{signal.连接类型 || '-'}</td>
-                      <td className="px-4 py-2 text-gray-600 dark:text-white/60 text-xs w-[90px]">{signal.导线等级 || '-'}</td>
-                      <td className="px-4 py-2 text-gray-600 dark:text-white/60 text-xs max-w-[180px] truncate" title={signal.endpoint_summary || '-'}>{signal.endpoint_summary || '-'}</td>
-                      <td className="px-4 py-2 text-gray-600 dark:text-white/60 text-xs w-[120px] truncate" title={signal.created_by || '-'}>{signal.created_by || '-'}</td>
-                      <td className="px-4 py-2 text-gray-400 dark:text-white/40 text-xs max-w-[90px] truncate">{(signal as any).updated_at ? new Date((signal as any).updated_at).toLocaleDateString() : '-'}</td>
-                      <td className="px-4 py-2 space-x-2 text-xs whitespace-nowrap w-[130px]">
+                      <td className="px-4 py-2 text-xs truncate max-w-0 overflow-hidden" title={signal.信号名称摘要 || '-'}>{signal.信号名称摘要 || '-'}</td>
+                      <td className="px-4 py-2 text-gray-600 dark:text-white/60 text-xs truncate max-w-0 overflow-hidden" title={signal.连接类型 || '-'}>{signal.连接类型 || '-'}</td>
+                      <td className="px-4 py-2 text-gray-600 dark:text-white/60 text-xs">{signal.导线等级 || '-'}</td>
+                      <td className="px-4 py-2 text-gray-600 dark:text-white/60 text-xs truncate max-w-0 overflow-hidden" title={signal.endpoint_summary || '-'}>{signal.endpoint_summary || '-'}</td>
+                      <td className="px-4 py-2 text-gray-600 dark:text-white/60 text-xs truncate max-w-0 overflow-hidden" title={signal.created_by || '-'}>{signal.created_by || '-'}</td>
+                      <td className="px-4 py-2 text-gray-400 dark:text-white/40 text-xs truncate">{(signal as any).updated_at ? new Date((signal as any).updated_at).toLocaleDateString() : '-'}</td>
+                      <td className="px-4 py-2 space-x-2 text-xs whitespace-nowrap">
                         {signal.status === 'Pending' ? (
                           <span className="text-gray-400 dark:text-white/40 cursor-not-allowed" title="记录审批中，不可编辑">编辑/删除</span>
                         ) : (
@@ -3480,7 +3473,6 @@ export default function ProjectDataView() {
                         )}
                         <button onClick={() => setHistoryTarget({ entityTable: 'signals', entityId: signal.id, entityLabel: `信号 ${signal.unique_id || signal.id}` })} className="text-gray-500 dark:text-white/50 hover:text-gray-700 dark:text-white/70">历史</button>
                       </td>
-                      <td></td>
                     </tr>
 
                     {isExpanded && signal.status === 'Pending' && (() => {
