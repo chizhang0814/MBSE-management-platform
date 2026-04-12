@@ -360,7 +360,8 @@ export function deviceRoutes(db: Database) {
              AND ar.status = 'pending'
              AND ar.entity_id IN (${ph2})
              AND ai.recipient_username = ?
-             AND ai.status = 'pending'`,
+             AND ai.status = 'pending'
+             AND ar.current_phase = ai.item_type`,
           [...pendingDeviceIds, username]
         );
         for (const pi of pendingItems) pendingItemMap[pi.entity_id] = pi.item_type;

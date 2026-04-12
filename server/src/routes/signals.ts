@@ -361,7 +361,8 @@ export function signalRoutes(db: Database) {
              AND ar.status = 'pending'
              AND ar.entity_id IN (${ph})
              AND ai.recipient_username = ?
-             AND ai.status = 'pending'`,
+             AND ai.status = 'pending'
+             AND ar.current_phase = ai.item_type`,
           [...pendingSignalIds, username]
         );
         for (const pi of pendingItems) { pendingItemMap[pi.entity_id] = pi.item_type; pendingReqMap[pi.entity_id] = pi.approval_request_id; }
