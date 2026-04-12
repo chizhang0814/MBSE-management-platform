@@ -1706,28 +1706,48 @@ export default function ProjectDataView() {
         const hasAnyFilter = Object.values(deviceFilters).some(v => v) || configFilterSelected.length > 0;
         return (
         <div className="bg-white dark:bg-neutral-900 rounded-lg shadow">
-          <table className="min-w-full text-sm">
+          <table className="text-sm table-fixed" style={{ width: 'max-content', minWidth: '100%' }}>
+            <colgroup>
+              <col style={{ width: 32 }} />{/* 勾选框 */}
+              <col style={{ width: 40 }} />{/* 展开 */}
+              <col style={{ width: 200 }} />{/* 设备编号 */}
+              <col style={{ width: 100 }} />{/* 构型 */}
+              <col style={{ width: 200 }} />{/* 状态 */}
+              <col style={{ width: 150 }} />{/* LIN号 */}
+              <col style={{ width: 250 }} />{/* 设备中文名称 */}
+              <col style={{ width: 100 }} />{/* ATA */}
+              <col style={{ width: 50 }} />{/* DAL */}
+              <col style={{ width: 50 }} />{/* 等级 */}
+              <col style={{ width: 150 }} />{/* 设备负责人 */}
+              <col style={{ width: 60 }} />{/* 连接器数 */}
+              <col style={{ width: 120 }} />{/* 最后更新 */}
+              <col style={{ width: 130 }} />{/* 操作 */}
+              <col />{/* 右侧弹性占位 */}
+            </colgroup>
             <thead className="bg-gray-50 dark:bg-neutral-800 sticky top-0 z-10">
               <tr>
-                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50 w-8"></th>
-                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50 max-w-[90px]">设备编号</th>
-                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50 max-w-[80px]">构型</th>
-                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50 min-w-[100px]">状态</th>
-                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50 max-w-[100px]">设备LIN号（DOORS）</th>
+                <th className="px-1 py-2"></th>
+                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50"></th>
+                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50">设备编号</th>
+                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50">构型</th>
+                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50">状态</th>
+                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50">设备LIN号（DOORS）</th>
                 <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50">设备中文名称</th>
-                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50 max-w-[70px]">ATA（前2位筛选）</th>
-                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50 max-w-[60px]">DAL</th>
-                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50 max-w-[50px]">等级</th>
-                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50 max-w-[80px]">设备负责人</th>
-                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50 max-w-[60px]">连接器数</th>
-                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50 max-w-[90px] cursor-pointer select-none hover:text-black dark:hover:text-white"
+                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50">ATA（前2位筛选）</th>
+                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50">DAL</th>
+                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50">等级</th>
+                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50">设备负责人</th>
+                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50">连接器数</th>
+                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50 cursor-pointer select-none hover:text-black dark:hover:text-white"
                   onClick={() => setDeviceSortOrder(o => o === 'desc' ? 'asc' : 'desc')}>
                   最后更新 {deviceSortOrder === 'desc' ? '▼' : '▲'}
                 </th>
-                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50 w-[130px]">操作</th>
+                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50">操作</th>
+                <th></th>
               </tr>
               <tr className="bg-white dark:bg-neutral-900 border-b">
-                <th className="px-4 py-1"></th>
+                <th className="px-1 py-1"></th>
+                <th className="px-2 py-1"></th>
                 {['设备编号'].map(col => (
                   <th key={col} className="px-2 py-1 max-w-[90px]">
                     <div className="relative">
@@ -1878,6 +1898,7 @@ export default function ProjectDataView() {
                       <button onClick={() => setDeviceFilters({})} className="text-xs text-gray-400 dark:text-white/40 hover:text-red-500">全部清除</button>
                     )}
                   </th>
+                <th></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 dark:divide-white/10">
@@ -1898,23 +1919,29 @@ export default function ProjectDataView() {
                         else { setExpandedDeviceId(null); }
                       }}
                     >
-                      {filterMode === 'my_tasks' && (
-                        <td className="px-1 py-2 text-center w-8">
-                          {device.pending_item_type === 'approval' && (device as any).approval_request_id && (
+                      <td className="px-1 py-2 text-center w-8">
+                        {filterMode === 'my_tasks' && (() => {
+                          // 收集该设备相关的所有可审批 request_ids（自身 + 子项）
+                          const ids: number[] = [];
+                          if (device.pending_item_type === 'approval' && (device as any).approval_request_id) ids.push((device as any).approval_request_id);
+                          const subIds: number[] = (device as any).sub_approval_request_ids || [];
+                          ids.push(...subIds);
+                          if (ids.length === 0) return null;
+                          const allChecked = ids.every(id => batchApprovalIds.includes(id));
+                          return (
                             <input
                               type="checkbox"
-                              checked={batchApprovalIds.includes((device as any).approval_request_id)}
+                              checked={allChecked}
                               onChange={e => {
                                 e.stopPropagation();
-                                const rid = (device as any).approval_request_id;
-                                if (e.target.checked) setBatchApprovalIds(prev => [...prev, rid]);
-                                else setBatchApprovalIds(prev => prev.filter(id => id !== rid));
+                                if (e.target.checked) setBatchApprovalIds(prev => [...new Set([...prev, ...ids])]);
+                                else setBatchApprovalIds(prev => prev.filter(id => !ids.includes(id)));
                               }}
                               className="rounded border-gray-300 dark:border-white/20"
                             />
-                          )}
-                        </td>
-                      )}
+                          );
+                        })()}
+                      </td>
                       <td className="px-4 py-2 text-center">
                         <button
                           id={index === 0 ? 'tour-device-expand' : undefined}
@@ -2005,13 +2032,14 @@ export default function ProjectDataView() {
                           </>);
                         })()}
                         </td>
+                        <td></td>
                     </tr>
 
                     {isExpanded && (
                       <>
                     {/* 设备详情 */}
                     <tr>
-                      <td colSpan={13} className="px-0 py-0 bg-gray-50 dark:bg-neutral-800 border-b border-gray-200 dark:border-white/10">
+                      <td colSpan={15} className="px-0 py-0 bg-gray-50 dark:bg-neutral-800 border-b border-gray-200 dark:border-white/10">
                         <div className="pl-8 pr-4 py-3">
                           {/* 导入更新 diff */}
                           {(device as any).import_status === 'updated' && (() => {
@@ -2479,6 +2507,8 @@ export default function ProjectDataView() {
                                                           <td className="px-2 py-1">
                                                             {pin.针孔号}
                                                             {pin.status === 'Pending' && <span className="ml-1 px-1 py-0.5 text-xs bg-black/10 dark:bg-white/15 text-black dark:text-white rounded">审批中</span>}
+                                                            {(pin as any).pending_item_type === 'approval' && <span className="ml-1 px-1 py-0.5 text-xs bg-orange-100 text-orange-700 rounded">待我审批</span>}
+                                                            {(pin as any).pending_item_type === 'completion' && <span className="ml-1 px-1 py-0.5 text-xs bg-blue-100 text-blue-700 rounded">待我完善</span>}
                                                             {pin.status === 'normal' && <span className="ml-1 px-1 py-0.5 text-xs bg-green-100 text-green-700 rounded">已生效</span>}
                                                             {/* 已导入/已更新标签暂时隐藏 */}
                                                           </td>
@@ -3148,28 +3178,47 @@ export default function ProjectDataView() {
               ? `显示 ${filteredSignals.length} / ${signals.length} 条信号`
               : `已载入 ${Math.min(signalDisplayCount, filteredSignals.length)} / ${signalTotal} 条信号`}
           </div>
-          <table className="min-w-full text-sm">
+          <table className="text-sm table-fixed" style={{ width: 'max-content', minWidth: '100%' }}>
+            <colgroup>
+              <col style={{ width: 32 }} />{/* 勾选框/占位 */}
+              <col style={{ width: 32 }} />{/* # 序号 */}
+              {sgCheckMode && <col style={{ width: 32 }} />}{/* 分组勾选 */}
+              <col style={{ width: 24 }} />{/* 组名 */}
+              <col style={{ width: 32 }} />{/* 色带 */}
+              <col style={{ width: 250 }} />{/* Unique ID */}
+              <col style={{ width: 200 }} />{/* 状态 */}
+              <col style={{ width: 300 }} />{/* 信号名称摘要 */}
+              <col style={{ width: 80 }} />{/* 连接类型 */}
+              <col style={{ width: 70 }} />{/* 导线等级 */}
+              <col style={{ width: 300 }} />{/* 端点摘要 */}
+              <col style={{ width: 90 }} />{/* 创建人 */}
+              <col style={{ width: 90 }} />{/* 最后更新 */}
+              <col style={{ width: 130 }} />{/* 操作 */}
+              <col />{/* 右侧弹性占位 */}
+            </colgroup>
             <thead className="bg-gray-50 dark:bg-neutral-800 sticky top-[29px] z-10">
               <tr>
-                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50 w-8">#</th>
-                {sgCheckMode && <th className="px-1 py-2 text-center text-xs text-gray-500 dark:text-white/50 w-8"></th>}
-                {!sgCheckMode && filterMode === 'my_tasks' && <th className="px-1 py-2 text-center text-xs text-gray-500 dark:text-white/50 w-8"></th>}
-                <th className="py-2 text-xs text-gray-500 dark:text-white/50 w-6">组</th>
-                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50 w-8"></th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500 dark:text-white/50 max-w-[120px]">Unique ID</th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500 dark:text-white/50 w-[200px]">状态</th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500 dark:text-white/50 max-w-[180px]">信号名称摘要</th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500 dark:text-white/50 w-[80px]">连接类型</th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500 dark:text-white/50 w-[90px]">导线等级</th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500 dark:text-white/50 max-w-[180px]">端点摘要</th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500 dark:text-white/50 w-[120px]">创建人</th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500 dark:text-white/50 max-w-[90px] cursor-pointer select-none hover:text-black dark:hover:text-white"
+                {!sgCheckMode && <th className="px-1 py-2"></th>}
+                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50">#</th>
+                {sgCheckMode && <th className="px-1 py-2 text-center text-xs text-gray-500 dark:text-white/50"></th>}
+                <th className="py-2 text-xs text-gray-500 dark:text-white/50">组</th>
+                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50"></th>
+                <th className="px-4 py-2 text-left text-xs text-gray-500 dark:text-white/50">Unique ID</th>
+                <th className="px-4 py-2 text-left text-xs text-gray-500 dark:text-white/50">状态</th>
+                <th className="px-4 py-2 text-left text-xs text-gray-500 dark:text-white/50">信号名称摘要</th>
+                <th className="px-4 py-2 text-left text-xs text-gray-500 dark:text-white/50">连接类型</th>
+                <th className="px-4 py-2 text-left text-xs text-gray-500 dark:text-white/50">导线等级</th>
+                <th className="px-4 py-2 text-left text-xs text-gray-500 dark:text-white/50">端点摘要</th>
+                <th className="px-4 py-2 text-left text-xs text-gray-500 dark:text-white/50">创建人</th>
+                <th className="px-4 py-2 text-left text-xs text-gray-500 dark:text-white/50 cursor-pointer select-none hover:text-black dark:hover:text-white"
                   onClick={() => setSignalSortOrder(o => o === 'desc' ? 'asc' : 'desc')}>
                   最后更新 {signalSortOrder === 'desc' ? '▼' : '▲'}
                 </th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500 dark:text-white/50 w-[130px]">操作</th>
+                <th className="px-4 py-2 text-left text-xs text-gray-500 dark:text-white/50">操作</th>
+                <th></th>
               </tr>
               <tr className="bg-white dark:bg-neutral-900 border-b">
+                {!sgCheckMode && <th className="px-1 py-1"></th>}
                 <th className="px-1 py-1"></th>
                 <th className="p-0 w-6">
                   <select
@@ -3187,7 +3236,6 @@ export default function ProjectDataView() {
                   </select>
                 </th>
                 {sgCheckMode && <th className="px-1 py-1"></th>}
-                {!sgCheckMode && filterMode === 'my_tasks' && <th className="px-1 py-1 w-8"></th>}
                 <th className="px-2 py-1"></th>
                 {/* Unique ID */}
                 <th className="px-4 py-1 max-w-[120px]">
@@ -3260,6 +3308,7 @@ export default function ProjectDataView() {
                     <button onClick={() => setSignalFilters({})} className="text-xs text-gray-400 dark:text-white/40 hover:text-red-500">全部清除</button>
                   )}
                 </th>
+                <th></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 dark:divide-white/10">
@@ -3308,6 +3357,23 @@ export default function ProjectDataView() {
                         else { setExpandedSignalId(null); }
                       }}
                     >
+                      {!sgCheckMode && (
+                        <td className="px-1 py-2 text-center w-8">
+                          {filterMode === 'my_tasks' && signal.pending_item_type === 'approval' && (signal as any).approval_request_id && (
+                            <input
+                              type="checkbox"
+                              checked={batchApprovalIds.includes((signal as any).approval_request_id)}
+                              onChange={e => {
+                                e.stopPropagation();
+                                const rid = (signal as any).approval_request_id;
+                                if (e.target.checked) setBatchApprovalIds(prev => [...prev, rid]);
+                                else setBatchApprovalIds(prev => prev.filter(id => id !== rid));
+                              }}
+                              className="rounded border-gray-300 dark:border-white/20"
+                            />
+                          )}
+                        </td>
+                      )}
                       <td className="px-2 py-2 text-center text-xs">
                         {groupInfo ? (() => {
                           const gn = (signal as any).signal_group || '';
@@ -3328,23 +3394,6 @@ export default function ProjectDataView() {
                                 e.stopPropagation();
                                 if (e.target.checked) setSgCheckedIds(prev => [...prev, signal.id]);
                                 else setSgCheckedIds(prev => prev.filter(id => id !== signal.id));
-                              }}
-                              className="rounded border-gray-300 dark:border-white/20"
-                            />
-                          )}
-                        </td>
-                      )}
-                      {!sgCheckMode && filterMode === 'my_tasks' && (
-                        <td className="px-1 py-2 text-center">
-                          {signal.pending_item_type === 'approval' && (signal as any).approval_request_id && (
-                            <input
-                              type="checkbox"
-                              checked={batchApprovalIds.includes((signal as any).approval_request_id)}
-                              onChange={e => {
-                                e.stopPropagation();
-                                const rid = (signal as any).approval_request_id;
-                                if (e.target.checked) setBatchApprovalIds(prev => [...prev, rid]);
-                                else setBatchApprovalIds(prev => prev.filter(id => id !== rid));
                               }}
                               className="rounded border-gray-300 dark:border-white/20"
                             />
@@ -3431,6 +3480,7 @@ export default function ProjectDataView() {
                         )}
                         <button onClick={() => setHistoryTarget({ entityTable: 'signals', entityId: signal.id, entityLabel: `信号 ${signal.unique_id || signal.id}` })} className="text-gray-500 dark:text-white/50 hover:text-gray-700 dark:text-white/70">历史</button>
                       </td>
+                      <td></td>
                     </tr>
 
                     {isExpanded && signal.status === 'Pending' && (() => {
@@ -3890,7 +3940,12 @@ export default function ProjectDataView() {
           {filterMode === 'my_tasks' && (() => {
             // 收集当前视图所有可审批的 approval_request_id
             const allApprovalIds: number[] = activeView === 'devices'
-              ? devices.filter((d: any) => d.pending_item_type === 'approval' && d.approval_request_id).map((d: any) => d.approval_request_id)
+              ? devices.flatMap((d: any) => {
+                  const ids: number[] = [];
+                  if (d.pending_item_type === 'approval' && d.approval_request_id) ids.push(d.approval_request_id);
+                  if (d.sub_approval_request_ids) ids.push(...d.sub_approval_request_ids);
+                  return ids;
+                })
               : signals.filter((s: any) => s.pending_item_type === 'approval' && s.approval_request_id).map((s: any) => s.approval_request_id);
             const allChecked = allApprovalIds.length > 0 && allApprovalIds.every(id => batchApprovalIds.includes(id));
             return (

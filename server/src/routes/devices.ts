@@ -380,6 +380,7 @@ export function deviceRoutes(db: Database) {
       // pending_sub_item_type: 当前用户有待处理的类型
       const subHasMap: Record<number, boolean> = {};
       const subItemMap: Record<number, string> = {};
+      const subApprovalReqMap: Record<number, number[]> = {};
       if (deviceIds.length > 0) {
         const ph3 = deviceIds.map(() => '?').join(',');
         // 连接器级别 - 是否有任何pending
@@ -431,10 +432,43 @@ export function deviceRoutes(db: Database) {
         for (const r of pinMyPending) {
           if (!subItemMap[r.device_id]) subItemMap[r.device_id] = r.item_type;
         }
+        // 收集当前用户在子项上的 approval_request_id（用于批量审批）
+        const connMyApproval = await db.query(
+          `SELECT DISTINCT c.device_id, ar.id as approval_request_id
+           FROM approval_requests ar
+           JOIN approval_items ai ON ai.approval_request_id = ar.id
+           JOIN connectors c ON ar.entity_id = c.id
+           WHERE ar.entity_type = 'connector' AND ar.status = 'pending' AND ar.current_phase = 'approval'
+             AND c.device_id IN (${ph3})
+             AND ai.recipient_username = ? AND ai.item_type = 'approval' AND ai.status = 'pending'`,
+          [...deviceIds, username]
+        );
+        for (const r of connMyApproval) {
+          if (!subApprovalReqMap[r.device_id]) subApprovalReqMap[r.device_id] = [];
+          subApprovalReqMap[r.device_id].push(r.approval_request_id);
+        }
+        const pinMyApproval = await db.query(
+          `SELECT DISTINCT c.device_id, ar.id as approval_request_id
+           FROM approval_requests ar
+           JOIN approval_items ai ON ai.approval_request_id = ar.id
+           JOIN pins p ON ar.entity_id = p.id
+           JOIN connectors c ON p.connector_id = c.id
+           WHERE ar.entity_type = 'pin' AND ar.status = 'pending' AND ar.current_phase = 'approval'
+             AND c.device_id IN (${ph3})
+             AND ai.recipient_username = ? AND ai.item_type = 'approval' AND ai.status = 'pending'`,
+          [...deviceIds, username]
+        );
+        for (const r of pinMyApproval) {
+          if (!subApprovalReqMap[r.device_id]) subApprovalReqMap[r.device_id] = [];
+          if (!subApprovalReqMap[r.device_id].includes(r.approval_request_id)) {
+            subApprovalReqMap[r.device_id].push(r.approval_request_id);
+          }
+        }
       }
       for (const d of devices) {
         (d as any).has_pending_sub = subHasMap[d.id] || false;
         (d as any).pending_sub_item_type = subItemMap[d.id] || null;
+        (d as any).sub_approval_request_ids = subApprovalReqMap[d.id] || [];
       }
 
       // 附加 management_claim_requester 虚拟字段
@@ -1500,12 +1534,33 @@ export function deviceRoutes(db: Database) {
   // ── 针孔 CRUD ─────────────────────────────────────────────
 
   // GET /api/devices/:devId/connectors/:connId/pins
-  router.get('/:devId/connectors/:connId/pins', authenticate, async (req, res) => {
+  router.get('/:devId/connectors/:connId/pins', authenticate, async (req: AuthRequest, res) => {
     try {
+      const username = req.user!.username;
       const pins = await db.query(
         'SELECT * FROM pins WHERE connector_id = ? ORDER BY 针孔号',
         [req.params.connId]
       );
+      // 附加当前用户的 pending_item_type
+      const pendingPinIds = pins.filter((p: any) => p.status === 'Pending').map((p: any) => p.id);
+      if (pendingPinIds.length > 0) {
+        const ph = pendingPinIds.map(() => '?').join(',');
+        const pendingItems = await db.query(
+          `SELECT ar.entity_id, ai.item_type
+           FROM approval_requests ar
+           JOIN approval_items ai ON ai.approval_request_id = ar.id
+           WHERE ar.entity_type = 'pin' AND ar.status = 'pending'
+             AND ar.entity_id IN (${ph})
+             AND ai.recipient_username = ? AND ai.status = 'pending'
+             AND ar.current_phase = ai.item_type`,
+          [...pendingPinIds, username]
+        );
+        const pinItemMap: Record<number, string> = {};
+        for (const pi of pendingItems) pinItemMap[pi.entity_id] = pi.item_type;
+        for (const p of pins) {
+          (p as any).pending_item_type = p.status === 'Pending' ? (pinItemMap[p.id] || null) : null;
+        }
+      }
       res.json({ pins });
     } catch (error: any) {
       res.status(500).json({ error: error.message || '获取针孔失败' });
