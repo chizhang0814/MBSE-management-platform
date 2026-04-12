@@ -1,16 +1,16 @@
 import express from 'express';
 import { Database } from '../database.js';
-import { authenticate } from '../middleware/auth.js';
+import { authenticate, AuthRequest } from '../middleware/auth.js';
 
 export function eicdRoutes(db: Database) {
   const router = express.Router();
 
   // GET /api/eicd/:deviceId?project_id=N
-  router.get('/:deviceId', authenticate, async (req, res) => {
+  router.get('/:deviceId', authenticate, async (req: AuthRequest, res) => {
     try {
-      const deviceId = parseInt(req.params.deviceId);
-      const projectId = parseInt(req.query.project_id as string);
-      if (isNaN(deviceId) || isNaN(projectId)) {
+      const deviceId = Number(req.params.deviceId);
+      const projectId = Number(req.query.project_id);
+      if (!Number.isInteger(deviceId) || !Number.isInteger(projectId) || deviceId <= 0 || projectId <= 0) {
         return res.status(400).json({ error: '缺少 deviceId 或 project_id' });
       }
 
@@ -22,24 +22,38 @@ export function eicdRoutes(db: Database) {
       if (!mainDevice) return res.status(404).json({ error: '设备不存在' });
 
       // 2. Get all connectors & pins for the main device
-      const mainConnectors = await db.query(
-        `SELECT c.id, c.设备端元器件编号
-         FROM connectors c WHERE c.device_id = ? ORDER BY c.设备端元器件编号`,
+      const connPinRows = await db.query(
+        `SELECT c.id as connector_id, c.设备端元器件编号, p.id as pin_id, p.针孔号
+         FROM connectors c
+         LEFT JOIN pins p ON p.connector_id = c.id
+         WHERE c.device_id = ?
+         ORDER BY c.设备端元器件编号, p.针孔号`,
         [deviceId]
       );
-      for (const conn of mainConnectors) {
-        conn.pins = await db.query(
-          `SELECT id, 针孔号 FROM pins WHERE connector_id = ? ORDER BY 针孔号`,
-          [conn.id]
-        );
+
+      // Group into connector→pins structure
+      const connMap = new Map<number, any>();
+      for (const row of connPinRows) {
+        if (!connMap.has(row.connector_id)) {
+          connMap.set(row.connector_id, {
+            id: row.connector_id,
+            设备端元器件编号: row.设备端元器件编号,
+            pins: [],
+          });
+        }
+        if (row.pin_id) {
+          connMap.get(row.connector_id)!.pins.push({ id: row.pin_id, 针孔号: row.针孔号 });
+        }
       }
+      const mainConnectors = Array.from(connMap.values());
 
       // 3. Find all signals connected to this device via signal_endpoints
       const myEndpoints = await db.query(
         `SELECT se.signal_id, se.pin_id, se.id as endpoint_id
          FROM signal_endpoints se
-         WHERE se.device_id = ?`,
-        [deviceId]
+         JOIN signals s ON se.signal_id = s.id
+         WHERE se.device_id = ? AND s.project_id = ?`,
+        [deviceId, projectId]
       );
       if (myEndpoints.length === 0) {
         return res.json({
