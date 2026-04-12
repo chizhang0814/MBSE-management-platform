@@ -1448,6 +1448,12 @@ export function signalRoutes(db: Database) {
         sigMeta[ep.sig_id] = { conn_type: ct || '', proto: proto || '', unique_id: ep.unique_id, signal_group: ep.signal_group };
       }
 
+      // 统计每条信号的端点数量（用于区分组网/非组网信号）
+      const sigEpCount: Record<number, number> = {};
+      for (const ep of epRows) {
+        sigEpCount[ep.sig_id] = (sigEpCount[ep.sig_id] || 0) + 1;
+      }
+
       // 按连接器+连接类型分桶
       const buckets: Record<string, Array<{ sig_id: number; conn_type: string; proto: string; sig_name: string; conn_comp: string }>> = {};
       for (const ep of epRows) {
@@ -1496,6 +1502,12 @@ export function signalRoutes(db: Database) {
           const noExtra = protos.every((p: string) => autoAll.includes(p));
           if (!hasAllRequired || !noExtra) continue;
 
+          // 组内不能混合组网信号（>2端点）和非组网信号（≤2端点）
+          const epCounts = sigs.map(s => sigEpCount[s.sig_id] || 0);
+          const hasNetworking = epCounts.some(c => c > 2);
+          const hasNonNetworking = epCounts.some(c => c <= 2);
+          if (hasNetworking && hasNonNetworking) continue;
+
           // 高置信度！创建分组
           // 生成编号
           const existing = await db.query(
@@ -1516,8 +1528,9 @@ export function signalRoutes(db: Database) {
             const vals: any[] = [];
 
             const meta = sigMeta[sig.sig_id];
-            if (!meta?.conn_type && inf.conn_type) { updates.push('"连接类型" = ?'); vals.push(inf.conn_type); }
-            if (!meta?.proto && inf.proto) { updates.push('"协议标识" = ?'); vals.push(inf.proto); }
+            // 分组时强制统一连接类型和协议标识（即使已有值也覆盖，保证组内一致）
+            if (inf.conn_type) { updates.push('"连接类型" = ?'); vals.push(inf.conn_type); }
+            if (inf.proto) { updates.push('"协议标识" = ?'); vals.push(inf.proto); }
             if (inf.line_type) { updates.push('"线类型" = ?'); vals.push(inf.line_type); }
             updates.push('signal_group = ?'); vals.push(groupName);
 
