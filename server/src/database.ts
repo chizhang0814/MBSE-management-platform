@@ -1493,6 +1493,42 @@ export class Database {
       }
     } catch (e: any) { console.log('Migration: cleanup stale completions:', e.message); }
 
+    // ── 修复审批已通过但实体仍为Pending的数据 ──
+    try {
+      for (const table of ['devices', 'connectors', 'pins'] as const) {
+        const entityType = table.slice(0, -1); // device, connector, pin
+        const stuck = await this.query(`
+          SELECT t.id FROM ${table} t
+          WHERE t.status = 'Pending'
+            AND NOT EXISTS (
+              SELECT 1 FROM approval_requests ar
+              WHERE ar.entity_type = '${entityType}' AND ar.entity_id = t.id AND ar.status = 'pending'
+            )
+        `);
+        if (stuck.length > 0) {
+          for (const row of stuck) {
+            await this.run(`UPDATE ${table} SET status = 'normal' WHERE id = ?`, [row.id]);
+          }
+          console.log(`Database migration: 修复 ${stuck.length} 个 ${table} 实体状态 Pending→normal（审批已结束但状态未更新）`);
+        }
+      }
+      // 信号同理
+      const stuckSignals = await this.query(`
+        SELECT s.id FROM signals s
+        WHERE s.status = 'Pending'
+          AND NOT EXISTS (
+            SELECT 1 FROM approval_requests ar
+            WHERE ar.entity_type = 'signal' AND ar.entity_id = s.id AND ar.status = 'pending'
+          )
+      `);
+      if (stuckSignals.length > 0) {
+        for (const row of stuckSignals) {
+          await this.run(`UPDATE signals SET status = 'Active' WHERE id = ?`, [row.id]);
+        }
+        console.log(`Database migration: 修复 ${stuckSignals.length} 个信号状态 Pending→Active（审批已结束但状态未更新）`);
+      }
+    } catch (e: any) { console.log('Migration: fix stuck Pending entities:', e.message); }
+
     // 初始化默认用户（不再创建示例数据）
     await this.initDefaultData();
   }

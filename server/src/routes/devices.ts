@@ -837,6 +837,7 @@ export function deviceRoutes(db: Database) {
       delete fields.pending_item_type;
       delete fields.pending_sub_item_type;
       delete fields.has_pending_sub;
+      delete fields.sub_approval_request_ids;
       delete fields.management_claim_requester;
       delete fields.approval_request_id;
       delete fields.import_status;
@@ -1279,6 +1280,7 @@ export function deviceRoutes(db: Database) {
 
       const { version, forceDraft, ...fields } = req.body;
       delete fields.id; delete fields.device_id; delete fields.created_at; delete fields.pin_count;
+      delete fields.has_pending_sub; delete fields.import_status;
 
       // 连接器编号格式校验
       if (fields['设备端元器件编号']) {
@@ -1658,6 +1660,7 @@ export function deviceRoutes(db: Database) {
 
       const { version, forceDraft, ...fields } = req.body;
       delete fields.id; delete fields.connector_id; delete fields.created_at;
+      delete fields.pending_item_type; delete fields.import_status;
 
       const oldPin = await db.get('SELECT * FROM pins WHERE id = ?', [pinId]);
       const setClauses = Object.keys(fields).map(k => `"${k}" = ?`).join(', ');

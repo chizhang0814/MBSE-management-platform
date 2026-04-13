@@ -465,6 +465,8 @@ export async function checkAndAdvancePhase(db: Database, approvalRequestId: numb
       } else if (req.action_type === 'edit_pin') {
         // 针孔编辑：将 payload 新值应用到针孔
         const newFields = (() => { try { return JSON.parse(req.payload); } catch { return {}; } })();
+        delete newFields.pending_item_type;
+        delete newFields.import_status;
         if (Object.keys(newFields).length > 0) {
           const setClauses = Object.keys(newFields).map(k => `"${k}" = ?`).join(', ');
           await db.run(
@@ -477,6 +479,9 @@ export async function checkAndAdvancePhase(db: Database, approvalRequestId: numb
       } else if (req.action_type === 'edit_signal') {
         // 信号编辑：将 payload 新值应用到信号
         const newFields = (() => { try { return JSON.parse(req.payload); } catch { return {}; } })();
+        delete newFields.pending_item_type; delete newFields.approval_request_id;
+        delete newFields.endpoint_summary; delete newFields['信号名称摘要'];
+        delete newFields.can_edit; delete newFields.endpoint_count; delete newFields['导线等级'];
         if (Object.keys(newFields).length > 0) {
           const setClauses = Object.keys(newFields).map(k => `"${k}" = ?`).join(', ');
           await db.run(
@@ -498,6 +503,7 @@ export async function checkAndAdvancePhase(db: Database, approvalRequestId: numb
         delete newFields.pending_item_type;
         delete newFields.pending_sub_item_type;
         delete newFields.has_pending_sub;
+        delete newFields.sub_approval_request_ids;
 
         if (Object.keys(newFields).length > 0) {
           const setClauses = Object.keys(newFields).map(k => `"${k}" = ?`).join(', ');
