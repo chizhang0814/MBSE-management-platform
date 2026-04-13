@@ -4,448 +4,564 @@ import React, { useRef, useMemo, useCallback, useState } from 'react';
 
 interface PinData { id: number; 针孔号: string; }
 interface ConnectorData { id: number; 设备端元器件编号: string; pins: PinData[]; }
-interface DeviceData { id: number; 设备编号: string; 设备中文名称?: string; connectors: ConnectorData[]; }
+interface DeviceData { id: number; 设备编号: string; 设备中文名称?: string; ata?: string | null; connectors: ConnectorData[]; }
 interface ConnectionData {
   signalId: number; signalUniqueId?: string; signalStatus: string;
   mainPinId: number; remotePinId: number; remoteDeviceId: number;
+  direction?: 'toRemote' | 'toMain' | 'bidirectional' | 'unknown';
+  signalGroup?: string | null;
 }
+
+interface SignalGroupInfo { present: string[]; missing: string[]; }
+
+export type Selection =
+  | { type: 'device'; deviceId: number }
+  | { type: 'connector'; connectorId: number; deviceId: number }
+  | { type: 'pin'; pinId: number; connectorId: number; deviceId: number }
+  | { type: 'signal'; signalId: number }
+  | null;
 
 export interface EICDDiagramProps {
   mainDevice: DeviceData;
   remoteDevices: DeviceData[];
   connections: ConnectionData[];
+  signalGroups?: Record<string, SignalGroupInfo>;
+  selection: Selection;
+  onSelect: (sel: Selection) => void;
+  onDblClick?: (sel: NonNullable<Selection>) => void;
 }
 
 /* ───────── Layout Constants ───────── */
 
-const PIN_SIZE = 14;
-const PIN_GAP = 4;
-const PIN_LABEL_CHAR_W = 6.5;
-const CONN_LABEL_W = 22;          // vertical label strip width inside connector
-const CONN_PADDING_TOP = 6;
-const CONN_PADDING_BOTTOM = 6;
-const CONN_GAP = 10;              // gap between connectors on same device
-const DEV_PADDING_Y = 12;
-const DEV_HEADER_H = 30;
-const DEV_MIN_W = 140;
-const CHANNEL_WIDTH = 260;        // horizontal space between main and remote
-const MIN_REMOTE_GAP = 24;        // vertical gap between remote devices
+const PIN_SQ = 12;               // pin square size
+const PIN_GAP = 4;               // vertical gap between pins (uniform everywhere)
+const CONN_MIN_H = 20;           // min connector height
+const CONN_GAP = 14;             // gap between connectors on device edge
+const DEV_PAD = 16;              // padding inside device (top/bottom)
+const DEV_MIN_BODY_W = 100;
+const CHANNEL_W = 340;           // horizontal gap between main pin edge and remote pin edge
+const REMOTE_GAP = 32;           // vertical gap between remote devices
 const MARGIN = 40;
 
-/* ───────── Colour Palette ───────── */
+/* ───────── Colours ───────── */
 
 function getColors(dark: boolean) {
   return dark ? {
-    bg: '#171717',
-    deviceFill: '#1E293B', deviceBorder: '#475569', deviceText: '#F1F5F9',
-    connFill: '#334155',   connBorder: '#64748B',   connText: '#CBD5E1',
-    pinFill: '#312E81',    pinBorder: '#818CF8',     pinText: '#C7D2FE',
-    approvedLine: '#34D399', pendingLine: '#737373',
-    labelBg: '#1E293B', labelBorder: '#475569', labelText: '#E2E8F0',
-    legendText: '#94A3B8',
+    bg: '#0F172A',
+    devFill: '#1E293B', devBorder: '#3B82F6', devText: '#E2E8F0',
+    connFill: '#1E3A5F', connBorder: '#60A5FA', connText: '#93C5FD',
+    pinFill: '#78350F', pinBorder: '#F59E0B', pinText: '#FCD34D',
+    wireApproved: '#34D399', wirePending: '#6B7280',
+    selStroke: '#F472B6', legendText: '#94A3B8',
+    arrowToRemote: '#60A5FA',   // blue — main→remote
+    arrowToMain: '#F59E0B',     // amber — remote→main
+    arrowBidi: '#A78BFA',       // purple — bidirectional
   } : {
     bg: '#FFFFFF',
-    deviceFill: '#F0FDF4', deviceBorder: '#16A34A', deviceText: '#14532D',
-    connFill: '#EFF6FF',   connBorder: '#3B82F6',   connText: '#1E40AF',
-    pinFill: '#FEF3C7',    pinBorder: '#D97706',     pinText: '#92400E',
-    approvedLine: '#059669', pendingLine: '#9CA3AF',
-    labelBg: '#FFFFFF', labelBorder: '#D1D5DB', labelText: '#374151',
-    legendText: '#6B7280',
+    devFill: '#ECFDF5', devBorder: '#059669', devText: '#064E3B',
+    connFill: '#EFF6FF', connBorder: '#3B82F6', connText: '#1D4ED8',
+    pinFill: '#FFFBEB', pinBorder: '#D97706', pinText: '#92400E',
+    wireApproved: '#059669', wirePending: '#9CA3AF',
+    selStroke: '#EC4899', legendText: '#6B7280',
+    arrowToRemote: '#3B82F6',   // blue — main→remote
+    arrowToMain: '#D97706',     // amber — remote→main
+    arrowBidi: '#7C3AED',       // purple — bidirectional
   };
+}
+
+/* ───────── ATA Color Palette ───────── */
+
+const ATA_COLORS = [
+  { devFill: '#ECFDF5', devBorder: '#059669' },
+  { devFill: '#EFF6FF', devBorder: '#2563EB' },
+  { devFill: '#FEF3C7', devBorder: '#D97706' },
+  { devFill: '#FDE2E2', devBorder: '#DC2626' },
+  { devFill: '#F3E8FF', devBorder: '#7C3AED' },
+  { devFill: '#E0F2FE', devBorder: '#0284C7' },
+  { devFill: '#FFF1F2', devBorder: '#E11D48' },
+  { devFill: '#ECFEFF', devBorder: '#0891B2' },
+  { devFill: '#F0FDF4', devBorder: '#16A34A' },
+  { devFill: '#FEF9C3', devBorder: '#CA8A04' },
+];
+const ATA_COLORS_DARK = [
+  { devFill: '#064E3B', devBorder: '#34D399' },
+  { devFill: '#1E3A5F', devBorder: '#60A5FA' },
+  { devFill: '#451A03', devBorder: '#FBBF24' },
+  { devFill: '#450A0A', devBorder: '#F87171' },
+  { devFill: '#2E1065', devBorder: '#A78BFA' },
+  { devFill: '#0C4A6E', devBorder: '#38BDF8' },
+  { devFill: '#4C0519', devBorder: '#FB7185' },
+  { devFill: '#164E63', devBorder: '#22D3EE' },
+  { devFill: '#052E16', devBorder: '#4ADE80' },
+  { devFill: '#422006', devBorder: '#FACC15' },
+];
+
+function ataChapter(ata: string | null | undefined): string {
+  if (!ata) return '';
+  const m = ata.match(/^(\d{2})/);
+  return m ? m[1] : '';
 }
 
 /* ───────── Helpers ───────── */
 
-function approxTextWidth(text: string, charW: number): number {
+function approxW(text: string, charW: number): number {
   let w = 0;
-  for (let i = 0; i < text.length; i++) {
-    w += text.charCodeAt(i) > 0x2e80 ? charW * 1.6 : charW;
-  }
+  for (let i = 0; i < text.length; i++) w += text.charCodeAt(i) > 0x2e80 ? charW * 1.6 : charW;
   return w;
 }
 
-function isApproved(status: string): boolean {
-  const s = status.toLowerCase();
-  return s === 'normal' || s === 'active' || s === 'approved';
+function isApproved(s: string): boolean {
+  const l = s.toLowerCase();
+  return l === 'normal' || l === 'active' || l === 'approved';
 }
 
-function deviceLabel(d: DeviceData): string {
-  return d.设备中文名称 ? `${d.设备编号}\n${d.设备中文名称}` : d.设备编号;
+/* ───────── Geometry calculations ───────── */
+
+/** Width of connector rect: just enough for pin labels. */
+function connW(pins: PinData[]): number {
+  if (pins.length === 0) return PIN_SQ;
+  const maxLabel = Math.max(...pins.map(p => approxW(p.针孔号, 6)));
+  return Math.max(PIN_SQ, maxLabel + 4);
 }
 
-/* ───────── Layout: connector dimensions ───────── */
-
-/** Connector is a narrow rectangle holding pins vertically + a label strip */
-function connHeight(pins: PinData[]): number {
-  if (pins.length === 0) return CONN_PADDING_TOP + CONN_PADDING_BOTTOM + PIN_SIZE;
-  return CONN_PADDING_TOP + pins.length * PIN_SIZE + (pins.length - 1) * PIN_GAP + CONN_PADDING_BOTTOM;
+/** Height of connector rect: fits pin stack AND vertical connector label (capped). */
+function connH(conn: ConnectorData): number {
+  const n = conn.pins.length;
+  const pinStackH = n === 0 ? 0 : n * PIN_SQ + (n - 1) * PIN_GAP;
+  const pinH = pinStackH + 8; // 4px padding top + bottom for centering
+  const labelH = Math.min(approxW(conn.设备端元器件编号, 7) + 10, 80); // cap label height at 80
+  return Math.max(CONN_MIN_H, pinH, labelH);
 }
 
-function connWidth(pins: PinData[]): number {
-  const maxLabelW = Math.max(24, ...pins.map(p => approxTextWidth(p.针孔号, PIN_LABEL_CHAR_W)));
-  return CONN_LABEL_W + 6 + maxLabelW + 6 + PIN_SIZE + 4;
+/** Height of device body: must fit all connectors stacked + padding. */
+function devBodyH(connectors: ConnectorData[]): number {
+  if (connectors.length === 0) return DEV_PAD * 2 + 24;
+  const total = connectors.reduce((s, c) => s + connH(c), 0) + (connectors.length - 1) * CONN_GAP;
+  return DEV_PAD * 2 + total;
 }
 
-/* ───────── Layout: device body (no connectors inside) ───────── */
-
-function deviceBodyW(device: DeviceData): number {
-  const lines = deviceLabel(device).split('\n');
-  const maxLine = Math.max(...lines.map(l => approxTextWidth(l, 8)));
-  return Math.max(DEV_MIN_W, maxLine + 24);
+/** Width of device body: fits device name. */
+function devBodyW(device: DeviceData): number {
+  const nameLine = device.设备中文名称 ? `${device.设备编号} (${device.设备中文名称})` : device.设备编号;
+  const nameW = approxW(nameLine, 7.5) + 20;
+  return Math.max(DEV_MIN_BODY_W, nameW);
 }
 
-function deviceBodyH(connectors: ConnectorData[]): number {
-  if (connectors.length === 0) return DEV_HEADER_H + DEV_PADDING_Y * 2;
-  const totalConnH = connectors.reduce((s, c) => s + connHeight(c.pins), 0);
-  const gaps = (connectors.length - 1) * CONN_GAP;
-  return Math.max(DEV_HEADER_H + DEV_PADDING_Y * 2, DEV_PADDING_Y + totalConnH + gaps + DEV_PADDING_Y);
-}
-
-/* ───────── Pin positions (IBD style: connectors outside device body) ───────── */
+/* ───────── Pin position builder ───────── */
 
 interface Pos { x: number; y: number; }
 
 function buildPinPositions(
-  device: DeviceData, devX: number, devY: number,
-  bodyW: number, pinsOnRight: boolean,
+  device: DeviceData, devX: number, devY: number, bW: number, pinsOnRight: boolean,
 ): Map<number, Pos> {
   const map = new Map<number, Pos>();
-  const bodyH = deviceBodyH(device.connectors);
-
-  // connectors are stacked vertically, centered on the device body edge
-  const totalConnH = device.connectors.reduce((s, c) => s + connHeight(c.pins), 0)
+  const bH = devBodyH(device.connectors);
+  const totalConnH = device.connectors.reduce((s, c) => s + connH(c), 0)
     + Math.max(0, device.connectors.length - 1) * CONN_GAP;
-  let cy = devY + (bodyH - totalConnH) / 2;
+  let cy = devY + (bH - totalConnH) / 2;
 
   for (const conn of device.connectors) {
-    const cH = connHeight(conn.pins);
-    let pinY = cy + CONN_PADDING_TOP;
+    const cH = connH(conn);
+    const cW = connW(conn.pins);
+    const n = conn.pins.length;
+    const pinStackH = n * PIN_SQ + Math.max(0, n - 1) * PIN_GAP;
+    let pinY = cy + (cH - pinStackH) / 2; // centered vertically
 
     for (const pin of conn.pins) {
-      const pinCenterY = pinY + PIN_SIZE / 2;
-      // Pin edge: the side of the pin square facing outward (toward the wires)
+      const centerY = pinY + PIN_SQ / 2;
       let edgeX: number;
       if (pinsOnRight) {
-        // Connector is to the RIGHT of device body
-        const connX = devX + bodyW; // connector left edge = device right edge
-        const cW = connWidth(conn.pins);
-        edgeX = connX + cW; // right edge of pin square
+        edgeX = devX + bW + cW + PIN_SQ;
       } else {
-        // Connector is to the LEFT of device body
-        const cW = connWidth(conn.pins);
-        const connX = devX - cW;
-        edgeX = connX; // left edge of pin square
+        edgeX = devX - cW - PIN_SQ;
       }
-      map.set(pin.id, { x: edgeX, y: pinCenterY });
-      pinY += PIN_SIZE + PIN_GAP;
+      map.set(pin.id, { x: edgeX, y: centerY });
+      pinY += PIN_SQ + PIN_GAP;
     }
     cy += cH + CONN_GAP;
   }
   return map;
 }
 
-/* ───────── Crossing minimization: reorder pins within remote connectors ───────── */
+/* ───────── Crossing minimization ───────── */
 
-function optimizeRemoteDeviceOrder(
-  remotes: DeviceData[], connections: ConnectionData[],
-  mainPinPos: Map<number, Pos>,
+function sortRemoteDevices(
+  remotes: DeviceData[], conns: ConnectionData[], mainPins: Map<number, Pos>,
 ): DeviceData[] {
   if (remotes.length <= 1) return remotes;
   const scores = new Map<number, number>();
   for (const rd of remotes) {
-    const ys = connections
-      .filter(c => c.remoteDeviceId === rd.id)
-      .map(c => mainPinPos.get(c.mainPinId)?.y ?? 0);
+    const ys = conns.filter(c => c.remoteDeviceId === rd.id)
+      .map(c => mainPins.get(c.mainPinId)?.y ?? 0);
     scores.set(rd.id, ys.length > 0 ? ys.reduce((a, b) => a + b, 0) / ys.length : Infinity);
   }
   return [...remotes].sort((a, b) => (scores.get(a.id) ?? 0) - (scores.get(b.id) ?? 0));
 }
 
-/** Reorder pins within each connector of a remote device to minimize crossings */
-function optimizePinOrder(device: DeviceData, connections: ConnectionData[], mainPinPos: Map<number, Pos>): DeviceData {
+function sortPinsInRemote(device: DeviceData, conns: ConnectionData[], mainPins: Map<number, Pos>): DeviceData {
   return {
     ...device,
     connectors: device.connectors.map(conn => {
-      const pinsWithScore = conn.pins.map(pin => {
-        const conns = connections.filter(c => c.remotePinId === pin.id);
-        const avgY = conns.length > 0
-          ? conns.reduce((s, c) => s + (mainPinPos.get(c.mainPinId)?.y ?? 0), 0) / conns.length
-          : Infinity;
-        return { pin, avgY };
+      const scored = conn.pins.map(pin => {
+        const cs = conns.filter(c => c.remotePinId === pin.id);
+        const avg = cs.length > 0 ? cs.reduce((s, c) => s + (mainPins.get(c.mainPinId)?.y ?? 0), 0) / cs.length : Infinity;
+        return { pin, avg };
       });
-      pinsWithScore.sort((a, b) => a.avgY - b.avgY);
-      return { ...conn, pins: pinsWithScore.map(p => p.pin) };
+      scored.sort((a, b) => a.avg - b.avg);
+      return { ...conn, pins: scored.map(s => s.pin) };
     }),
   };
 }
 
-/* ───────── Connection path ───────── */
+/* ───────── Connection path & arrows ───────── */
 
-function connectionPath(from: Pos, to: Pos): string {
+function wirePath(from: Pos, to: Pos): string {
   const dy = to.y - from.y;
   if (Math.abs(dy) < 2) return `M ${from.x} ${from.y} L ${to.x} ${to.y}`;
   const dx = to.x - from.x;
-  const cpOffset = Math.min(Math.abs(dx) * 0.4, 100);
-  return `M ${from.x} ${from.y} C ${from.x + cpOffset} ${from.y}, ${to.x - cpOffset} ${to.y}, ${to.x} ${to.y}`;
+  const cp = Math.min(Math.abs(dx) * 0.4, 100);
+  return `M ${from.x} ${from.y} C ${from.x + cp} ${from.y}, ${to.x - cp} ${to.y}, ${to.x} ${to.y}`;
 }
 
-/* ───────── Component ───────── */
+/** Evaluate cubic bezier at parameter t ∈ [0,1]. */
+function bezierPoint(from: Pos, to: Pos, t: number): Pos {
+  const dy = to.y - from.y;
+  if (Math.abs(dy) < 2) {
+    return { x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t };
+  }
+  const dx = to.x - from.x;
+  const cp = Math.min(Math.abs(dx) * 0.4, 100);
+  const p0x = from.x, p0y = from.y;
+  const p1x = from.x + cp, p1y = from.y;
+  const p2x = to.x - cp, p2y = to.y;
+  const p3x = to.x, p3y = to.y;
+  const u = 1 - t;
+  return {
+    x: u * u * u * p0x + 3 * u * u * t * p1x + 3 * u * t * t * p2x + t * t * t * p3x,
+    y: u * u * u * p0y + 3 * u * u * t * p1y + 3 * u * t * t * p2y + t * t * t * p3y,
+  };
+}
 
-export default function EICDDiagram({ mainDevice, remoteDevices, connections }: EICDDiagramProps) {
+/** Tangent vector (dx, dy) of cubic bezier at parameter t. */
+function bezierTangent(from: Pos, to: Pos, t: number): Pos {
+  const dy = to.y - from.y;
+  if (Math.abs(dy) < 2) {
+    return { x: to.x - from.x, y: to.y - from.y };
+  }
+  const dx = to.x - from.x;
+  const cp = Math.min(Math.abs(dx) * 0.4, 100);
+  const p0x = from.x, p0y = from.y;
+  const p1x = from.x + cp, p1y = from.y;
+  const p2x = to.x - cp, p2y = to.y;
+  const p3x = to.x, p3y = to.y;
+  const u = 1 - t;
+  return {
+    x: 3 * u * u * (p1x - p0x) + 6 * u * t * (p2x - p1x) + 3 * t * t * (p3x - p2x),
+    y: 3 * u * u * (p1y - p0y) + 6 * u * t * (p2y - p1y) + 3 * t * t * (p3y - p2y),
+  };
+}
+
+/** Draw an arrowhead at parameter t along a wire from→to pointing in tangent direction. */
+function arrowAt(from: Pos, to: Pos, t: number, color: string, key: string, flip?: boolean): JSX.Element {
+  const pt = bezierPoint(from, to, t);
+  const tg = bezierTangent(from, to, t);
+  const len = Math.sqrt(tg.x * tg.x + tg.y * tg.y);
+  if (len === 0) return <g key={key} />;
+  let ux = tg.x / len, uy = tg.y / len;
+  if (flip) { ux = -ux; uy = -uy; }
+  const sz = 5; // arrowhead size
+  // Two points of the arrowhead (perpendicular offsets)
+  const ax = pt.x - ux * sz + uy * sz * 0.5;
+  const ay = pt.y - uy * sz - ux * sz * 0.5;
+  const bx = pt.x - ux * sz - uy * sz * 0.5;
+  const by = pt.y - uy * sz + ux * sz * 0.5;
+  return (
+    <polygon key={key}
+      points={`${pt.x},${pt.y} ${ax},${ay} ${bx},${by}`}
+      fill={color} style={{ pointerEvents: 'none' }} />
+  );
+}
+
+/* ───────── Twisted pair markers (IEC 60617 figure-eight style) ───────── */
+
+const TWIST_MARKER_INTERVAL = 30; // pixels between twist markers along the wire path
+const TWIST_MARKER_SIZE = 4;      // half-size of each figure-eight marker
+
+/* ═══════════ Component ═══════════ */
+
+export default function EICDDiagram({ mainDevice, remoteDevices, connections, signalGroups, selection, onSelect, onDblClick }: EICDDiagramProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const isDark = document.documentElement.classList.contains('dark');
-  const COL = getColors(isDark);
+  const C = getColors(isDark);
 
-  const [showLabels, setShowLabels] = useState(true);
-  // deviceOffsets: deviceId -> {dx, dy} drag offset from default position
-  const [deviceOffsets, setDeviceOffsets] = useState<Record<number, { dx: number; dy: number }>>({});
-  const [dragging, setDragging] = useState<{ deviceId: number; startMX: number; startMY: number; startDX: number; startDY: number } | null>(null);
+  const [offsets, setOffsets] = useState<Record<number, { dx: number; dy: number }>>({});
+  const [drag, setDrag] = useState<{ id: number; mx: number; my: number; ox: number; oy: number } | null>(null);
+  const [twistedView, setTwistedView] = useState(false);
+  const [showFilter, setShowFilter] = useState(false);
+  const [filterSearch, setFilterSearch] = useState('');
 
-  /* ── Default layout computation ── */
-  const defaultLayout = useMemo(() => {
-    // Filter to only connected pins/connectors
-    const connectedMainPinIds = new Set(connections.map(c => c.mainPinId));
-    const connectedRemotePinIds = new Set(connections.map(c => c.remotePinId));
+  /* ── Connected remote device list (stable) ── */
+  const connectedRemotes = useMemo(() => {
+    const ids = [...new Set(connections.map(c => c.remoteDeviceId))];
+    return remoteDevices.filter(rd => ids.includes(rd.id));
+  }, [connections, remoteDevices]);
 
-    const filterDevice = (d: DeviceData, pinIds: Set<number>): DeviceData => {
-      const connIds = new Set<number>();
-      for (const conn of d.connectors) {
-        for (const pin of conn.pins) {
-          if (pinIds.has(pin.id)) { connIds.add(conn.id); break; }
-        }
-      }
-      return {
-        ...d,
-        connectors: d.connectors
-          .filter(c => connIds.has(c.id))
-          .map(c => ({ ...c, pins: c.pins.filter(p => pinIds.has(p.id)) })),
-      };
-    };
+  /* ── ATA color map ── */
+  const ataColorMap = useMemo(() => {
+    const allDevices = [mainDevice, ...remoteDevices];
+    const chapters = [...new Set(allDevices.map(d => ataChapter(d.ata)).filter(Boolean))].sort();
+    const m = new Map<string, number>();
+    chapters.forEach((ch, i) => m.set(ch, i % ATA_COLORS.length));
+    return m;
+  }, [mainDevice, remoteDevices]);
 
-    const mainFiltered = filterDevice(mainDevice, connectedMainPinIds);
-    const mainBW = deviceBodyW(mainFiltered);
-    const mainBH = deviceBodyH(mainFiltered.connectors);
-    const mainX = MARGIN;
-    const mainY = MARGIN;
+  const [visibleDeviceIds, setVisibleDeviceIds] = useState<Set<number> | null>(null); // null = show all
 
-    // Build initial main pin positions for barycenter sort
-    const mainPinPos = buildPinPositions(mainFiltered, mainX, mainY, mainBW, true);
-
-    // Sort remote devices and optimize pin order
-    const remotesFiltered = remoteDevices
-      .filter(rd => connections.some(c => c.remoteDeviceId === rd.id))
-      .map(rd => filterDevice(rd, connectedRemotePinIds));
-    const orderedRemotes = optimizeRemoteDeviceOrder(remotesFiltered, connections, mainPinPos);
-    const optimizedRemotes = orderedRemotes.map(rd => optimizePinOrder(rd, connections, mainPinPos));
-
-    // Position remotes
-    const maxConnW = mainFiltered.connectors.length > 0
-      ? Math.max(...mainFiltered.connectors.map(c => connWidth(c.pins)))
-      : 40;
-    const remoteStartX = mainX + mainBW + maxConnW + CHANNEL_WIDTH;
-    let remoteY = mainY;
-
-    const remoteLayouts: Array<{ device: DeviceData; x: number; y: number; bodyW: number; bodyH: number }> = [];
-    for (const rd of optimizedRemotes) {
-      const bw = deviceBodyW(rd);
-      const bh = deviceBodyH(rd.connectors);
-      const maxRConnW = rd.connectors.length > 0 ? Math.max(...rd.connectors.map(c => connWidth(c.pins))) : 40;
-      // Remote device x: leave room for connectors on the left
-      const rx = remoteStartX + maxRConnW;
-      remoteLayouts.push({ device: rd, x: rx, y: remoteY, bodyW: bw, bodyH: bh });
-      remoteY += bh + MIN_REMOTE_GAP;
-    }
-
-    // Center vertically
-    const totalRemoteH = remoteY - mainY - (optimizedRemotes.length > 0 ? MIN_REMOTE_GAP : 0);
-    let adjustedMainY = mainY;
-    if (totalRemoteH > mainBH) {
-      adjustedMainY = mainY + (totalRemoteH - mainBH) / 2;
-    } else if (mainBH > totalRemoteH) {
-      const offset = (mainBH - totalRemoteH) / 2;
-      for (const rl of remoteLayouts) rl.y += offset;
-    }
-
-    // SVG dimensions
-    const maxRight = remoteLayouts.length > 0
-      ? Math.max(...remoteLayouts.map(r => r.x + r.bodyW)) + MARGIN
-      : remoteStartX + 120;
-    const maxBottom = Math.max(
-      adjustedMainY + mainBH,
-      ...remoteLayouts.map(r => r.y + r.bodyH),
-    ) + MARGIN + 40; // extra for legend
-
+  /* ── Filter to connected items ── */
+  const filterDev = useCallback((d: DeviceData, pinIds: Set<number>): DeviceData => {
+    const connIds = new Set<number>();
+    for (const c of d.connectors) for (const p of c.pins) if (pinIds.has(p.id)) { connIds.add(c.id); break; }
     return {
-      mainDevice: mainFiltered, mainX, mainY: adjustedMainY, mainBW, mainBH,
-      remoteLayouts,
-      svgW: Math.max(maxRight, 600),
-      svgH: Math.max(maxBottom, 200),
+      ...d,
+      connectors: d.connectors.filter(c => connIds.has(c.id)).map(c => ({ ...c, pins: c.pins.filter(p => pinIds.has(p.id)) })),
     };
-  }, [mainDevice, remoteDevices, connections]);
+  }, []);
 
-  /* ── Compute pin positions considering drag offsets ── */
-  const { mainPinPos, remotePinPos } = useMemo(() => {
-    const mpp = buildPinPositions(
-      defaultLayout.mainDevice, defaultLayout.mainX, defaultLayout.mainY,
-      defaultLayout.mainBW, true,
-    );
-    const rpp = new Map<number, Pos>();
-    for (const rl of defaultLayout.remoteLayouts) {
-      const off = deviceOffsets[rl.device.id] || { dx: 0, dy: 0 };
-      const pins = buildPinPositions(rl.device, rl.x + off.dx, rl.y + off.dy, rl.bodyW, false);
-      pins.forEach((v, k) => rpp.set(k, v));
+  /* ── Apply device filter ── */
+  const filteredConns = useMemo(() => {
+    if (!visibleDeviceIds) return connections;
+    return connections.filter(c => visibleDeviceIds.has(c.remoteDeviceId));
+  }, [connections, visibleDeviceIds]);
+
+  const filteredRemotes = useMemo(() => {
+    if (!visibleDeviceIds) return remoteDevices;
+    return remoteDevices.filter(rd => visibleDeviceIds.has(rd.id));
+  }, [remoteDevices, visibleDeviceIds]);
+
+  /* ── Layout ── */
+  const layout = useMemo(() => {
+    const mainPinIds = new Set(filteredConns.map(c => c.mainPinId));
+    const remotePinIds = new Set(filteredConns.map(c => c.remotePinId));
+
+    const mDev = filterDev(mainDevice, mainPinIds);
+    const mBW = devBodyW(mDev);
+    const mBH = devBodyH(mDev.connectors);
+    const mX = MARGIN;
+    const mY = MARGIN;
+    const mainPins = buildPinPositions(mDev, mX, mY, mBW, true);
+
+    const maxMainCW = mDev.connectors.length > 0
+      ? Math.max(...mDev.connectors.map(c => connW(c.pins))) : 0;
+
+    const filtered = filteredRemotes.filter(rd => filteredConns.some(c => c.remoteDeviceId === rd.id)).map(rd => filterDev(rd, remotePinIds));
+    const sorted = sortRemoteDevices(filtered, filteredConns, mainPins);
+    const optimized = sorted.map(rd => sortPinsInRemote(rd, filteredConns, mainPins));
+
+    // Compute a single unified maxRCW so all remote devices align horizontally
+    const globalMaxRCW = optimized.length > 0
+      ? Math.max(...optimized.flatMap(rd => rd.connectors.length > 0
+          ? rd.connectors.map(c => connW(c.pins)) : [0]))
+      : 0;
+
+    let ry = mY;
+    const rLayouts: { dev: DeviceData; x: number; y: number; bw: number; bh: number }[] = [];
+    for (const rd of optimized) {
+      const bw = devBodyW(rd);
+      const bh = devBodyH(rd.connectors);
+      const rx = mX + mBW + maxMainCW + PIN_SQ + CHANNEL_W + PIN_SQ + globalMaxRCW;
+      rLayouts.push({ dev: rd, x: rx, y: ry, bw, bh });
+      ry += bh + REMOTE_GAP;
     }
-    return { mainPinPos: mpp, remotePinPos: rpp };
-  }, [defaultLayout, deviceOffsets]);
 
-  /* ── SVG Export ── */
+    // Vertical centering
+    const totalRH = ry - mY - (optimized.length > 0 ? REMOTE_GAP : 0);
+    let adjMY = mY;
+    if (totalRH > mBH) {
+      adjMY = mY + (totalRH - mBH) / 2;
+    } else if (mBH > totalRH) {
+      const off = (mBH - totalRH) / 2;
+      for (const rl of rLayouts) rl.y += off;
+    }
+
+    const maxRight = rLayouts.length > 0 ? Math.max(...rLayouts.map(r => r.x + r.bw)) + MARGIN : mX + mBW + maxMainCW + PIN_SQ + 400;
+    const maxBot = Math.max(adjMY + mBH, ...rLayouts.map(r => r.y + r.bh)) + MARGIN + 30;
+
+    return { mDev, mX, mY: adjMY, mBW, mBH, rLayouts, baseSvgW: Math.max(maxRight, 600), baseSvgH: Math.max(maxBot, 200) };
+  }, [mainDevice, filteredRemotes, filteredConns, filterDev]);
+
+  /* ── Pin positions with drag offsets ── */
+  const { mPins, rPins } = useMemo(() => {
+    const mo = offsets[layout.mDev.id] || { dx: 0, dy: 0 };
+    const mp = buildPinPositions(layout.mDev, layout.mX + mo.dx, layout.mY + mo.dy, layout.mBW, true);
+    const rp = new Map<number, Pos>();
+    for (const rl of layout.rLayouts) {
+      const o = offsets[rl.dev.id] || { dx: 0, dy: 0 };
+      const pins = buildPinPositions(rl.dev, rl.x + o.dx, rl.y + o.dy, rl.bw, false);
+      pins.forEach((v, k) => rp.set(k, v));
+    }
+    return { mPins: mp, rPins: rp };
+  }, [layout, offsets]);
+
+  /* ── Dynamic SVG size: expand canvas when devices are dragged beyond initial bounds ── */
+  const { svgW, svgH } = useMemo(() => {
+    let maxR = layout.baseSvgW;
+    let maxB = layout.baseSvgH;
+    // Main device bounding box with offset
+    const mo = offsets[layout.mDev.id] || { dx: 0, dy: 0 };
+    const mMaxCW = layout.mDev.connectors.length > 0
+      ? Math.max(...layout.mDev.connectors.map(c => connW(c.pins))) : 0;
+    maxR = Math.max(maxR, layout.mX + mo.dx + layout.mBW + mMaxCW + PIN_SQ + MARGIN);
+    maxB = Math.max(maxB, layout.mY + mo.dy + layout.mBH + MARGIN + 30);
+    // Remote devices bounding box with offsets
+    for (const rl of layout.rLayouts) {
+      const o = offsets[rl.dev.id] || { dx: 0, dy: 0 };
+      maxR = Math.max(maxR, rl.x + o.dx + rl.bw + MARGIN);
+      maxB = Math.max(maxB, rl.y + o.dy + rl.bh + MARGIN + 30);
+    }
+    return { svgW: maxR, svgH: maxB };
+  }, [layout, offsets]);
+
+  /* ── SVG export ── */
   const handleExport = useCallback(() => {
     if (!svgRef.current) return;
-    const svgStr = new XMLSerializer().serializeToString(svgRef.current);
-    const blob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
+    const blob = new Blob([new XMLSerializer().serializeToString(svgRef.current)], { type: 'image/svg+xml;charset=utf-8' });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `EICD-${mainDevice.设备编号}.svg`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    const a = document.createElement('a'); a.href = url; a.download = `EICD-${mainDevice.设备编号}.svg`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
   }, [mainDevice.设备编号]);
 
-  /* ── Drag handlers ── */
-  const handleMouseDown = useCallback((deviceId: number, e: React.MouseEvent) => {
-    e.preventDefault();
-    const off = deviceOffsets[deviceId] || { dx: 0, dy: 0 };
-    setDragging({ deviceId, startMX: e.clientX, startMY: e.clientY, startDX: off.dx, startDY: off.dy });
-  }, [deviceOffsets]);
+  /* ── Drag ── */
+  const onMouseDown = useCallback((id: number, e: React.MouseEvent) => {
+    e.preventDefault(); e.stopPropagation();
+    const o = offsets[id] || { dx: 0, dy: 0 };
+    setDrag({ id, mx: e.clientX, my: e.clientY, ox: o.dx, oy: o.dy });
+  }, [offsets]);
+  const onMouseMove = useCallback((e: React.MouseEvent) => {
+    if (!drag) return;
+    setOffsets(p => ({ ...p, [drag.id]: { dx: drag.ox + e.clientX - drag.mx, dy: drag.oy + e.clientY - drag.my } }));
+  }, [drag]);
+  const onMouseUp = useCallback(() => setDrag(null), []);
 
-  const handleMouseMove = useCallback((e: React.MouseEvent) => {
-    if (!dragging) return;
-    const dx = dragging.startDX + (e.clientX - dragging.startMX);
-    const dy = dragging.startDY + (e.clientY - dragging.startMY);
-    setDeviceOffsets(prev => ({ ...prev, [dragging.deviceId]: { dx, dy } }));
-  }, [dragging]);
+  /* ── Selection highlight helper ── */
+  function isSelected(type: string, id: number): boolean {
+    if (!selection) return false;
+    if (type === 'device') return selection.type === 'device' && selection.deviceId === id;
+    if (type === 'connector') return selection.type === 'connector' && selection.connectorId === id;
+    if (type === 'pin') return selection.type === 'pin' && selection.pinId === id;
+    if (type === 'signal') return selection.type === 'signal' && selection.signalId === id;
+    return false;
+  }
 
-  const handleMouseUp = useCallback(() => {
-    setDragging(null);
-  }, []);
-
-  /* ── Render: device body (IBD style) ── */
-  function renderDeviceBody(
-    device: DeviceData, x: number, y: number, bodyW: number, bodyH: number,
-    pinsOnRight: boolean, draggable: boolean,
-  ): JSX.Element[] {
+  /* ── Render: one device (body + connectors + pins) ── */
+  function renderDevice(dev: DeviceData, dx: number, dy: number, bw: number, bh: number, right: boolean, draggable: boolean) {
     const els: JSX.Element[] = [];
-    const lines = deviceLabel(device).split('\n');
+    const sel = isSelected('device', dev.id);
+    const label = dev.设备中文名称 ? `${dev.设备编号} (${dev.设备中文名称})` : dev.设备编号;
 
-    // Device body rect
+    // ATA-based colors
+    const ch = ataChapter(dev.ata);
+    const ataIdx = ataColorMap.get(ch);
+    const palette = isDark ? ATA_COLORS_DARK : ATA_COLORS;
+    const devFill = ataIdx !== undefined ? palette[ataIdx].devFill : C.devFill;
+    const devBorder = ataIdx !== undefined ? palette[ataIdx].devBorder : C.devBorder;
+
+    // Device body
     els.push(
-      <rect key={`dbody-${device.id}`} x={x} y={y} width={bodyW} height={bodyH}
-        rx={6} fill={COL.deviceFill} stroke={COL.deviceBorder} strokeWidth={2}
-        style={draggable ? { cursor: 'grab' } : undefined}
-        onMouseDown={draggable ? (e) => handleMouseDown(device.id, e) : undefined}
+      <rect key={`d-${dev.id}`} x={dx} y={dy} width={bw} height={bh} rx={6}
+        fill={devFill} stroke={sel ? C.selStroke : devBorder} strokeWidth={sel ? 2.5 : 1.5}
+        style={{ cursor: draggable ? 'grab' : 'pointer' }}
+        onClick={(e) => { e.stopPropagation(); onSelect({ type: 'device', deviceId: dev.id }); }}
+        onDoubleClick={onDblClick ? (e) => { e.stopPropagation(); onDblClick({ type: 'device', deviceId: dev.id }); } : undefined}
+        onMouseDown={draggable ? (e) => onMouseDown(dev.id, e) : undefined}
       />
     );
 
-    // Device label (centered, multi-line)
-    lines.forEach((line, i) => {
+    // ATA badge (below device body, outside)
+    if (ch) {
       els.push(
-        <text key={`dtxt-${device.id}-${i}`} x={x + bodyW / 2}
-          y={y + bodyH / 2 + (i - (lines.length - 1) / 2) * 16}
-          textAnchor="middle" dominantBaseline="central"
-          fontSize={11} fontWeight={600} fill={COL.deviceText}
-          style={draggable ? { cursor: 'grab', pointerEvents: 'none' } : { pointerEvents: 'none' }}
-        >
-          {line}
+        <text key={`ata-${dev.id}`} x={dx + bw / 2} y={dy + bh + 10}
+          textAnchor="middle" fontSize={7} fill={devBorder} opacity={0.7}
+          style={{ pointerEvents: 'none' }}>
+          ATA {dev.ata}
         </text>
       );
-    });
+    }
 
-    // Connectors (outside device body, on the edge)
-    const totalConnH = device.connectors.reduce((s, c) => s + connHeight(c.pins), 0)
-      + Math.max(0, device.connectors.length - 1) * CONN_GAP;
-    let cy = y + (bodyH - totalConnH) / 2;
+    // Device label (centered in body, top area)
+    els.push(
+      <text key={`dl-${dev.id}`} x={dx + bw / 2} y={dy + DEV_PAD / 2 + 6}
+        textAnchor="middle" dominantBaseline="central" fontSize={10} fontWeight={600} fill={C.devText}
+        style={{ pointerEvents: 'none' }}>
+        {label}
+      </text>
+    );
 
-    for (const conn of device.connectors) {
-      const cH = connHeight(conn.pins);
-      const cW = connWidth(conn.pins);
+    // Connectors
+    const totalCH = dev.connectors.reduce((s, c) => s + connH(c), 0) + Math.max(0, dev.connectors.length - 1) * CONN_GAP;
+    let cy = dy + (bh - totalCH) / 2;
 
-      // Connector position: attached to device edge
-      let cx: number;
-      if (pinsOnRight) {
-        cx = x + bodyW; // right edge of device
-      } else {
-        cx = x - cW; // left of device
-      }
+    for (const conn of dev.connectors) {
+      const cH = connH(conn);
+      const cW = connW(conn.pins);
+      const cSel = isSelected('connector', conn.id);
 
-      // Connector rect
+      // Connector rect (outside device body)
+      const cx = right ? dx + bw : dx - cW;
+
       els.push(
-        <rect key={`conn-${conn.id}`} x={cx} y={cy} width={cW} height={cH}
-          rx={3} fill={COL.connFill} stroke={COL.connBorder} strokeWidth={1.5} />
+        <rect key={`c-${conn.id}`} x={cx} y={cy} width={cW} height={cH} rx={3}
+          fill={C.connFill} stroke={cSel ? C.selStroke : C.connBorder} strokeWidth={cSel ? 2 : 1}
+          style={{ cursor: 'pointer' }}
+          onClick={(e) => { e.stopPropagation(); onSelect({ type: 'connector', connectorId: conn.id, deviceId: dev.id }); }}
+          onDoubleClick={onDblClick ? (e) => { e.stopPropagation(); onDblClick({ type: 'connector', connectorId: conn.id, deviceId: dev.id }); } : undefined}
+        />
       );
 
-      // Connector label (vertical, in label strip)
-      const labelStripX = pinsOnRight ? cx : cx + cW - CONN_LABEL_W;
-      const labelCenterX = labelStripX + CONN_LABEL_W / 2;
-      const labelCenterY = cy + cH / 2;
+      // Connector label: vertical, inside device body, adjacent to the connector
+      const vlX = right ? dx + bw - 7 : dx + 7;
+      const vlY = cy + cH / 2;
       els.push(
-        <text key={`clbl-${conn.id}`} x={labelCenterX} y={labelCenterY}
+        <text key={`cl-${conn.id}`} x={vlX} y={vlY}
           textAnchor="middle" dominantBaseline="central"
-          fontSize={9} fontWeight={500} fill={COL.connText}
-          transform={`rotate(-90, ${labelCenterX}, ${labelCenterY})`}
-        >
+          fontSize={9} fill={C.connText} fontWeight={500}
+          transform={`rotate(-90, ${vlX}, ${vlY})`}
+          style={{ pointerEvents: 'none' }}>
           {conn.设备端元器件编号}
         </text>
       );
 
-      // Label strip separator
-      if (pinsOnRight) {
-        els.push(
-          <line key={`csep-${conn.id}`}
-            x1={cx + CONN_LABEL_W} y1={cy} x2={cx + CONN_LABEL_W} y2={cy + cH}
-            stroke={COL.connBorder} strokeWidth={0.5} strokeDasharray="2 2" />
-        );
-      } else {
-        els.push(
-          <line key={`csep-${conn.id}`}
-            x1={cx + cW - CONN_LABEL_W} y1={cy} x2={cx + cW - CONN_LABEL_W} y2={cy + cH}
-            stroke={COL.connBorder} strokeWidth={0.5} strokeDasharray="2 2" />
-        );
-      }
+      // Pins (attached outside connector, centered vertically in connector)
+      const n = conn.pins.length;
+      const pinStackH = n * PIN_SQ + Math.max(0, n - 1) * PIN_GAP;
+      let pinY = cy + (cH - pinStackH) / 2;
 
-      // Pins
-      let pinY = cy + CONN_PADDING_TOP;
       for (const pin of conn.pins) {
-        let pinX: number;
-        let labelX: number;
-        let labelAnchor: 'start' | 'end';
+        const pSel = isSelected('pin', pin.id);
+        const pinX = right ? cx + cW : cx - PIN_SQ;
 
-        if (pinsOnRight) {
-          // Pin square on right end; label between separator and pin
-          pinX = cx + cW - PIN_SIZE - 4;
-          labelX = cx + CONN_LABEL_W + 6;
-          labelAnchor = 'start';
-        } else {
-          // Pin square on left end; label between pin and separator
-          pinX = cx + 4;
-          labelX = cx + cW - CONN_LABEL_W - 6;
-          labelAnchor = 'end';
-        }
-
+        // Pin square
         els.push(
-          <rect key={`pin-${pin.id}`} x={pinX} y={pinY}
-            width={PIN_SIZE} height={PIN_SIZE} rx={2}
-            fill={COL.pinFill} stroke={COL.pinBorder} strokeWidth={1} />
+          <rect key={`p-${pin.id}`} x={pinX} y={pinY} width={PIN_SQ} height={PIN_SQ} rx={2}
+            fill={C.pinFill} stroke={pSel ? C.selStroke : C.pinBorder} strokeWidth={pSel ? 2 : 1}
+            style={{ cursor: 'pointer' }}
+            onClick={(e) => { e.stopPropagation(); onSelect({ type: 'pin', pinId: pin.id, connectorId: conn.id, deviceId: dev.id }); }}
+            onDoubleClick={onDblClick ? (e) => { e.stopPropagation(); onDblClick({ type: 'pin', pinId: pin.id, connectorId: conn.id, deviceId: dev.id }); } : undefined}
+          />
         );
+
+        // Pin label inside connector rect, adjacent to pin
+        const plX = right ? cx + cW - 2 : cx + 2;
+        const plAnchor: 'end' | 'start' = right ? 'end' : 'start';
         els.push(
-          <text key={`plbl-${pin.id}`} x={labelX} y={pinY + PIN_SIZE / 2}
-            textAnchor={labelAnchor} dominantBaseline="central"
-            fontSize={9} fontFamily="monospace" fill={COL.pinText}>
+          <text key={`pl-${pin.id}`} x={plX} y={pinY + PIN_SQ / 2}
+            textAnchor={plAnchor} dominantBaseline="central"
+            fontSize={8} fontFamily="monospace" fill={C.pinText} style={{ pointerEvents: 'none' }}>
             {pin.针孔号}
           </text>
         );
-        pinY += PIN_SIZE + PIN_GAP;
+
+        pinY += PIN_SQ + PIN_GAP;
       }
 
       cy += cH + CONN_GAP;
@@ -454,133 +570,301 @@ export default function EICDDiagram({ mainDevice, remoteDevices, connections }: 
     return els;
   }
 
-  /* ── Render: connections ── */
-  function renderConnections(): JSX.Element[] {
-    const els: JSX.Element[] = [];
-    for (const conn of connections) {
-      const from = mainPinPos.get(conn.mainPinId);
-      const to = remotePinPos.get(conn.remotePinId);
-      if (!from || !to) continue;
-      const approved = isApproved(conn.signalStatus);
-      const color = approved ? COL.approvedLine : COL.pendingLine;
+  /* ── Build group index for twisted view ── */
+  const groupIndex = useMemo(() => {
+    if (!twistedView) return null;
+    const groups = new Map<string, ConnectionData[]>();
+    for (const conn of filteredConns) {
+      if (!conn.signalGroup) continue;
+      if (!groups.has(conn.signalGroup)) groups.set(conn.signalGroup, []);
+      groups.get(conn.signalGroup)!.push(conn);
+    }
+    // Only keep groups with 2+ wires visible
+    for (const [k, v] of groups) { if (v.length < 2) groups.delete(k); }
+    return groups;
+  }, [filteredConns, twistedView]);
 
+  /* ── Render: wires ── */
+  function renderWires() {
+    const els: JSX.Element[] = [];
+    const twistedSignalIds = new Set<number>();
+    if (groupIndex) {
+      for (const members of groupIndex.values()) {
+        for (const m of members) twistedSignalIds.add(m.signalId);
+      }
+    }
+
+    // Render twisted groups — IEC 60617 style:
+    //   Draw each wire as a normal path, then add figure-eight twist markers
+    //   along the center line between wires at regular intervals.
+    if (groupIndex) {
+      for (const [groupName, members] of groupIndex) {
+        // Draw each wire normally (same as non-twisted)
+        const wireFromTo: { from: Pos; to: Pos; color: string }[] = [];
+        for (const conn of members) {
+          const from = mPins.get(conn.mainPinId);
+          const to = rPins.get(conn.remotePinId);
+          if (!from || !to) continue;
+          const ok = isApproved(conn.signalStatus);
+          const sSel = isSelected('signal', conn.signalId);
+          const color = sSel ? C.selStroke : (ok ? C.wireApproved : C.wirePending);
+          const wKey = `tw-${conn.signalId}-${conn.mainPinId}-${conn.remotePinId}`;
+          els.push(
+            <path key={wKey} d={wirePath(from, to)} fill="none"
+              stroke={color} strokeWidth={sSel ? 2.5 : 1.2}
+              strokeDasharray={ok ? undefined : '5 3'}
+              style={{ cursor: 'pointer' }}
+              onClick={(e) => { e.stopPropagation(); onSelect({ type: 'signal', signalId: conn.signalId }); }}
+              onDoubleClick={onDblClick ? (e) => { e.stopPropagation(); onDblClick({ type: 'signal', signalId: conn.signalId }); } : undefined}
+            />
+          );
+          // Direction arrows (same colors as normal wires)
+          const dir = conn.direction;
+          if (dir === 'toRemote') {
+            els.push(arrowAt(from, to, 0.5, C.arrowToRemote, `${wKey}-arr`));
+          } else if (dir === 'toMain') {
+            els.push(arrowAt(from, to, 0.5, C.arrowToMain, `${wKey}-arr`, true));
+          } else if (dir === 'bidirectional') {
+            els.push(arrowAt(from, to, 1 / 3, C.arrowBidi, `${wKey}-arr1`));
+            els.push(arrowAt(from, to, 2 / 3, C.arrowBidi, `${wKey}-arr2`, true));
+          }
+          wireFromTo.push({ from, to, color });
+        }
+
+        if (wireFromTo.length < 2) continue;
+
+        // Compute center path between the first two wires (representative pair)
+        const wA = wireFromTo[0], wB = wireFromTo[1];
+        const centerFrom = { x: (wA.from.x + wB.from.x) / 2, y: (wA.from.y + wB.from.y) / 2 };
+        const centerTo = { x: (wA.to.x + wB.to.x) / 2, y: (wA.to.y + wB.to.y) / 2 };
+
+        // Estimate total path length for interval spacing
+        const totalDx = centerTo.x - centerFrom.x, totalDy = centerTo.y - centerFrom.y;
+        const estLen = Math.sqrt(totalDx * totalDx + totalDy * totalDy);
+        const markerCount = Math.max(1, Math.floor(estLen / TWIST_MARKER_INTERVAL));
+
+        // Draw figure-eight twist markers along the center path
+        const sz = TWIST_MARKER_SIZE;
+        for (let k = 1; k <= markerCount; k++) {
+          const t = k / (markerCount + 1);
+          // Points on each wire at this t
+          const pA = bezierPoint(wA.from, wA.to, t);
+          const pB = bezierPoint(wB.from, wB.to, t);
+          const cx = (pA.x + pB.x) / 2, cy = (pA.y + pB.y) / 2;
+          // Tangent direction along center path
+          const tg = bezierTangent(centerFrom, centerTo, t);
+          const tLen = Math.sqrt(tg.x * tg.x + tg.y * tg.y);
+          if (tLen === 0) continue;
+          const ux = tg.x / tLen, uy = tg.y / tLen;
+          // Normal (perpendicular)
+          const nx = -uy, ny = ux;
+
+          // Figure-eight: two small S-curves crossing at center
+          // Top-left → center → bottom-right (curve 1)
+          // Bottom-left → center → top-right (curve 2)
+          const d = `M${(cx - ux * sz + nx * sz).toFixed(1)} ${(cy - uy * sz + ny * sz).toFixed(1)}`
+            + `Q${(cx).toFixed(1)} ${(cy).toFixed(1)} ${(cx + ux * sz - nx * sz).toFixed(1)} ${(cy + uy * sz - ny * sz).toFixed(1)}`
+            + `M${(cx - ux * sz - nx * sz).toFixed(1)} ${(cy - uy * sz - ny * sz).toFixed(1)}`
+            + `Q${(cx).toFixed(1)} ${(cy).toFixed(1)} ${(cx + ux * sz + nx * sz).toFixed(1)} ${(cy + uy * sz + ny * sz).toFixed(1)}`;
+
+          els.push(
+            <path key={`tm-${groupName}-${k}`} d={d} fill="none"
+              stroke={C.connBorder} strokeWidth={0.8} opacity={0.7}
+              style={{ pointerEvents: 'none' }} />
+          );
+        }
+
+        // Warning for incomplete groups (missing signals)
+        const gInfo = signalGroups?.[groupName];
+        if (gInfo && gInfo.missing.length > 0) {
+          const mid = bezierPoint(centerFrom, centerTo, 0.5);
+          els.push(
+            <g key={`gw-${groupName}`}>
+              <circle cx={mid.x} cy={mid.y - 10} r={5}
+                fill="#FEF2F2" stroke="#EF4444" strokeWidth={0.8} />
+              <text x={mid.x} y={mid.y - 10}
+                textAnchor="middle" dominantBaseline="central"
+                fontSize={8} fontWeight={700} fill="#EF4444" style={{ pointerEvents: 'none' }}>!</text>
+              <title>{`${groupName} 缺失信号: ${gInfo.missing.join(', ')}`}</title>
+            </g>
+          );
+        }
+      }
+    }
+
+    // Render normal (non-twisted) wires
+    for (const conn of filteredConns) {
+      if (twistedSignalIds.has(conn.signalId)) continue;
+      const from = mPins.get(conn.mainPinId);
+      const to = rPins.get(conn.remotePinId);
+      if (!from || !to) continue;
+      const ok = isApproved(conn.signalStatus);
+      const sSel = isSelected('signal', conn.signalId);
+      const color = sSel ? C.selStroke : (ok ? C.wireApproved : C.wirePending);
+      const wKey = `w-${conn.signalId}-${conn.mainPinId}-${conn.remotePinId}`;
       els.push(
-        <path key={`wire-${conn.signalId}-${conn.mainPinId}-${conn.remotePinId}`}
-          d={connectionPath(from, to)} fill="none"
-          stroke={color} strokeWidth={1.5}
-          strokeDasharray={approved ? undefined : '6 3'} />
+        <path key={wKey}
+          d={wirePath(from, to)} fill="none"
+          stroke={color} strokeWidth={sSel ? 2.5 : 1.2}
+          strokeDasharray={ok ? undefined : '5 3'}
+          style={{ cursor: 'pointer' }}
+          onClick={(e) => { e.stopPropagation(); onSelect({ type: 'signal', signalId: conn.signalId }); }}
+          onDoubleClick={onDblClick ? (e) => { e.stopPropagation(); onDblClick({ type: 'signal', signalId: conn.signalId }); } : undefined}
+        />
       );
 
-      if (showLabels && conn.signalUniqueId) {
-        const midX = (from.x + to.x) / 2;
-        const midY = (from.y + to.y) / 2;
-        const lw = approxTextWidth(conn.signalUniqueId, 6) + 8;
-        els.push(
-          <g key={`wlbl-${conn.signalId}-${conn.mainPinId}-${conn.remotePinId}`}>
-            <rect x={midX - lw / 2} y={midY - 8} width={lw} height={16}
-              rx={3} fill={COL.labelBg} stroke={COL.labelBorder} strokeWidth={0.5} opacity={0.95} />
-            <text x={midX} y={midY} textAnchor="middle" dominantBaseline="central"
-              fontSize={8} fontFamily="monospace" fill={COL.labelText}>
-              {conn.signalUniqueId}
-            </text>
-          </g>
-        );
+      // Direction arrows (color varies by direction)
+      const dir = conn.direction;
+      if (dir === 'toRemote') {
+        els.push(arrowAt(from, to, 0.5, C.arrowToRemote, `${wKey}-arr`));
+      } else if (dir === 'toMain') {
+        els.push(arrowAt(from, to, 0.5, C.arrowToMain, `${wKey}-arr`, true));
+      } else if (dir === 'bidirectional') {
+        els.push(arrowAt(from, to, 1 / 3, C.arrowBidi, `${wKey}-arr1`));
+        els.push(arrowAt(from, to, 2 / 3, C.arrowBidi, `${wKey}-arr2`, true));
       }
     }
     return els;
   }
 
-  /* ── Render: legend ── */
-  function renderLegend(): JSX.Element {
-    const ly = defaultLayout.svgH - 30;
+  /* ── Legend ── */
+  function renderLegend() {
+    const ataEntries = [...ataColorMap.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+    const palette = isDark ? ATA_COLORS_DARK : ATA_COLORS;
+    const ataLegendH = ataEntries.length > 1 ? 14 + ataEntries.length * 14 + 8 : 0;
+    const ly = svgH - 22;
     return (
       <g>
-        <line x1={MARGIN} y1={ly} x2={MARGIN + 30} y2={ly} stroke={COL.approvedLine} strokeWidth={1.5} />
-        <text x={MARGIN + 36} y={ly} dominantBaseline="central" fontSize={10} fill={COL.legendText}>已批准</text>
-        <line x1={MARGIN + 90} y1={ly} x2={MARGIN + 120} y2={ly} stroke={COL.pendingLine} strokeWidth={1.5} strokeDasharray="6 3" />
-        <text x={MARGIN + 126} y={ly} dominantBaseline="central" fontSize={10} fill={COL.legendText}>草稿/审批中</text>
+        {/* Status legend */}
+        <line x1={MARGIN} y1={ly} x2={MARGIN + 24} y2={ly} stroke={C.wireApproved} strokeWidth={1.5} />
+        <text x={MARGIN + 30} y={ly} dominantBaseline="central" fontSize={9} fill={C.legendText}>已批准</text>
+        <line x1={MARGIN + 75} y1={ly} x2={MARGIN + 99} y2={ly} stroke={C.wirePending} strokeWidth={1.5} strokeDasharray="5 3" />
+        <text x={MARGIN + 105} y={ly} dominantBaseline="central" fontSize={9} fill={C.legendText}>草稿/审批中</text>
+        {/* Arrow direction legend */}
+        <polygon points={`${MARGIN + 168},${ly} ${MARGIN + 162},${ly - 3} ${MARGIN + 162},${ly + 3}`} fill={C.arrowToRemote} />
+        <text x={MARGIN + 174} y={ly} dominantBaseline="central" fontSize={9} fill={C.legendText}>输出</text>
+        <polygon points={`${MARGIN + 210},${ly} ${MARGIN + 216},${ly - 3} ${MARGIN + 216},${ly + 3}`} fill={C.arrowToMain} />
+        <text x={MARGIN + 222} y={ly} dominantBaseline="central" fontSize={9} fill={C.legendText}>输入</text>
+        <polygon points={`${MARGIN + 255},${ly} ${MARGIN + 249},${ly - 3} ${MARGIN + 249},${ly + 3}`} fill={C.arrowBidi} />
+        <polygon points={`${MARGIN + 261},${ly} ${MARGIN + 267},${ly - 3} ${MARGIN + 267},${ly + 3}`} fill={C.arrowBidi} />
+        <text x={MARGIN + 273} y={ly} dominantBaseline="central" fontSize={9} fill={C.legendText}>双向</text>
+        {/* ATA legend */}
+        {ataEntries.length > 1 && (
+          <g transform={`translate(${MARGIN}, ${ly - 14 - ataLegendH})`}>
+            <text x={0} y={0} fontSize={9} fontWeight={600} fill={C.legendText}>ATA 系统</text>
+            {ataEntries.map(([ch, idx], i) => (
+              <g key={ch} transform={`translate(0, ${14 + i * 14})`}>
+                <rect x={0} y={-7} width={14} height={10} rx={2}
+                  fill={palette[idx].devFill} stroke={palette[idx].devBorder} strokeWidth={1} />
+                <text x={18} y={0} fontSize={8} fill={C.legendText}>ATA {ch}</text>
+              </g>
+            ))}
+          </g>
+        )}
       </g>
     );
   }
 
-  /* ── Empty state ── */
+  /* ── Empty ── */
   if (connections.length === 0) {
-    return (
-      <div className="flex items-center justify-center h-64 text-gray-400 dark:text-white/40">
-        该设备暂无针孔连接关系
-      </div>
-    );
+    return <div className="flex items-center justify-center h-full text-gray-400 dark:text-white/40">该设备暂无针孔连接关系</div>;
   }
 
-  /* ── Main render ── */
   return (
     <div className="flex flex-col h-full">
       {/* Toolbar */}
-      <div className="flex items-center gap-3 px-4 py-2 border-b border-gray-200 dark:border-white/10 shrink-0">
-        <span className="text-sm font-semibold text-gray-700 dark:text-gray-200 mr-auto">
-          EICD 接口连接图
-        </span>
-
-        {/* Toggle NET labels */}
-        <label className="inline-flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-300 cursor-pointer select-none">
-          <input type="checkbox" checked={showLabels} onChange={() => setShowLabels(v => !v)}
-            className="rounded border-gray-300 dark:border-white/20 h-3.5 w-3.5" />
-          NET号
-        </label>
-
-        {/* Reset layout */}
-        <button onClick={() => setDeviceOffsets({})}
-          className="px-2 py-1 text-xs text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-white/10 rounded hover:bg-gray-100 dark:hover:bg-neutral-800 transition-colors">
+      <div className="flex items-center gap-3 px-3 py-1.5 border-b border-gray-200 dark:border-white/10 shrink-0 flex-wrap">
+        <button onClick={() => setOffsets({})}
+          className="px-2 py-0.5 text-xs text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-white/15 rounded hover:bg-gray-100 dark:hover:bg-neutral-800">
           还原布局
         </button>
-
-        {/* Export SVG */}
         <button onClick={handleExport}
-          className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-white bg-indigo-600 rounded hover:bg-indigo-700 transition-colors">
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-          </svg>
+          className="px-2 py-0.5 text-xs text-white bg-indigo-600 rounded hover:bg-indigo-700">
           导出 SVG
         </button>
+        <label className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-300 cursor-pointer select-none">
+          <input type="checkbox" checked={twistedView} onChange={e => setTwistedView(e.target.checked)}
+            className="rounded border-gray-300 dark:border-white/20 w-3.5 h-3.5" />
+          绞线视图
+        </label>
+
+        {/* Device filter */}
+        <div className="relative ml-auto">
+          <button onClick={() => { setShowFilter(f => { if (f) setFilterSearch(''); return !f; }); }}
+            className="px-2 py-0.5 text-xs text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-white/15 rounded hover:bg-gray-100 dark:hover:bg-neutral-800">
+            筛选设备{visibleDeviceIds ? ` (${visibleDeviceIds.size}/${connectedRemotes.length})` : ''}
+          </button>
+          {showFilter && (
+            <div className="absolute right-0 top-full mt-1 z-50 bg-white dark:bg-neutral-800 border border-gray-200 dark:border-white/15 rounded shadow-lg p-2 min-w-[180px] max-h-[260px] overflow-y-auto"
+              onClick={e => e.stopPropagation()}>
+              <input type="text" value={filterSearch} onChange={e => setFilterSearch(e.target.value)}
+                placeholder="搜索设备..."
+                className="w-full mb-2 px-2 py-1 text-xs border border-gray-200 dark:border-white/15 rounded bg-white dark:bg-neutral-700 text-gray-800 dark:text-gray-200 outline-none focus:border-blue-400 dark:focus:border-blue-500" />
+              <div className="flex flex-wrap gap-x-2 gap-y-1 mb-2 border-b border-gray-100 dark:border-white/10 pb-2">
+                <button onClick={() => setVisibleDeviceIds(null)}
+                  className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline">全选</button>
+                <button onClick={() => {
+                  const cur = visibleDeviceIds ?? new Set(connectedRemotes.map(r => r.id));
+                  const inverted = new Set(connectedRemotes.filter(r => !cur.has(r.id)).map(r => r.id));
+                  setVisibleDeviceIds(inverted.size === connectedRemotes.length ? null : inverted);
+                }} className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline">反选</button>
+                <button onClick={() => {
+                  const ids = new Set(connections.filter(c => c.signalStatus === 'Active' || c.signalStatus === 'normal').map(c => c.remoteDeviceId));
+                  setVisibleDeviceIds(ids.size === connectedRemotes.length ? null : ids);
+                }} className="text-[11px] text-green-600 dark:text-green-400 hover:underline">有效连接</button>
+                <button onClick={() => {
+                  const ids = new Set(connections.filter(c => c.signalStatus === 'Pending').map(c => c.remoteDeviceId));
+                  setVisibleDeviceIds(ids.size === connectedRemotes.length ? null : ids);
+                }} className="text-[11px] text-amber-600 dark:text-amber-400 hover:underline">未审批</button>
+              </div>
+              {connectedRemotes.filter(rd => {
+                if (!filterSearch) return true;
+                const q = filterSearch.toLowerCase();
+                return rd.设备编号?.toLowerCase().includes(q) || rd.设备中文名称?.toLowerCase().includes(q);
+              }).map(rd => {
+                const checked = !visibleDeviceIds || visibleDeviceIds.has(rd.id);
+                const label = rd.设备中文名称 ? `${rd.设备编号} (${rd.设备中文名称})` : rd.设备编号;
+                return (
+                  <label key={rd.id} className="flex items-center gap-1.5 text-xs text-gray-700 dark:text-gray-300 py-0.5 cursor-pointer hover:bg-gray-50 dark:hover:bg-neutral-700 px-1 rounded">
+                    <input type="checkbox" checked={checked}
+                      onChange={() => {
+                        setVisibleDeviceIds(prev => {
+                          const cur = prev ?? new Set(connectedRemotes.map(r => r.id));
+                          const next = new Set(cur);
+                          if (next.has(rd.id)) next.delete(rd.id); else next.add(rd.id);
+                          // If all selected, reset to null (show all)
+                          if (next.size === connectedRemotes.length) return null;
+                          return next;
+                        });
+                      }}
+                      className="rounded border-gray-300 dark:border-white/20 w-3 h-3" />
+                    <span className="truncate max-w-[140px]" title={label}>{label}</span>
+                  </label>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* Diagram area - scrollable */}
-      <div className="flex-1 overflow-auto bg-gray-50 dark:bg-neutral-950"
-        onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}>
+      {/* SVG area */}
+      <div className="flex-1 overflow-auto bg-white dark:bg-slate-900"
+        onMouseMove={onMouseMove} onMouseUp={onMouseUp} onMouseLeave={onMouseUp}
+        onClick={() => onSelect(null)}>
         <svg ref={svgRef} xmlns="http://www.w3.org/2000/svg"
-          width={defaultLayout.svgW} height={defaultLayout.svgH}
-          viewBox={`0 0 ${defaultLayout.svgW} ${defaultLayout.svgH}`}
-          style={{ minWidth: defaultLayout.svgW, minHeight: defaultLayout.svgH, userSelect: 'none' }}>
-
-          <rect width={defaultLayout.svgW} height={defaultLayout.svgH} fill={COL.bg} />
-
-          {/* Connections (behind devices) */}
-          {renderConnections()}
-
-          {/* Main device */}
-          {renderDeviceBody(
-            defaultLayout.mainDevice,
-            defaultLayout.mainX, defaultLayout.mainY,
-            defaultLayout.mainBW, defaultLayout.mainBH,
-            true, false,
-          )}
-
-          {/* Remote devices (draggable) */}
-          {defaultLayout.remoteLayouts.map(rl => {
-            const off = deviceOffsets[rl.device.id] || { dx: 0, dy: 0 };
-            return (
-              <g key={`rdev-${rl.device.id}`}>
-                {renderDeviceBody(
-                  rl.device,
-                  rl.x + off.dx, rl.y + off.dy,
-                  rl.bodyW, rl.bodyH,
-                  false, true,
-                )}
-              </g>
-            );
+          width={svgW} height={svgH}
+          viewBox={`0 0 ${svgW} ${svgH}`}
+          style={{ minWidth: svgW, minHeight: svgH, userSelect: 'none' }}>
+          <rect width={svgW} height={svgH} fill={C.bg} />
+          {renderWires()}
+          {(() => {
+            const mo = offsets[layout.mDev.id] || { dx: 0, dy: 0 };
+            return renderDevice(layout.mDev, layout.mX + mo.dx, layout.mY + mo.dy, layout.mBW, layout.mBH, true, true);
+          })()}
+          {layout.rLayouts.map(rl => {
+            const o = offsets[rl.dev.id] || { dx: 0, dy: 0 };
+            return <g key={`rd-${rl.dev.id}`}>{renderDevice(rl.dev, rl.x + o.dx, rl.y + o.dy, rl.bw, rl.bh, false, true)}</g>;
           })}
-
-          {/* Legend */}
           {renderLegend()}
         </svg>
       </div>

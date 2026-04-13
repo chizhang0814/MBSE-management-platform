@@ -66,6 +66,40 @@
 .scrollbar-hide::-webkit-scrollbar { display: none; }
 .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
 
+/* Row highlight flash animation for navigation — 5 distinct blinks over 3s */
+@keyframes highlight-row {
+  0%   { background-color: transparent; }
+  6%   { background-color: #fbbf24; }
+  12%  { background-color: transparent; }
+  22%  { background-color: #fbbf24; }
+  28%  { background-color: transparent; }
+  40%  { background-color: #fbbf24; }
+  46%  { background-color: transparent; }
+  58%  { background-color: #fbbf24; }
+  64%  { background-color: transparent; }
+  76%  { background-color: #fbbf24; }
+  82%, 100% { background-color: transparent; }
+}
+@keyframes highlight-row-dark {
+  0%   { background-color: transparent; }
+  6%   { background-color: rgba(251, 191, 36, 0.45); }
+  12%  { background-color: transparent; }
+  22%  { background-color: rgba(251, 191, 36, 0.45); }
+  28%  { background-color: transparent; }
+  40%  { background-color: rgba(251, 191, 36, 0.45); }
+  46%  { background-color: transparent; }
+  58%  { background-color: rgba(251, 191, 36, 0.45); }
+  64%  { background-color: transparent; }
+  76%  { background-color: rgba(251, 191, 36, 0.45); }
+  82%, 100% { background-color: transparent; }
+}
+.animate-highlight-row {
+  animation: highlight-row 3s ease-in-out !important;
+}
+.dark .animate-highlight-row {
+  animation: highlight-row-dark 3s ease-in-out !important;
+}
+
 @layer components {
   /* Primary button — light: black pill, dark: white pill (per DESIGN.md White Pill) */
   .btn-primary {
