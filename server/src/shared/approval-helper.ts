@@ -352,17 +352,37 @@ export async function submitChangeRequest(db: Database, params: SubmitChangeRequ
   const projectName = project?.name || `项目#${projectId}`;
   const entityDesc = await getEntityDescription(db, entityType, entityId);
 
+  // 生成编辑摘要
+  let changeSummary = '';
+  if (actionType === 'edit_signal' || actionType === 'edit_device' || actionType === 'edit_connector' || actionType === 'edit_pin') {
+    const oldObj = typeof oldPayload === 'string' ? (() => { try { return JSON.parse(oldPayload); } catch { return {}; } })() : (oldPayload || {});
+    const newObj = typeof newPayload === 'string' ? (() => { try { return JSON.parse(newPayload); } catch { return {}; } })() : (newPayload || {});
+    const skipKeys = new Set(['id', 'project_id', 'created_at', 'updated_at', 'version', 'status', '_oldEndpoints', '_oldEdges', '_connector_renames', '_deleteImpact',
+      'pending_item_type', 'approval_request_id', 'has_pending_sub', 'sub_approval_request_ids', 'endpoint_summary', '信号名称摘要', 'can_edit', 'endpoint_count', '导线等级',
+      'import_status', 'import_conflicts', 'created_by', 'signal_group']);
+    const changes: string[] = [];
+    for (const [k, v] of Object.entries(newObj)) {
+      if (skipKeys.has(k)) continue;
+      const oldVal = oldObj[k];
+      if (String(v ?? '') !== String(oldVal ?? '')) {
+        changes.push(`${k}: ${String(oldVal ?? '').substring(0, 20) || '(空)'} → ${String(v ?? '').substring(0, 20) || '(空)'}`);
+      }
+    }
+    if (oldObj._oldEndpoints) changes.push('端点变更');
+    if (changes.length > 0) changeSummary = '\n变更内容：' + changes.slice(0, 5).join('；') + (changes.length > 5 ? `…等${changes.length}项` : '');
+  }
+
   for (const item of notifyItems) {
     const type = item.item_type === 'completion' ? 'completion_request' : 'approval_request';
     const title = item.item_type === 'completion'
-      ? `待审批：[${projectName}] ${label}`
+      ? `待完善：[${projectName}] ${label}`
       : `待审批：[${projectName}] ${label}`;
     const message = item.item_type === 'completion'
-      ? `用户 ${requesterUsername} 在项目「${projectName}」中提交了${entityDesc}的「${label}」请求，需要您审批。`
-      : `用户 ${requesterUsername} 在项目「${projectName}」中提交了${entityDesc}的「${label}」请求，请进行审批。`;
+      ? `用户 ${requesterUsername} 在项目「${projectName}」中提交了${entityDesc}的「${label}」请求，需要您完善端点信息。${changeSummary}`
+      : `用户 ${requesterUsername} 在项目「${projectName}」中提交了${entityDesc}的「${label}」请求，请进行审批。${changeSummary}`;
     await db.run(
-      `INSERT INTO notifications (recipient_username, type, title, message) VALUES (?, ?, ?, ?)`,
-      [item.recipient_username, type, title, message]
+      `INSERT INTO notifications (recipient_username, type, title, message, reference_id) VALUES (?, ?, ?, ?, ?)`,
+      [item.recipient_username, type, title, message, approvalRequestId]
     );
   }
 
@@ -460,6 +480,43 @@ export async function checkAndAdvancePhase(db: Database, approvalRequestId: numb
           await db.run('DELETE FROM connectors WHERE id = ?', [c.id]);
         }
         await db.run('DELETE FROM devices WHERE id = ?', [req.entity_id]);
+      } else if (req.action_type === 'delete_signal') {
+        // 删除信号前记录 signal_group，删除后检查是否需要解散分组
+        const sigRow = await db.get('SELECT signal_group, project_id FROM signals WHERE id = ?', [req.entity_id]);
+        await db.run('DELETE FROM signal_edges WHERE signal_id = ?', [req.entity_id]);
+        await db.run('DELETE FROM signal_endpoints WHERE signal_id = ?', [req.entity_id]);
+        await db.run('DELETE FROM signals WHERE id = ?', [req.entity_id]);
+        // 检查分组是否只剩1条信号
+        if (sigRow?.signal_group) {
+          const remaining = await db.query(
+            'SELECT id, unique_id FROM signals WHERE signal_group = ? AND project_id = ?',
+            [sigRow.signal_group, sigRow.project_id]
+          );
+          if (remaining.length <= 1) {
+            // 解散分组
+            await db.run('UPDATE signals SET signal_group = NULL WHERE signal_group = ? AND project_id = ?',
+              [sigRow.signal_group, sigRow.project_id]);
+            // 通知：剩余信号的端点设备负责人 + 总体组
+            const notifyUsers = new Set<string>();
+            for (const sig of remaining) {
+              const eps = await db.query(
+                'SELECT DISTINCT d."设备负责人" as owner FROM signal_endpoints se JOIN devices d ON se.device_id = d.id WHERE se.signal_id = ? AND d."设备负责人" IS NOT NULL',
+                [sig.id]
+              );
+              eps.forEach((ep: any) => notifyUsers.add(ep.owner));
+            }
+            const zontiList = await getProjectRoleMembers(db, sigRow.project_id, '总体组');
+            zontiList.forEach(u => notifyUsers.add(u));
+            const proj = await db.get('SELECT name FROM projects WHERE id = ?', [sigRow.project_id]);
+            for (const u of notifyUsers) {
+              await db.run(
+                `INSERT INTO notifications (recipient_username, type, title, message) VALUES (?, 'signal_group_dissolved', ?, ?)`,
+                [u, `[${proj?.name || ''}] 信号分组自动解散`,
+                 `信号分组「${sigRow.signal_group}」因删除信号后仅剩 ${remaining.length} 条信号，已自动解散。`]
+              );
+            }
+          }
+        }
       } else if (req.action_type.startsWith('delete_')) {
         await db.run(`DELETE FROM ${entityTable} WHERE id = ?`, [req.entity_id]);
       } else if (req.action_type === 'edit_pin') {

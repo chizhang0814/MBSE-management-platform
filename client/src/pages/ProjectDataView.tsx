@@ -391,6 +391,9 @@ export default function ProjectDataView() {
   const [epPinOptions, setEpPinOptions] = useState<PinRow[][]>([[], []]);
   const [myDevicesList, setMyDevicesList] = useState<DeviceRow[]>([]);
 
+  // ── 信号分组行 ref（用于组名跨行居中）────────────────────────
+  const groupRowRefs = React.useRef<Record<string, HTMLTableRowElement[]>>({});
+
   // ── 长内容列展开/收起 ────────────────────────────────────────
   const [expandedCols, setExpandedCols] = useState<Set<string>>(new Set());
   const toggleColExpand = (col: string) => setExpandedCols(prev => {
@@ -456,7 +459,14 @@ export default function ProjectDataView() {
   useEffect(() => {
     const handler = () => refreshDataRef.current();
     window.addEventListener('new-notification', handler);
-    return () => window.removeEventListener('new-notification', handler);
+    const navHandler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.view === 'signals') setActiveView('signals');
+      else if (detail?.view === 'devices') setActiveView('devices');
+      setFilterMode('my_tasks'); setBatchApprovalIds([]);
+    };
+    window.addEventListener('navigate-to-my-tasks', navHandler);
+    return () => { window.removeEventListener('new-notification', handler); window.removeEventListener('navigate-to-my-tasks', navHandler); };
   }, []);
 
   // 信号视图滚动加载：监听哨兵元素
@@ -3288,7 +3298,7 @@ export default function ProjectDataView() {
             <tbody className="divide-y divide-gray-100 dark:divide-white/10">
               {/* 预计算分组位置信息 */}
               {(() => {
-                const groupPosMap = new Map<number, { pos: 'first' | 'middle' | 'last' | 'solo'; groupSize: number }>();
+                const groupPosMap = new Map<number, { pos: 'first' | 'middle' | 'last' | 'solo'; groupSize: number; isCenter: boolean }>();
                 const groupIdxs = new Map<string, number[]>();
                 displayedSignals.forEach((s, i) => {
                   const g = (s as any).signal_group;
@@ -3298,9 +3308,10 @@ export default function ProjectDataView() {
                   }
                 });
                 groupIdxs.forEach((idxs) => {
+                  const centerIdx = Math.floor((idxs.length - 1) / 2);
                   idxs.forEach((idx, i) => {
                     const pos = idxs.length === 1 ? 'solo' : i === 0 ? 'first' : i === idxs.length - 1 ? 'last' : 'middle';
-                    groupPosMap.set(idx, { pos, groupSize: idxs.length });
+                    groupPosMap.set(idx, { pos, groupSize: idxs.length, isCenter: i === centerIdx || pos === 'solo' });
                   });
                 });
                 return displayedSignals.map((signal, displayIndex) => {
@@ -3345,10 +3356,35 @@ export default function ProjectDataView() {
                         const textColor = gp ? textColorMap[gp] : '#4f46e5';
                         const isFirst = groupInfo.pos === 'first' || groupInfo.pos === 'solo';
                         return (
-                          <td className="p-0 w-6 border-r-[3px]" style={{ borderRightColor: barColor }}>
+                          <td
+                            className="p-0 w-6 border-r-[3px] relative"
+                            style={{ borderRightColor: barColor }}
+                            data-group={gn}
+                            data-group-pos={groupInfo.pos}
+                            ref={isFirst ? (el) => {
+                              if (!el) return;
+                              // 计算组内所有行总高度并设置按钮位置
+                              requestAnimationFrame(() => {
+                                const btn = el.querySelector('[data-group-label]') as HTMLElement;
+                                if (!btn) return;
+                                let totalH = 0;
+                                let tr: Element | null = el.closest('tr');
+                                while (tr) {
+                                  totalH += (tr as HTMLElement).offsetHeight;
+                                  const nextTr = tr.nextElementSibling;
+                                  if (!nextTr) break;
+                                  const nextTd = nextTr.querySelector(`[data-group="${gn}"]`);
+                                  if (!nextTd) break;
+                                  tr = nextTr;
+                                }
+                                btn.style.height = totalH + 'px';
+                              });
+                            } : undefined}
+                          >
                             {isFirst && (
                               <button
-                                className="font-mono whitespace-nowrap hover:opacity-70 block mx-auto"
+                                data-group-label
+                                className="font-mono whitespace-nowrap hover:opacity-70 absolute left-0 right-0 top-0 flex items-center justify-center z-[1]"
                                 style={{ color: textColor, fontSize: '9px', writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
                                 title="点击解散该信号组"
                                 onClick={async (e) => {
@@ -3477,6 +3513,37 @@ export default function ProjectDataView() {
                             <div className="pl-8 pr-4 py-3">
                               {request.project_name && <div className="text-xs text-black dark:text-white font-medium mb-1">项目：{request.project_name}</div>}
                               <div className="text-xs font-semibold text-gray-600 dark:text-white/60 mb-2">审批进度（{request.action_type}）</div>
+                              {/* 变更内容 */}
+                              {(request.action_type === 'edit_signal') && request.old_payload && request.payload && (() => {
+                                try {
+                                  const oldObj = JSON.parse(request.old_payload);
+                                  const newObj = JSON.parse(request.payload);
+                                  const skipKeys = new Set(['id','project_id','created_at','updated_at','version','status','_oldEndpoints','_oldEdges','pending_item_type','approval_request_id','has_pending_sub','sub_approval_request_ids','endpoint_summary','信号名称摘要','can_edit','endpoint_count','导线等级','import_status','import_conflicts','created_by','signal_group']);
+                                  const diffs = Object.entries(newObj).filter(([k,v]) => !skipKeys.has(k) && String(v ?? '') !== String(oldObj[k] ?? ''));
+                                  const hasEpChange = !!oldObj._oldEndpoints;
+                                  if (diffs.length === 0 && !hasEpChange) return null;
+                                  return (
+                                    <div className="mb-2 p-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded text-xs">
+                                      <div className="font-semibold text-blue-700 dark:text-blue-300 mb-1">变更内容</div>
+                                      {hasEpChange && <div className="text-blue-600 dark:text-blue-400 mb-1">● 端点已变更</div>}
+                                      {diffs.length > 0 && (
+                                        <table className="w-auto border-collapse">
+                                          <thead><tr className="text-gray-500 dark:text-white/50"><th className="pr-3 text-left">字段</th><th className="pr-3 text-left">原值</th><th className="text-left">新值</th></tr></thead>
+                                          <tbody>
+                                            {diffs.slice(0, 10).map(([k, v]) => (
+                                              <tr key={k} className="border-t border-blue-100 dark:border-blue-800">
+                                                <td className="pr-3 py-0.5 text-gray-600 dark:text-white/60">{k}</td>
+                                                <td className="pr-3 py-0.5 text-red-500 line-through">{String(oldObj[k] ?? '') || '-'}</td>
+                                                <td className="py-0.5 text-green-600 font-medium">{String(v ?? '') || '-'}</td>
+                                              </tr>
+                                            ))}
+                                          </tbody>
+                                        </table>
+                                      )}
+                                    </div>
+                                  );
+                                } catch { return null; }
+                              })()}
                               {completionItems.length > 0 && (
                                 <div className="mb-2">
                                   <div className="text-xs text-gray-400 dark:text-white/40 mb-1">完善阶段</div>

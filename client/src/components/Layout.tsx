@@ -326,6 +326,16 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                                 <div className="text-xs text-black/60 dark:text-white/60 leading-relaxed">{n.message}</div>
                                 <div className="flex items-center justify-between mt-1.5">
                                   <span className="text-xs text-black/30 dark:text-white/30">{new Date(n.created_at).toLocaleString('zh-CN')}</span>
+                                  {(n.type === 'completion_request' || n.type === 'approval_request') && (
+                                    <button
+                                      onClick={() => {
+                                        setShowNotifications(false);
+                                        const isSignal = /信号/.test(n.title);
+                                        window.dispatchEvent(new CustomEvent('navigate-to-my-tasks', { detail: { view: isSignal ? 'signals' : 'devices' } }));
+                                      }}
+                                      className="px-2.5 py-0.5 text-xs bg-orange-500 text-white rounded hover:bg-orange-600 transition-colors"
+                                    >查看任务</button>
+                                  )}
                                   {n.type === 'permission_request' && n.reference_id && (
                                     <span className="flex gap-1">
                                       <button
