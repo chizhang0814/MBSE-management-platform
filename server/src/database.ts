@@ -1568,20 +1568,45 @@ export class Database {
     // 初始化默认用户（不再创建示例数据）
     // ── 自动赋值绞线组（已有分组补赋值）──
     try {
-      const groups: any[] = await this.query(`
-        SELECT signal_group, project_id, COUNT(*) as cnt,
-          SUM(CASE WHEN "推荐导线线型" LIKE '%双绞%' THEN 1 ELSE 0 END) as double_cnt,
-          SUM(CASE WHEN "推荐导线线型" LIKE '%三绞%' THEN 1 ELSE 0 END) as triple_cnt
+      // 双绞线恰好2根的分组
+      const doubleGroups: any[] = await this.query(`
+        SELECT signal_group, project_id
         FROM signals
-        WHERE signal_group IS NOT NULL AND twist_group IS NULL
+        WHERE signal_group IS NOT NULL AND (twist_group IS NULL OR twist_group = '') AND "推荐导线线型" LIKE '%双绞%'
         GROUP BY signal_group, project_id
-        HAVING (cnt = 2 AND double_cnt = 2) OR (cnt = 3 AND triple_cnt = 3)
+        HAVING COUNT(*) = 2
       `);
-      for (const g of groups) {
-        await this.run('UPDATE signals SET twist_group = ? WHERE signal_group = ? AND project_id = ?',
-          ['T1', g.signal_group, g.project_id]);
+      for (const g of doubleGroups) {
+        const existing = await this.get('SELECT COUNT(*) as cnt FROM signals WHERE signal_group = ? AND project_id = ? AND twist_group IS NOT NULL AND twist_group != \'\'', [g.signal_group, g.project_id]);
+        let tNum = 1;
+        if (existing?.cnt > 0) {
+          const used = await this.query('SELECT DISTINCT twist_group FROM signals WHERE signal_group = ? AND project_id = ? AND twist_group IS NOT NULL', [g.signal_group, g.project_id]);
+          const usedSet = new Set(used.map((r: any) => r.twist_group));
+          while (usedSet.has('T' + tNum)) tNum++;
+        }
+        await this.run('UPDATE signals SET twist_group = ? WHERE signal_group = ? AND project_id = ? AND "推荐导线线型" LIKE \'%双绞%\' AND (twist_group IS NULL OR twist_group = \'\')',
+          ['T' + tNum, g.signal_group, g.project_id]);
       }
-      if (groups.length > 0) console.log('Database migration: 自动赋值绞线组 ' + groups.length + ' 个分组');
+      // 三绞线恰好3根的分组
+      const tripleGroups: any[] = await this.query(`
+        SELECT signal_group, project_id
+        FROM signals
+        WHERE signal_group IS NOT NULL AND (twist_group IS NULL OR twist_group = '') AND "推荐导线线型" LIKE '%三绞%'
+        GROUP BY signal_group, project_id
+        HAVING COUNT(*) = 3
+      `);
+      for (const g of tripleGroups) {
+        const existing = await this.get('SELECT COUNT(*) as cnt FROM signals WHERE signal_group = ? AND project_id = ? AND twist_group IS NOT NULL AND twist_group != \'\'', [g.signal_group, g.project_id]);
+        let tNum = 1;
+        if (existing?.cnt > 0) {
+          const used = await this.query('SELECT DISTINCT twist_group FROM signals WHERE signal_group = ? AND project_id = ? AND twist_group IS NOT NULL', [g.signal_group, g.project_id]);
+          const usedSet = new Set(used.map((r: any) => r.twist_group));
+          while (usedSet.has('T' + tNum)) tNum++;
+        }
+        await this.run('UPDATE signals SET twist_group = ? WHERE signal_group = ? AND project_id = ? AND "推荐导线线型" LIKE \'%三绞%\' AND (twist_group IS NULL OR twist_group = \'\')',
+          ['T' + tNum, g.signal_group, g.project_id]);
+      }
+      if (doubleGroups.length + tripleGroups.length > 0) console.log('Database migration: 自动赋值绞线组 双绞' + doubleGroups.length + '组 三绞' + tripleGroups.length + '组');
     } catch (e: any) { console.log('Migration: auto twist_group:', e.message); }
 
     await this.initDefaultData();

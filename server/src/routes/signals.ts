@@ -1533,25 +1533,30 @@ export function signalRoutes(db: Database) {
   // ── 自动赋值绞线组 ──────────────────────────────────────────
   async function autoAssignTwistGroup(groupName: string, projectId: number) {
     const sigs = await db.query(
-      'SELECT id, "推荐导线线型" FROM signals WHERE signal_group = ? AND project_id = ?',
+      'SELECT id, "推荐导线线型" FROM signals WHERE signal_group = ? AND project_id = ? AND (twist_group IS NULL OR twist_group = \'\')',
       [groupName, projectId]
     );
-    if (sigs.length === 2) {
-      const allDouble = sigs.every((s: any) => /双绞/.test(s['推荐导线线型'] || ''));
-      if (allDouble) {
-        await db.run(
-          'UPDATE signals SET twist_group = ? WHERE signal_group = ? AND project_id = ?',
-          ['T1', groupName, projectId]
-        );
-      }
-    } else if (sigs.length === 3) {
-      const allTriple = sigs.every((s: any) => /三绞/.test(s['推荐导线线型'] || ''));
-      if (allTriple) {
-        await db.run(
-          'UPDATE signals SET twist_group = ? WHERE signal_group = ? AND project_id = ?',
-          ['T1', groupName, projectId]
-        );
-      }
+    const doubleSigs = sigs.filter((s: any) => /双绞/.test(s['推荐导线线型'] || ''));
+    const tripleSigs = sigs.filter((s: any) => /三绞/.test(s['推荐导线线型'] || ''));
+    // 找下一个可用编号
+    const existingTwists = await db.query(
+      'SELECT DISTINCT twist_group FROM signals WHERE signal_group = ? AND project_id = ? AND twist_group IS NOT NULL',
+      [groupName, projectId]
+    );
+    const usedNums = new Set(existingTwists.map((r: any) => r.twist_group));
+    let nextNum = 1;
+    const getNext = () => { while (usedNums.has('T' + nextNum)) nextNum++; const n = 'T' + nextNum; usedNums.add(n); nextNum++; return n; };
+    // 双绞线恰好2根 → 自动配对
+    if (doubleSigs.length === 2) {
+      const tName = getNext();
+      const ph = doubleSigs.map(() => '?').join(',');
+      await db.run('UPDATE signals SET twist_group = ? WHERE id IN (' + ph + ')', [tName, ...doubleSigs.map((s: any) => s.id)]);
+    }
+    // 三绞线恰好3根 → 自动配对
+    if (tripleSigs.length === 3) {
+      const tName = getNext();
+      const ph = tripleSigs.map(() => '?').join(',');
+      await db.run('UPDATE signals SET twist_group = ? WHERE id IN (' + ph + ')', [tName, ...tripleSigs.map((s: any) => s.id)]);
     }
   }
 
