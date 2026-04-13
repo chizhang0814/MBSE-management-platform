@@ -1767,7 +1767,7 @@ export default function ProjectDataView() {
           )}
           {canManageDevices && (
             <>
-              {isAdmin && (
+              {(isAdmin || myProjectRole === '总体组') && (
                 <button
                   onClick={() => { setImportDevFile(null); setImportDevResult(null); setShowImportDevDataModal(true); }}
                   className="btn-secondary text-sm whitespace-nowrap"
@@ -4497,19 +4497,17 @@ export default function ProjectDataView() {
                         className={`flex-1 px-4 py-2.5 text-sm font-medium border-t border-b border-r rounded-r-lg ${importDevPhase === 'connectors' ? 'bg-black text-white dark:bg-white dark:text-black border-black' : 'bg-white dark:bg-neutral-900 text-gray-600 dark:text-white/60 border-gray-300 dark:border-white/20 hover:bg-gray-50 dark:hover:bg-white/[0.04]'}`}
                       >设备端元器件清单</button>
                     </div>
-                    {/* 导入/更新按钮（更新暂时隐藏） */}
-                    {/*
+                    {/* 导入/更新切换 */}
                     <div className="flex gap-3 mb-4">
                       <button
                         onClick={() => { setImportDevType('import'); setImportDevFile(null); }}
-                        className={`flex-1 px-3 py-2 rounded text-sm border-2 ${importDevType === 'import' ? 'border-black bg-black/[0.03] dark:bg-white/[0.06] text-black dark:text-white font-medium' : 'border-gray-200 dark:border-white/10 text-gray-600 dark:text-white/60 hover:border-gray-300 dark:border-white/20'}`}
+                        className={'flex-1 px-3 py-2 rounded text-sm border-2 ' + (importDevType === 'import' ? 'border-black bg-black/[0.03] dark:bg-white/[0.06] text-black dark:text-white font-medium' : 'border-gray-200 dark:border-white/10 text-gray-600 dark:text-white/60 hover:border-gray-300 dark:border-white/20')}
                       >导入（新增）</button>
                       <button
                         onClick={() => { setImportDevType('update'); setImportDevFile(null); }}
-                        className={`flex-1 px-3 py-2 rounded text-sm border-2 ${importDevType === 'update' ? 'border-orange-500 bg-orange-50 text-orange-700 font-medium' : 'border-gray-200 dark:border-white/10 text-gray-600 dark:text-white/60 hover:border-gray-300 dark:border-white/20'}`}
+                        className={'flex-1 px-3 py-2 rounded text-sm border-2 ' + (importDevType === 'update' ? 'border-orange-500 bg-orange-50 text-orange-700 font-medium' : 'border-gray-200 dark:border-white/10 text-gray-600 dark:text-white/60 hover:border-gray-300 dark:border-white/20')}
                       >更新（已有数据）</button>
                     </div>
-                    */}
                     <div className="mb-4 text-sm text-gray-600 dark:text-white/60">
                       <p>选择 Excel 文件导入<b>{importDevPhase === 'devices' ? '电设备' : '设备端元器件'}</b>清单数据（新增记录）</p>
                     </div>
