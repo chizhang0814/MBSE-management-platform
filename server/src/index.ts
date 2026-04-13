@@ -18,6 +18,7 @@ import { changeLogRoutes } from './routes/change-logs.js';
 import { employeeRoutes } from './routes/employees.js';
 import { chatRoutes } from './routes/chat.js';
 import { feedbackRoutes } from './routes/feedback.js';
+import { eicdRoutes } from './routes/eicd.js';
 import path from 'path';
 
 dotenv.config();
@@ -56,6 +57,7 @@ app.use('/api/change-logs', changeLogRoutes(db));
 app.use('/api/employees', employeeRoutes(db));
 app.use('/api/chat', chatRoutes(db));
 app.use('/api/feedback', feedbackRoutes());
+app.use('/api/eicd', eicdRoutes(db));
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' });

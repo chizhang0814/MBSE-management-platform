@@ -1,7 +1,10 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import Layout from '../components/Layout';
 import HistoryModal from '../components/HistoryModal';
+import EICDModal from '../components/EICDModal';
+import SignalGroupModal from '../components/SignalGroupModal';
+import type { Selection } from '../components/EICDDiagram';
 import { useAuth } from '../context/AuthContext';
 
 // ── 类型定义 ─────────────────────────────────────────────
@@ -226,6 +229,31 @@ export default function ProjectDataView() {
   const [devices, setDevices] = useState<DeviceRow[]>([]);
   const [statusSummary, setStatusSummary] = useState<{ devices: { normal: number; Draft: number }; connectors: { normal: number; Draft: number }; pins: { normal: number; Draft: number } } | null>(null);
   const [historyTarget, setHistoryTarget] = useState<{ entityTable: string; entityId: number; entityLabel: string } | null>(null);
+  const [eicdTarget, setEicdTarget] = useState<{ deviceId: number; projectId: number; label: string } | null>(null);
+  const [signalGroupTarget, setSignalGroupTarget] = useState<{ groupName?: string; singleSignalId?: number; projectId: number; signalId: number } | null>(null);
+  // ── 导航高亮行 ──
+  const [highlightRow, setHighlightRow] = useState<{ type: 'device' | 'connector' | 'pin' | 'signal'; id: number } | null>(null);
+  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const highlightRowRef = useCallback((node: HTMLTableRowElement | null) => {
+    if (node) {
+      node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, []);
+  // ── EICD 双击导航：分级闪动后展开 ──
+  const flashThenExpand = useCallback((
+    hlType: 'device' | 'connector' | 'pin' | 'signal',
+    hlId: number,
+    afterFlash: () => void,
+  ) => {
+    if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+    setHighlightRow({ type: hlType, id: hlId });
+    highlightTimerRef.current = setTimeout(() => {
+      setHighlightRow(null);
+      afterFlash();
+    }, 3000); // 与 CSS 动画时长一致（3s）
+  }, []);
+  // ── 导航等待数据加载后闪动 ──
+  const [pendingNav, setPendingNav] = useState<NonNullable<Selection> | null>(null);
   const [deviceFilters, setDeviceFilters] = useState<Record<string, string>>({});
   const [deviceSortOrder, setDeviceSortOrder] = useState<'desc' | 'asc'>('desc');
   const [signalSortOrder, setSignalSortOrder] = useState<'desc' | 'asc'>('desc');
@@ -468,6 +496,77 @@ export default function ProjectDataView() {
     window.addEventListener('navigate-to-my-tasks', navHandler);
     return () => { window.removeEventListener('new-notification', handler); window.removeEventListener('navigate-to-my-tasks', navHandler); };
   }, []);
+
+  // ── 导航等待数据加载后闪动 ──
+  useEffect(() => {
+    if (!pendingNav || loading) return;
+
+    if (pendingNav.type === 'signal' && activeView === 'signals') {
+      const idx = signals.findIndex(s => s.id === pendingNav.signalId);
+      if (idx >= 0) {
+        const targetId = signals[idx].id;
+        setPendingNav(null);
+        if (idx >= signalDisplayCount) {
+          setSignalDisplayCount(idx + 50);
+          // 等待 React 渲染出该行后再闪动
+          setTimeout(() => {
+            requestAnimationFrame(() => {
+              flashThenExpand('signal', targetId, () => {
+                setExpandedSignalId(targetId);
+                loadSignalDetail(targetId, true);
+              });
+            });
+          }, 50);
+        } else {
+          requestAnimationFrame(() => {
+            flashThenExpand('signal', targetId, () => {
+              setExpandedSignalId(targetId);
+              loadSignalDetail(targetId, true);
+            });
+          });
+        }
+      }
+    } else if (pendingNav.type === 'device' && activeView === 'devices') {
+      const found = devices.find(d => d.id === pendingNav.deviceId);
+      if (found) {
+        setPendingNav(null);
+        requestAnimationFrame(() => {
+          flashThenExpand('device', found.id, async () => {
+            setExpandedDeviceId(found.id);
+            await loadConnectors(found.id);
+          });
+        });
+      }
+    } else if (pendingNav.type === 'connector' && activeView === 'devices') {
+      const found = devices.find(d => d.id === pendingNav.deviceId);
+      if (found) {
+        setPendingNav(null);
+        setExpandedDeviceId(found.id);
+        loadConnectors(found.id).then(() => {
+          requestAnimationFrame(() => {
+            flashThenExpand('connector', pendingNav.connectorId, async () => {
+              setExpandedConnectorId(pendingNav.connectorId);
+              await loadPins(found.id, pendingNav.connectorId);
+            });
+          });
+        });
+      }
+    } else if (pendingNav.type === 'pin' && activeView === 'devices') {
+      const found = devices.find(d => d.id === pendingNav.deviceId);
+      if (found) {
+        setPendingNav(null);
+        setExpandedDeviceId(found.id);
+        loadConnectors(found.id).then(() => {
+          setExpandedConnectorId(pendingNav.connectorId);
+          loadPins(found.id, pendingNav.connectorId).then(() => {
+            requestAnimationFrame(() => {
+              flashThenExpand('pin', pendingNav.pinId, () => {});
+            });
+          });
+        });
+      }
+    }
+  }, [pendingNav, signals, devices, activeView, loading]);
 
   // 信号视图滚动加载：监听哨兵元素
   useEffect(() => {
@@ -1912,7 +2011,8 @@ export default function ProjectDataView() {
                 return (
                   <React.Fragment key={device.id}>
                     <tr
-                      className={`hover:bg-gray-50 dark:hover:bg-white/[0.04] ${hasTodo(device) ? 'bg-orange-100' : isExpanded ? 'bg-black/[0.03] dark:bg-white/[0.06]' : ''} cursor-pointer`}
+                      ref={highlightRow?.type === 'device' && highlightRow.id === device.id ? highlightRowRef : undefined}
+                      className={`${highlightRow?.type === 'device' && highlightRow.id === device.id ? 'animate-highlight-row' : `hover:bg-gray-50 dark:hover:bg-white/[0.04] ${hasTodo(device) ? 'bg-orange-100' : isExpanded ? 'bg-black/[0.03] dark:bg-white/[0.06]' : ''}`} cursor-pointer`}
                       onDoubleClick={async () => {
                         if (!isExpanded) {
                           setExpandedDeviceId(device.id);
@@ -1946,21 +2046,34 @@ export default function ProjectDataView() {
                           );
                         })()}
                       </td>
-                      <td className="px-4 py-2 text-center">
-                        <button
-                          id={index === 0 ? 'tour-device-expand' : undefined}
-                          onClick={async () => {
-                            if (isExpanded) { setExpandedDeviceId(null); }
-                            else {
-                              setExpandedDeviceId(device.id);
-                              await loadConnectors(device.id);
-                              if (device.status === 'Pending') await loadApprovalInfo('device', device.id);
-                            }
-                          }}
-                          className="text-gray-400 dark:text-white/40 hover:text-black dark:hover:text-white font-mono text-xs"
-                        >
-                          {isExpanded ? '▼' : '▶'}
-                        </button>
+                      <td className="px-4 py-2 whitespace-nowrap">
+                        <div className="flex items-end justify-center gap-1">
+                          <button
+                            id={index === 0 ? 'tour-device-expand' : undefined}
+                            onClick={async () => {
+                              if (isExpanded) { setExpandedDeviceId(null); }
+                              else {
+                                setExpandedDeviceId(device.id);
+                                await loadConnectors(device.id);
+                                if (device.status === 'Pending') await loadApprovalInfo('device', device.id);
+                              }
+                            }}
+                            className="text-gray-400 dark:text-white/40 hover:text-black dark:hover:text-white font-mono text-xs leading-none"
+                          >
+                            {isExpanded ? '▼' : '▶'}
+                          </button>
+                          <button
+                            onClick={() => setEicdTarget({
+                              deviceId: device.id,
+                              projectId: device.project_id,
+                              label: `${device.设备编号}${device.设备中文名称 ? ' (' + device.设备中文名称 + ')' : ''}`
+                            })}
+                            className="text-gray-400 dark:text-white/40 hover:text-black dark:hover:text-white leading-none"
+                            title="查看EICD连接图"
+                          >
+                            <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" style={{ display: 'block', position: 'relative', top: '1px' }}><path d="M8 3C4.5 3 1.7 5.3.5 8c1.2 2.7 4 5 7.5 5s6.3-2.3 7.5-5c-1.2-2.7-4-5-7.5-5zm0 8.3c-1.8 0-3.3-1.5-3.3-3.3S6.2 4.7 8 4.7s3.3 1.5 3.3 3.3-1.5 3.3-3.3 3.3zM8 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>
+                          </button>
+                        </div>
                       </td>
                       <td className="px-2 py-2 font-medium text-sm truncate" title={device.设备编号}>{device.设备编号}</td>
                       <td className="px-2 py-2 text-sm">
@@ -2297,7 +2410,8 @@ export default function ProjectDataView() {
                                       <>
                                         <tr
                                           key={conn.id}
-                                          className={`border-b border-gray-200 dark:border-white/10 hover:bg-black/[0.03] dark:hover:bg-white/[0.06] ${hasTodo(conn) ? 'bg-orange-100' : connExpanded ? 'bg-black/[0.04]' : ''} cursor-pointer`}
+                                          ref={highlightRow?.type === 'connector' && highlightRow.id === conn.id ? highlightRowRef : undefined}
+                                          className={`border-b border-gray-200 dark:border-white/10 ${highlightRow?.type === 'connector' && highlightRow.id === conn.id ? 'animate-highlight-row' : `hover:bg-black/[0.03] dark:hover:bg-white/[0.06] ${hasTodo(conn) ? 'bg-orange-100' : connExpanded ? 'bg-black/[0.04]' : ''}`} cursor-pointer`}
                                           onDoubleClick={async () => {
                                             if (!connExpanded) {
                                               setExpandedConnectorId(conn.id);
@@ -2500,13 +2614,15 @@ export default function ProjectDataView() {
                                                       <tr className="bg-black/[0.06] dark:bg-white/[0.1]">
                                                         <th className="px-2 py-1 text-left text-gray-600 dark:text-white/60">针孔号</th>
                                                         <th className="px-2 py-1 text-left text-gray-600 dark:text-white/60">最后更新</th>
-                                                        {(canEditDevice(device) || canEditPin(device)) && <th className="px-2 py-1 text-left text-gray-600 dark:text-white/60">操作</th>}
+                                                        <th className="px-2 py-1 text-left text-gray-600 dark:text-white/60">操作</th>
                                                       </tr>
                                                     </thead>
                                                     <tbody>
                                                       {pins[conn.id].map(pin => (
                                                         <React.Fragment key={pin.id}>
-                                                        <tr className={`border-b border-gray-200 dark:border-white/10 ${hasTodo(pin) ? 'bg-orange-100' : ''}`}>
+                                                        <tr
+                                                          ref={highlightRow?.type === 'pin' && highlightRow.id === pin.id ? highlightRowRef : undefined}
+                                                          className={`border-b border-gray-200 dark:border-white/10 ${highlightRow?.type === 'pin' && highlightRow.id === pin.id ? 'animate-highlight-row' : `${hasTodo(pin) ? 'bg-orange-100' : ''}`}`}>
                                                           <td className="px-2 py-1">
                                                             {pin.针孔号}
                                                             {pin.status === 'Pending' && <span className="ml-1 px-1 py-0.5 text-xs bg-black/10 dark:bg-white/15 text-black dark:text-white rounded">审批中</span>}
@@ -2529,6 +2645,33 @@ export default function ProjectDataView() {
                                                                 </>
                                                               ) : null}
                                                               <button onClick={() => setHistoryTarget({ entityTable: 'pins', entityId: pin.id, entityLabel: `针孔 ${pin.针孔号}` })} className="text-gray-500 dark:text-white/50 hover:text-gray-700 dark:text-white/70">历史</button>
+                                                              <button onClick={async () => {
+                                                                try {
+                                                                  const res = await fetch(`/api/devices/${device.id}/connectors/${conn.id}/pins/${pin.id}/related-signals`, { headers: API_HEADERS() });
+                                                                  const data = await res.json();
+                                                                  const sigs: { id: number; unique_id: string }[] = data.signals || [];
+                                                                  if (sigs.length === 0) { alert('该针孔暂无关联信号'); return; }
+                                                                  let targetSig = sigs[0];
+                                                                  if (sigs.length > 1) {
+                                                                    const choice = window.prompt(
+                                                                      `该针孔关联 ${sigs.length} 条信号，请输入序号跳转：\n` +
+                                                                      sigs.map((s, i) => `${i + 1}. ${s.unique_id}`).join('\n'),
+                                                                      '1'
+                                                                    );
+                                                                    if (!choice) return;
+                                                                    const idx = parseInt(choice) - 1;
+                                                                    if (idx < 0 || idx >= sigs.length) return;
+                                                                    targetSig = sigs[idx];
+                                                                  }
+                                                                  // 重置筛选确保目标信号可见
+                                                                  setSignalFilters({});
+                                                                  setSgGroupFilter('');
+                                                                  setSignals([]); // 清空旧信号，防止 pendingNav 匹配到旧数据
+                                                                  if (filterMode !== 'all') setFilterMode('all');
+                                                                  setActiveView('signals');
+                                                                  setPendingNav({ type: 'signal', signalId: targetSig.id });
+                                                                } catch { alert('查询关联信号失败'); }
+                                                              }} className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300">连接查询</button>
                                                             </>)}
                                                             </td>
                                                         </tr>
@@ -3325,7 +3468,8 @@ export default function ProjectDataView() {
                     )}
                     {/* 分组视觉：左边框色条 + 序号列组名 */}
                     <tr
-                      className={`hover:bg-gray-50 dark:hover:bg-white/[0.04] ${
+                      ref={highlightRow?.type === 'signal' && highlightRow.id === signal.id ? highlightRowRef : undefined}
+                      className={`${highlightRow?.type === 'signal' && highlightRow.id === signal.id ? 'animate-highlight-row' : `hover:bg-gray-50 dark:hover:bg-white/[0.04] ${
                         hasTodo(signal) || signalDetails[signal.id]?.endpoints?.some(ep => hasTodo(ep))
                           ? 'bg-orange-100'
                           : isExpanded ? 'bg-green-50 dark:bg-white/[0.06]' : ''
@@ -3438,20 +3582,39 @@ export default function ProjectDataView() {
                         </td>
                       )}
                       <td className="px-2 py-2 text-center">
-                        <button
-                          onClick={async () => {
-                            if (isExpanded) setExpandedSignalId(null);
-                            else {
-                              setExpandedSignalId(signal.id);
-                              await loadSignalDetail(signal.id, true);
-                              if (signal.status === 'Pending') await loadApprovalInfo('signal', signal.id);
-                              if ((signal as any).import_status === 'updated') loadImportDiff('signals', signal.id);
-                            }
-                          }}
-                          className="text-gray-400 dark:text-white/40 hover:text-green-600 font-mono text-xs"
-                        >
-                          {isExpanded ? '▼' : '▶'}
-                        </button>
+                        <div className="flex items-end justify-center gap-1">
+                          <button
+                            onClick={async () => {
+                              if (isExpanded) setExpandedSignalId(null);
+                              else {
+                                setExpandedSignalId(signal.id);
+                                await loadSignalDetail(signal.id, true);
+                                if (signal.status === 'Pending') await loadApprovalInfo('signal', signal.id);
+                                if ((signal as any).import_status === 'updated') loadImportDiff('signals', signal.id);
+                              }
+                            }}
+                            className="text-gray-400 dark:text-white/40 hover:text-green-600 font-mono text-xs leading-none"
+                          >
+                            {isExpanded ? '▼' : '▶'}
+                          </button>
+                          {selectedProjectId && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const sg = (signal as any).signal_group;
+                                if (sg) {
+                                  setSignalGroupTarget({ groupName: sg, projectId: selectedProjectId, signalId: signal.id });
+                                } else {
+                                  setSignalGroupTarget({ singleSignalId: signal.id, projectId: selectedProjectId, signalId: signal.id });
+                                }
+                              }}
+                              className="leading-none text-gray-400 dark:text-white/40 hover:text-black dark:hover:text-white"
+                              title={(signal as any).signal_group ? `查看协议组 ${(signal as any).signal_group} 连接图` : '查看信号连接图（未分组）'}
+                            >
+                              <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" style={{ display: 'block', position: 'relative', top: '1px' }}><path d="M8 3C4.5 3 1.7 5.3.5 8c1.2 2.7 4 5 7.5 5s6.3-2.3 7.5-5c-1.2-2.7-4-5-7.5-5zm0 8.3c-1.8 0-3.3-1.5-3.3-3.3S6.2 4.7 8 4.7s3.3 1.5 3.3 3.3-1.5 3.3-3.3 3.3zM8 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>
+                            </button>
+                          )}
+                        </div>
                       </td>
                       <td className={`px-2 py-2 font-mono text-xs ${expandedCols.has('UniqueID') ? 'whitespace-normal break-all' : 'truncate max-w-[200px]'}`} title={signal.unique_id || '-'}>{signal.unique_id || '-'}</td>
                       <td className="px-2 py-2">
@@ -5806,6 +5969,46 @@ export default function ProjectDataView() {
           entityId={historyTarget.entityId}
           entityLabel={historyTarget.entityLabel}
           onClose={() => setHistoryTarget(null)}
+        />
+      )}
+
+      {eicdTarget && (
+        <EICDModal
+          deviceId={eicdTarget.deviceId}
+          projectId={eicdTarget.projectId}
+          deviceLabel={eicdTarget.label}
+          onClose={() => setEicdTarget(null)}
+          onNavigate={(sel: NonNullable<Selection>) => {
+            setEicdTarget(null);
+            if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+            setHighlightRow(null);
+
+            if (sel.type === 'signal') {
+              // 重置信号筛选，确保目标信号可见
+              setSignalFilters({});
+              setSgGroupFilter('');
+              setSignals([]); // 清空旧信号，防止 pendingNav 匹配到旧数据
+              if (filterMode !== 'all') setFilterMode('all');
+              setActiveView('signals');
+            } else {
+              // 重置设备筛选确保目标设备可见
+              setDeviceFilters({});
+              setConfigFilterSelected([]);
+              if (filterMode !== 'all') setFilterMode('all');
+              setActiveView('devices');
+            }
+            setPendingNav(sel);
+          }}
+        />
+      )}
+
+      {signalGroupTarget && (
+        <SignalGroupModal
+          groupName={signalGroupTarget.groupName}
+          singleSignalId={signalGroupTarget.singleSignalId}
+          projectId={signalGroupTarget.projectId}
+          highlightSignalId={signalGroupTarget.signalId}
+          onClose={() => setSignalGroupTarget(null)}
         />
       )}
 
