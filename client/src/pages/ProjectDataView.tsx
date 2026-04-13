@@ -1764,10 +1764,12 @@ export default function ProjectDataView() {
           )}
           {canManageDevices && (
             <>
-              <button
-                onClick={() => { setImportDevFile(null); setImportDevResult(null); setShowImportDevDataModal(true); }}
-                className="btn-secondary text-sm whitespace-nowrap"
-              >导入设备和连接器数据</button>
+              {isAdmin && (
+                <button
+                  onClick={() => { setImportDevFile(null); setImportDevResult(null); setShowImportDevDataModal(true); }}
+                  className="btn-secondary text-sm whitespace-nowrap"
+                >导入设备和连接器数据</button>
+              )}
               <button id="tour-add-device" onClick={openAddDevice} className="btn-primary text-sm whitespace-nowrap">
                 + 添加设备
               </button>
@@ -3081,11 +3083,13 @@ export default function ProjectDataView() {
           )}
           {canManageSignals && (
             <>
-              <button
-                disabled={sgCheckMode}
-                onClick={() => { setImportSigFile(null); setImportSigResult(null); setImportSigType('import'); setShowImportSigModal(true); }}
-                className={`px-3 py-1.5 rounded text-sm ${sgCheckMode ? 'bg-gray-300 text-gray-500 dark:text-white/50 cursor-not-allowed' : 'bg-purple-600 text-white hover:bg-purple-700'}`}
-              >导入信号及针孔数据</button>
+              {(isAdmin || myProjectRole === 'EWIS管理员') && (
+                <button
+                  disabled={sgCheckMode}
+                  onClick={() => { setImportSigFile(null); setImportSigResult(null); setImportSigType('import'); setShowImportSigModal(true); }}
+                  className={`px-3 py-1.5 rounded text-sm ${sgCheckMode ? 'bg-gray-300 text-gray-500 dark:text-white/50 cursor-not-allowed' : 'bg-purple-600 text-white hover:bg-purple-700'}`}
+                >导入信号及针孔数据</button>
+              )}
               {!sgCheckMode && (
                 <button
                   onClick={() => { setSgCheckMode(true); setSgCheckedIds([]); }}
