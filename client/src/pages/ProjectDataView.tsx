@@ -391,6 +391,14 @@ export default function ProjectDataView() {
   const [epPinOptions, setEpPinOptions] = useState<PinRow[][]>([[], []]);
   const [myDevicesList, setMyDevicesList] = useState<DeviceRow[]>([]);
 
+  // ── 长内容列展开/收起 ────────────────────────────────────────
+  const [expandedCols, setExpandedCols] = useState<Set<string>>(new Set());
+  const toggleColExpand = (col: string) => setExpandedCols(prev => {
+    const next = new Set(prev);
+    if (next.has(col)) next.delete(col); else next.add(col);
+    return next;
+  });
+
   // ── 智能助手 ──────────────────────────────────────────────
   type ChatMsg = { role: 'user' | 'assistant'; content: string };
   const [showChat, setShowChat] = useState(false);
@@ -1711,42 +1719,26 @@ export default function ProjectDataView() {
         const hasAnyFilter = Object.values(deviceFilters).some(v => v) || configFilterSelected.length > 0;
         return (
         <div className="bg-white dark:bg-neutral-900 rounded-lg shadow">
-          <table className="min-w-full text-sm table-fixed">
-            <colgroup>
-              <col style={{ width: 32 }} />{/* 勾选框 */}
-              <col style={{ width: 40 }} />{/* 展开 */}
-              <col style={{ width: 150 }} />{/* 设备编号 */}
-              <col style={{ width: 100 }} />{/* 构型 */}
-              <col style={{ width: 150 }} />{/* 状态 */}
-              <col style={{ width: 120 }} />{/* LIN号 */}
-              <col />{/* 设备中文名称 - 弹性 */}
-              <col style={{ width: 70 }} />{/* ATA */}
-              <col style={{ width: 50 }} />{/* DAL */}
-              <col style={{ width: 50 }} />{/* 等级 */}
-              <col style={{ width: 150 }} />{/* 设备负责人 */}
-              <col style={{ width: 60 }} />{/* 连接器数 */}
-              <col style={{ width: 120 }} />{/* 最后更新 */}
-              <col style={{ width: 130 }} />{/* 操作 */}
-            </colgroup>
-            <thead className="bg-gray-50 dark:bg-neutral-800 sticky top-0 z-10">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 dark:bg-neutral-800 sticky top-0 z-10 whitespace-nowrap text-xs text-gray-500 dark:text-white/50">
               <tr>
-                <th className="px-1 py-2"></th>
-                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50"></th>
-                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50">设备编号</th>
-                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50">构型</th>
-                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50">状态</th>
-                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50">设备LIN号（DOORS）</th>
-                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50">设备中文名称</th>
-                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50">ATA（前2位筛选）</th>
-                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50">DAL</th>
-                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50">等级</th>
-                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50">设备负责人</th>
-                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50">连接器数</th>
-                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50 cursor-pointer select-none hover:text-black dark:hover:text-white"
+                <th className="px-1 py-2 w-8"></th>
+                <th className="px-1 py-2 w-10"></th>
+                <th className="px-2 py-2 text-left">设备编号</th>
+                <th className="px-2 py-2 text-left">构型</th>
+                <th className="px-2 py-2 text-left w-[120px]">状态</th>
+                <th className="px-2 py-2 text-left">LIN号</th>
+                <th className="px-2 py-2 text-left">设备中文名称</th>
+                <th className="px-2 py-2 text-left">ATA</th>
+                <th className="px-2 py-2 text-left w-10">DAL</th>
+                <th className="px-2 py-2 text-left w-10">等级</th>
+                <th className="px-2 py-2 text-left">设备负责人</th>
+                <th className="px-2 py-2 text-left w-12">连接器</th>
+                <th className="px-2 py-2 text-left cursor-pointer select-none hover:text-black dark:hover:text-white"
                   onClick={() => setDeviceSortOrder(o => o === 'desc' ? 'asc' : 'desc')}>
-                  最后更新 {deviceSortOrder === 'desc' ? '▼' : '▲'}
+                  更新 {deviceSortOrder === 'desc' ? '▼' : '▲'}
                 </th>
-                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50">操作</th>
+                <th className="px-2 py-2 text-left w-[110px]">操作</th>
               </tr>
               <tr className="bg-white dark:bg-neutral-900 border-b">
                 <th className="px-1 py-1"></th>
@@ -1960,7 +1952,7 @@ export default function ProjectDataView() {
                           {isExpanded ? '▼' : '▶'}
                         </button>
                       </td>
-                      <td className="px-2 py-2 font-medium text-sm truncate max-w-0 overflow-hidden" title={device.设备编号}>{device.设备编号}</td>
+                      <td className="px-2 py-2 font-medium text-sm truncate" title={device.设备编号}>{device.设备编号}</td>
                       <td className="px-2 py-2 text-sm">
                         {projectConfigurations.length === 0
                           ? <span className="text-gray-300 dark:text-white/30">—</span>
@@ -2001,12 +1993,12 @@ export default function ProjectDataView() {
                         )}
                         {/* 已导入/已更新标签暂时隐藏 */}
                       </td>
-                      <td className="px-2 py-2 text-gray-600 dark:text-white/60 text-sm truncate max-w-0 overflow-hidden" title={device['设备LIN号（DOORS）'] || '-'}>{device['设备LIN号（DOORS）'] || '-'}</td>
+                      <td className="px-2 py-2 text-gray-600 dark:text-white/60 text-sm truncate" title={device['设备LIN号（DOORS）'] || '-'}>{device['设备LIN号（DOORS）'] || '-'}</td>
                       <td className="px-2 py-2 text-gray-700 dark:text-white/70 text-sm">{device.设备中文名称 || '-'}</td>
-                      <td className="px-2 py-2 text-gray-600 dark:text-white/60 text-sm truncate max-w-0 overflow-hidden" title={device['设备部件所属系统（4位ATA）'] || '-'}>{device['设备部件所属系统（4位ATA）'] || '-'}</td>
-                      <td className="px-2 py-2 text-gray-600 dark:text-white/60 text-sm truncate max-w-0 overflow-hidden" title={device.设备DAL || '-'}>{device.设备DAL || '-'}</td>
+                      <td className="px-2 py-2 text-gray-600 dark:text-white/60 text-sm truncate" title={device['设备部件所属系统（4位ATA）'] || '-'}>{device['设备部件所属系统（4位ATA）'] || '-'}</td>
+                      <td className="px-2 py-2 text-gray-600 dark:text-white/60 text-sm truncate" title={device.设备DAL || '-'}>{device.设备DAL || '-'}</td>
                       <td className="px-2 py-2 text-gray-600 dark:text-white/60 text-sm text-center">{device.设备等级 || '-'}</td>
-                      <td className="px-2 py-2 text-gray-600 dark:text-white/60 text-sm truncate max-w-0 overflow-hidden" title={`${device.设备负责人 || '-'}${device.设备负责人姓名 ? ` (${device.设备负责人姓名})` : ''}`}>
+                      <td className="px-2 py-2 text-gray-600 dark:text-white/60 text-sm truncate" title={`${device.设备负责人 || '-'}${device.设备负责人姓名 ? ` (${device.设备负责人姓名})` : ''}`}>
                         {device.设备负责人 || '-'}
                         {device.设备负责人姓名 && <span className="text-gray-400 dark:text-white/40 ml-1">({device.设备负责人姓名})</span>}
                       </td>
@@ -3174,51 +3166,33 @@ export default function ProjectDataView() {
         const hasMore = !isFiltering && reorderedSignals.length > signalDisplayCount;
         return (
         <div className="bg-white dark:bg-neutral-900 rounded-lg shadow">
-          <div className="px-4 py-1.5 text-xs text-gray-500 dark:text-white/50 bg-gray-50 dark:bg-neutral-800 border-b sticky top-0 z-20">
+          <div className="px-4 py-1.5 text-xs text-gray-500 dark:text-white/50 bg-gray-50 dark:bg-neutral-800 border-b sticky top-0 z-30">
             {isFiltering
               ? `显示 ${filteredSignals.length} / ${signals.length} 条信号`
               : `已载入 ${Math.min(signalDisplayCount, filteredSignals.length)} / ${signalTotal} 条信号`}
           </div>
-          <table className="min-w-full text-sm table-fixed">
-            <colgroup>
-              {!sgCheckMode && <col style={{ width: 32 }} />}{/* 勾选框/占位 */}
-              <col style={{ width: 32 }} />{/* # 序号 */}
-              {sgCheckMode && <col style={{ width: 32 }} />}{/* 分组勾选 */}
-              <col style={{ width: 24 }} />{/* 组名 */}
-              <col style={{ width: 32 }} />{/* 色带 */}
-              <col style={{ width: 200 }} />{/* Unique ID */}
-              <col style={{ width: 100 }} />{/* 状态 */}
-              <col style={{ width: 260 }} />{/* 信号名称摘要 */}
-              <col style={{ width: 120 }} />{/* 连接类型 */}
-              <col style={{ width: 65 }} />{/* 导线等级 */}
-              <col style={{ minWidth: 260 }} />{/* 端点摘要 - 弹性 */}
-              <col style={{ width: 80 }} />{/* 创建人 */}
-              <col style={{ width: 90 }} />{/* 最后更新 */}
-              <col style={{ width: 130 }} />{/* 操作 */}
-            </colgroup>
-            <thead className="bg-gray-50 dark:bg-neutral-800 sticky top-[29px] z-10">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 dark:bg-neutral-800 sticky top-[29px] z-10 whitespace-nowrap text-xs text-gray-500 dark:text-white/50">
               <tr>
-                {!sgCheckMode && <th className="px-1 py-2"></th>}
-                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50">#</th>
-                {sgCheckMode && <th className="px-1 py-2 text-center text-xs text-gray-500 dark:text-white/50"></th>}
-                <th className="py-2 text-xs text-gray-500 dark:text-white/50">组</th>
-                <th className="px-2 py-2 text-left text-xs text-gray-500 dark:text-white/50"></th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500 dark:text-white/50">Unique ID</th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500 dark:text-white/50">状态</th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500 dark:text-white/50">信号名称摘要</th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500 dark:text-white/50">连接类型</th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500 dark:text-white/50">导线等级</th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500 dark:text-white/50">端点摘要</th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500 dark:text-white/50">创建人</th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500 dark:text-white/50 cursor-pointer select-none hover:text-black dark:hover:text-white"
+                <th className="py-2 w-6">组</th>
+                {!sgCheckMode && <th className="px-1 py-2 w-8"></th>}
+                <th className="px-1 py-2 w-8 text-left">#</th>
+                {sgCheckMode && <th className="px-1 py-2 w-8"></th>}
+                <th className="px-1 py-2 w-8"></th>{/* 展开 */}
+                <th className="px-2 py-2 text-left cursor-pointer select-none" onClick={() => toggleColExpand('UniqueID')} title="点击切换展开/收起">Unique ID {expandedCols.has('UniqueID') ? '◀' : '▸'}</th>
+                <th className="px-2 py-2 text-left w-[100px]">状态</th>
+                <th className="px-2 py-2 text-left cursor-pointer select-none" onClick={() => toggleColExpand('信号名称摘要')} title="点击切换展开/收起">信号名称摘要 {expandedCols.has('信号名称摘要') ? '◀' : '▸'}</th>
+                <th className="px-2 py-2 text-left">连接类型</th>
+                <th className="px-2 py-2 text-left w-14">等级</th>
+                <th className="px-2 py-2 text-left cursor-pointer select-none" onClick={() => toggleColExpand('端点摘要')} title="点击切换展开/收起">端点摘要 {expandedCols.has('端点摘要') ? '◀' : '▸'}</th>
+                <th className="px-2 py-2 text-left w-16">创建人</th>
+                <th className="px-2 py-2 text-left cursor-pointer select-none hover:text-black dark:hover:text-white"
                   onClick={() => setSignalSortOrder(o => o === 'desc' ? 'asc' : 'desc')}>
-                  最后更新 {signalSortOrder === 'desc' ? '▼' : '▲'}
+                  更新 {signalSortOrder === 'desc' ? '▼' : '▲'}
                 </th>
-                <th className="px-4 py-2 text-left text-xs text-gray-500 dark:text-white/50">操作</th>
+                <th className="px-2 py-2 text-left w-[110px]">操作</th>
               </tr>
               <tr className="bg-white dark:bg-neutral-900 border-b">
-                {!sgCheckMode && <th className="px-1 py-1"></th>}
-                <th className="px-1 py-1"></th>
                 <th className="p-0 w-6">
                   <select
                     value={sgGroupFilter}
@@ -3234,10 +3208,12 @@ export default function ProjectDataView() {
                     )}
                   </select>
                 </th>
+                {!sgCheckMode && <th className="px-1 py-1"></th>}
+                <th className="px-1 py-1"></th>
                 {sgCheckMode && <th className="px-1 py-1"></th>}
-                <th className="px-2 py-1"></th>
+                <th className="px-1 py-1"></th>{/* 展开 */}
                 {/* Unique ID */}
-                <th className="px-4 py-1">
+                <th className="px-2 py-1">
                   <div className="relative">
                     <input type="text" placeholder="筛选..." value={signalFilters['unique_id'] || ''}
                       onChange={e => setSignalFilters(prev => ({ ...prev, unique_id: e.target.value }))}
@@ -3249,7 +3225,7 @@ export default function ProjectDataView() {
                   </div>
                 </th>
                 {/* 状态 */}
-                <th className="px-4 py-1">
+                <th className="px-2 py-1">
                   <select value={signalFilters['_status'] || ''}
                     onChange={e => setSignalFilters(prev => ({ ...prev, _status: e.target.value }))}
                     className="w-full px-1 py-0.5 text-xs border border-gray-300 dark:border-white/20 rounded focus:outline-none focus:border-black dark:focus:border-white bg-white dark:bg-neutral-800 dark:text-white">
@@ -3261,7 +3237,7 @@ export default function ProjectDataView() {
                 </th>
                 {/* 信号名称摘要、连接类型 */}
                 {(['信号名称摘要', '连接类型'] as const).map(col => (
-                  <th key={col} className="px-4 py-1">
+                  <th key={col} className="px-2 py-1">
                     <div className="relative">
                       <input type="text" placeholder="筛选..." value={signalFilters[col] || ''}
                         onChange={e => setSignalFilters(prev => ({ ...prev, [col]: e.target.value }))}
@@ -3274,7 +3250,7 @@ export default function ProjectDataView() {
                   </th>
                 ))}
                 {/* 导线等级 - 下拉菜单筛选 */}
-                <th className="px-4 py-1">
+                <th className="px-2 py-1">
                   <select value={signalFilters['导线等级'] || ''}
                     onChange={e => setSignalFilters(prev => ({ ...prev, '导线等级': e.target.value }))}
                     className="w-full px-1 py-0.5 text-xs border border-gray-300 dark:border-white/20 rounded focus:outline-none focus:border-black dark:focus:border-white bg-white dark:bg-neutral-800 dark:text-white">
@@ -3288,7 +3264,7 @@ export default function ProjectDataView() {
                 </th>
                 {/* 端点摘要、创建人 */}
                 {(['endpoint_summary', 'created_by'] as const).map(col => (
-                  <th key={col} className="px-4 py-1">
+                  <th key={col} className="px-2 py-1">
                     <div className="relative">
                       <input type="text" placeholder="筛选..." value={signalFilters[col] || ''}
                         onChange={e => setSignalFilters(prev => ({ ...prev, [col]: e.target.value }))}
@@ -3300,9 +3276,9 @@ export default function ProjectDataView() {
                     </div>
                   </th>
                 ))}
-                <th className="px-4 py-1"></th>
+                <th className="px-2 py-1"></th>
                 {/* 操作列 - 清除按钮 */}
-                <th className="px-4 py-1">
+                <th className="px-2 py-1">
                   {hasAnySignalFilter && (
                     <button onClick={() => setSignalFilters({})} className="text-xs text-gray-400 dark:text-white/40 hover:text-red-500">全部清除</button>
                   )}
@@ -3343,9 +3319,12 @@ export default function ProjectDataView() {
                           ? 'bg-orange-100'
                           : isExpanded ? 'bg-green-50 dark:bg-white/[0.06]' : ''
                       } cursor-pointer`}
-                      style={groupInfo ? {
-                        borderLeft: `3px solid ${(() => { const gn = (signal as any).signal_group || ''; const gp = Object.keys({'A_429_':'#818cf8','CAN_Bus_':'#f59e0b','PWR_LV_':'#ef4444','PWR_HV_':'#dc2626','RS422_F_':'#8b5cf6','RS422_':'#a78bfa','RS485_':'#14b8a6','ETH100_':'#22c55e','ETH1000_':'#0ea5e9'}).find(p => gn.startsWith(p)); return gp ? ({'A_429_':'#818cf8','CAN_Bus_':'#f59e0b','PWR_LV_':'#ef4444','PWR_HV_':'#dc2626','RS422_F_':'#8b5cf6','RS422_':'#a78bfa','RS485_':'#14b8a6','ETH100_':'#22c55e','ETH1000_':'#0ea5e9'} as any)[gp] : '#818cf8'; })()}`,
-                      } : undefined}
+                      style={groupInfo && !hasTodo(signal) && !isExpanded ? (() => {
+                        const gn = (signal as any).signal_group || '';
+                        const bgMap: Record<string, string> = {'A_429_':'rgba(129,140,248,0.08)','CAN_Bus_':'rgba(245,158,11,0.08)','PWR_LV_':'rgba(239,68,68,0.06)','PWR_HV_':'rgba(220,38,38,0.06)','RS422_F_':'rgba(139,92,246,0.08)','RS422_':'rgba(167,139,250,0.08)','RS485_':'rgba(20,184,166,0.08)','ETH100_':'rgba(34,197,94,0.08)','ETH1000_':'rgba(14,165,233,0.08)'};
+                        const gp = Object.keys(bgMap).find(p => gn.startsWith(p));
+                        return gp ? { backgroundColor: bgMap[gp] } : undefined;
+                      })() : undefined}
                       onDoubleClick={async () => {
                         if (!isExpanded) {
                           setExpandedSignalId(signal.id);
@@ -3355,6 +3334,37 @@ export default function ProjectDataView() {
                         else { setExpandedSignalId(null); }
                       }}
                     >
+                      {/* 组名列：每行都渲染色条，首行显示组名 */}
+                      {(() => {
+                        const gn = (signal as any).signal_group || '';
+                        const colorMap: Record<string, string> = {'A_429_':'#818cf8','CAN_Bus_':'#f59e0b','PWR_LV_':'#ef4444','PWR_HV_':'#dc2626','RS422_F_':'#8b5cf6','RS422_':'#a78bfa','RS485_':'#14b8a6','ETH100_':'#22c55e','ETH1000_':'#0ea5e9'};
+                        const textColorMap: Record<string, string> = {'A_429_':'#4f46e5','CAN_Bus_':'#b45309','PWR_LV_':'#dc2626','PWR_HV_':'#991b1b','RS422_F_':'#7c3aed','RS422_':'#6d28d9','RS485_':'#0f766e','ETH100_':'#15803d','ETH1000_':'#0369a1'};
+                        if (!groupInfo) return <td className="p-0 w-6"></td>;
+                        const gp = gn ? Object.keys(colorMap).find(p => gn.startsWith(p)) : null;
+                        const barColor = gp ? colorMap[gp] : '#818cf8';
+                        const textColor = gp ? textColorMap[gp] : '#4f46e5';
+                        const isFirst = groupInfo.pos === 'first' || groupInfo.pos === 'solo';
+                        return (
+                          <td className="p-0 w-6 border-r-[3px]" style={{ borderRightColor: barColor }}>
+                            {isFirst && (
+                              <button
+                                className="font-mono whitespace-nowrap hover:opacity-70 block mx-auto"
+                                style={{ color: textColor, fontSize: '9px', writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
+                                title="点击解散该信号组"
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  if (!confirm(`确定解散信号组「${gn}」吗？`)) return;
+                                  try {
+                                    const res = await fetch(`/api/signals/group/${encodeURIComponent(gn)}?project_id=${selectedProjectId}`, { method: 'DELETE', headers: API_HEADERS() });
+                                    if (res.ok) { loadSignals(); }
+                                    else { alert((await res.json()).error || '解散失败'); }
+                                  } catch { alert('操作失败'); }
+                                }}
+                              >{gn}</button>
+                            )}
+                          </td>
+                        );
+                      })()}
                       {!sgCheckMode && (
                         <td className="px-1 py-2 text-center w-8">
                           {filterMode === 'my_tasks' && signal.pending_item_type === 'approval' && (signal as any).approval_request_id && (
@@ -3372,15 +3382,8 @@ export default function ProjectDataView() {
                           )}
                         </td>
                       )}
-                      <td className="px-2 py-2 text-center text-xs">
-                        {groupInfo ? (() => {
-                          const gn = (signal as any).signal_group || '';
-                          const gp = Object.keys({'A_429_':'#4f46e5','CAN_Bus_':'#b45309','PWR_LV_':'#dc2626','PWR_HV_':'#991b1b','RS422_F_':'#7c3aed','RS422_':'#6d28d9','RS485_':'#0f766e','ETH100_':'#15803d','ETH1000_':'#0369a1'}).find(p => gn.startsWith(p));
-                          const textColor = gp ? ({'A_429_':'#4f46e5','CAN_Bus_':'#b45309','PWR_LV_':'#dc2626','PWR_HV_':'#991b1b','RS422_F_':'#7c3aed','RS422_':'#6d28d9','RS485_':'#0f766e','ETH100_':'#15803d','ETH1000_':'#0369a1'} as any)[gp] : '#4f46e5';
-                          return <span className="font-medium" style={{ color: textColor }}>{displayIndex + 1}</span>;
-                        })() : (
-                          <span className="text-gray-400 dark:text-white/40">{displayIndex + 1}</span>
-                        )}
+                      <td className="px-1 py-2 text-center text-xs">
+                        <span className="text-gray-400 dark:text-white/40">{displayIndex + 1}</span>
                       </td>
                       {sgCheckMode && (
                         <td className="px-1 py-2 text-center">
@@ -3398,30 +3401,6 @@ export default function ProjectDataView() {
                           )}
                         </td>
                       )}
-                      {/* 组名独立列 */}
-                      <td className="p-0 text-center w-6">
-                        {groupInfo?.pos === 'first' && (() => {
-                          const gn = (signal as any).signal_group || '';
-                          const gp = Object.keys({'A_429_':'#4f46e5','CAN_Bus_':'#b45309','PWR_LV_':'#dc2626','PWR_HV_':'#991b1b','RS422_F_':'#7c3aed','RS422_':'#6d28d9','RS485_':'#0f766e','ETH100_':'#15803d','ETH1000_':'#0369a1'}).find(p => gn.startsWith(p));
-                          const textColor = gp ? ({'A_429_':'#4f46e5','CAN_Bus_':'#b45309','PWR_LV_':'#dc2626','PWR_HV_':'#991b1b','RS422_F_':'#7c3aed','RS422_':'#6d28d9','RS485_':'#0f766e','ETH100_':'#15803d','ETH1000_':'#0369a1'} as any)[gp] : '#4f46e5';
-                          return (
-                            <button
-                              className="font-mono whitespace-nowrap hover:opacity-70"
-                              style={{ color: textColor, fontSize: '9px', writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
-                              title="点击解散该信号组"
-                              onClick={async (e) => {
-                                e.stopPropagation();
-                                if (!confirm(`确定解散信号组「${gn}」吗？`)) return;
-                                try {
-                                  const res = await fetch(`/api/signals/group/${encodeURIComponent(gn)}?project_id=${selectedProjectId}`, { method: 'DELETE', headers: API_HEADERS() });
-                                  if (res.ok) { loadSignals(); }
-                                  else { alert((await res.json()).error || '解散失败'); }
-                                } catch { alert('操作失败'); }
-                              }}
-                            >{gn}</button>
-                          );
-                        })()}
-                      </td>
                       <td className="px-2 py-2 text-center">
                         <button
                           onClick={async () => {
@@ -3438,8 +3417,8 @@ export default function ProjectDataView() {
                           {isExpanded ? '▼' : '▶'}
                         </button>
                       </td>
-                      <td className="px-4 py-2 font-mono text-xs truncate max-w-0 overflow-hidden" title={signal.unique_id || '-'}>{signal.unique_id || '-'}</td>
-                      <td className="px-4 py-2">
+                      <td className={`px-2 py-2 font-mono text-xs ${expandedCols.has('UniqueID') ? 'whitespace-normal break-all' : 'truncate max-w-[200px]'}`} title={signal.unique_id || '-'}>{signal.unique_id || '-'}</td>
+                      <td className="px-2 py-2">
                         {signal.status === 'Draft' && (
                           <span className="px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700 text-xs font-semibold">Draft</span>
                         )}
@@ -3455,13 +3434,13 @@ export default function ProjectDataView() {
                         )}
                         {/* 已导入/已更新标签暂时隐藏 */}
                       </td>
-                      <td className="px-4 py-2 text-xs truncate max-w-0 overflow-hidden" title={signal.信号名称摘要 || '-'}>{signal.信号名称摘要 || '-'}</td>
-                      <td className="px-4 py-2 text-gray-600 dark:text-white/60 text-xs truncate max-w-0 overflow-hidden" title={signal.连接类型 || '-'}>{signal.连接类型 || '-'}</td>
-                      <td className="px-4 py-2 text-gray-600 dark:text-white/60 text-xs">{signal.导线等级 || '-'}</td>
-                      <td className="px-4 py-2 text-gray-600 dark:text-white/60 text-xs truncate max-w-0 overflow-hidden" title={signal.endpoint_summary || '-'}>{signal.endpoint_summary || '-'}</td>
-                      <td className="px-4 py-2 text-gray-600 dark:text-white/60 text-xs truncate max-w-0 overflow-hidden" title={signal.created_by || '-'}>{signal.created_by || '-'}</td>
-                      <td className="px-4 py-2 text-gray-400 dark:text-white/40 text-xs truncate">{(signal as any).updated_at ? new Date((signal as any).updated_at).toLocaleDateString() : '-'}</td>
-                      <td className="px-4 py-2 space-x-2 text-xs whitespace-nowrap">
+                      <td className={`px-2 py-2 text-xs ${expandedCols.has('信号名称摘要') ? 'whitespace-normal break-all' : 'truncate max-w-[240px]'}`} title={signal.信号名称摘要 || '-'}>{signal.信号名称摘要 || '-'}</td>
+                      <td className="px-2 py-2 text-gray-600 dark:text-white/60 text-xs" title={signal.连接类型 || '-'}>{signal.连接类型 || '-'}</td>
+                      <td className="px-2 py-2 text-gray-600 dark:text-white/60 text-xs">{signal.导线等级 || '-'}</td>
+                      <td className={`px-2 py-2 text-gray-600 dark:text-white/60 text-xs ${expandedCols.has('端点摘要') ? 'whitespace-normal break-all' : 'truncate max-w-[240px]'}`} title={signal.endpoint_summary || '-'}>{signal.endpoint_summary || '-'}</td>
+                      <td className="px-2 py-2 text-gray-600 dark:text-white/60 text-xs">{signal.created_by || '-'}</td>
+                      <td className="px-2 py-2 text-gray-400 dark:text-white/40 text-xs">{(signal as any).updated_at ? new Date((signal as any).updated_at).toLocaleDateString() : '-'}</td>
+                      <td className="px-2 py-2 space-x-1 text-xs whitespace-nowrap">
                         {signal.status === 'Pending' ? (
                           <span className="text-gray-400 dark:text-white/40 cursor-not-allowed" title="记录审批中，不可编辑">编辑/删除</span>
                         ) : (
@@ -3487,10 +3466,14 @@ export default function ProjectDataView() {
                       const completionItems = items.filter((i: any) => i.item_type === 'completion');
                       const approvalItems = items.filter((i: any) => i.item_type === 'approval');
                       return (
-                        <tr key={`${signal.id}-approval`}
-                          style={groupInfo ? { borderLeft: `3px solid ${(() => { const gn = (signal as any).signal_group || ''; const gp = Object.keys({'A_429_':'#818cf8','CAN_Bus_':'#f59e0b','PWR_LV_':'#ef4444','PWR_HV_':'#dc2626','RS422_F_':'#8b5cf6','RS422_':'#a78bfa','RS485_':'#14b8a6','ETH100_':'#22c55e','ETH1000_':'#0ea5e9'}).find(p => gn.startsWith(p)); return gp ? ({'A_429_':'#818cf8','CAN_Bus_':'#f59e0b','PWR_LV_':'#ef4444','PWR_HV_':'#dc2626','RS422_F_':'#8b5cf6','RS422_':'#a78bfa','RS485_':'#14b8a6','ETH100_':'#22c55e','ETH1000_':'#0ea5e9'} as any)[gp] : '#818cf8'; })()}` } : undefined}
-                        >
-                          <td colSpan={11} className="px-0 py-0 bg-yellow-50 dark:bg-yellow-900/20 border-b border-yellow-200 dark:border-yellow-800">
+                        <tr key={`${signal.id}-approval`}>
+                          {groupInfo && (() => {
+                            const gn = (signal as any).signal_group || '';
+                            const colorMap: Record<string, string> = {'A_429_':'#818cf8','CAN_Bus_':'#f59e0b','PWR_LV_':'#ef4444','PWR_HV_':'#dc2626','RS422_F_':'#8b5cf6','RS422_':'#a78bfa','RS485_':'#14b8a6','ETH100_':'#22c55e','ETH1000_':'#0ea5e9'};
+                            const gp = gn ? Object.keys(colorMap).find(p => gn.startsWith(p)) : null;
+                            return <td className="p-0 w-6 border-r-[3px]" style={{ borderRightColor: gp ? colorMap[gp] : '#818cf8' }}></td>;
+                          })()}
+                          <td colSpan={groupInfo ? 99 : 11} className="px-0 py-0 bg-yellow-50 dark:bg-yellow-900/20 border-b border-yellow-200 dark:border-yellow-800">
                             <div className="pl-8 pr-4 py-3">
                               {request.project_name && <div className="text-xs text-black dark:text-white font-medium mb-1">项目：{request.project_name}</div>}
                               <div className="text-xs font-semibold text-gray-600 dark:text-white/60 mb-2">审批进度（{request.action_type}）</div>
@@ -3537,10 +3520,14 @@ export default function ProjectDataView() {
                     })()}
 
                     {isExpanded && detail && (
-                      <tr key={`${signal.id}-detail`}
-                        style={groupInfo ? { borderLeft: `3px solid ${(() => { const gn = (signal as any).signal_group || ''; const gp = Object.keys({'A_429_':'#818cf8','CAN_Bus_':'#f59e0b','PWR_LV_':'#ef4444','PWR_HV_':'#dc2626','RS422_F_':'#8b5cf6','RS422_':'#a78bfa','RS485_':'#14b8a6','ETH100_':'#22c55e','ETH1000_':'#0ea5e9'}).find(p => gn.startsWith(p)); return gp ? ({'A_429_':'#818cf8','CAN_Bus_':'#f59e0b','PWR_LV_':'#ef4444','PWR_HV_':'#dc2626','RS422_F_':'#8b5cf6','RS422_':'#a78bfa','RS485_':'#14b8a6','ETH100_':'#22c55e','ETH1000_':'#0ea5e9'} as any)[gp] : '#818cf8'; })()}` } : undefined}
-                      >
-                        <td colSpan={11} className="px-0 py-0 bg-green-50 dark:bg-white/[0.04]">
+                      <tr key={`${signal.id}-detail`}>
+                        {groupInfo && (() => {
+                          const gn = (signal as any).signal_group || '';
+                          const colorMap: Record<string, string> = {'A_429_':'#818cf8','CAN_Bus_':'#f59e0b','PWR_LV_':'#ef4444','PWR_HV_':'#dc2626','RS422_F_':'#8b5cf6','RS422_':'#a78bfa','RS485_':'#14b8a6','ETH100_':'#22c55e','ETH1000_':'#0ea5e9'};
+                          const gp = gn ? Object.keys(colorMap).find(p => gn.startsWith(p)) : null;
+                          return <td className="p-0 w-6 border-r-[3px]" style={{ borderRightColor: gp ? colorMap[gp] : '#818cf8' }}></td>;
+                        })()}
+                        <td colSpan={groupInfo ? 99 : 11} className="px-0 py-0 bg-green-50 dark:bg-white/[0.04]">
                           <div className="pl-8 pr-4 py-3 text-xs">
 
                             {/* 导入更新 diff */}

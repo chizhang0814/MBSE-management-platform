@@ -1608,6 +1608,8 @@ export function deviceRoutes(db: Database) {
       }
 
       const fields: Record<string, any> = { 针孔号, ...rest };
+      delete fields.pending_item_type; delete fields.import_status;
+      delete fields.id; delete fields.connector_id; delete fields.created_at; delete fields.status;
       const cols = Object.keys(fields).map(k => `"${k}"`).join(', ');
       const placeholders = Object.keys(fields).map(() => '?').join(', ');
 
