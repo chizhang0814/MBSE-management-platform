@@ -384,7 +384,10 @@ export default function EICDDiagram({ mainDevice, remoteDevices, connections, si
     }
 
     const maxRight = rLayouts.length > 0 ? Math.max(...rLayouts.map(r => r.x + r.bw)) + MARGIN : mX + mBW + maxMainCW + PIN_SQ + 400;
-    const maxBot = Math.max(adjMY + mBH, ...rLayouts.map(r => r.y + r.bh)) + MARGIN + 30;
+    // Reserve space at bottom: status legend row (22px) + ATA legend block above it
+    const ataCount = ataColorMap.size;
+    const legendH = 22 + (ataCount > 1 ? 14 + ataCount * 14 + 16 : 0);
+    const maxBot = Math.max(adjMY + mBH, ...rLayouts.map(r => r.y + r.bh)) + MARGIN + legendH;
 
     return { mDev, mX, mY: adjMY, mBW, mBH, rLayouts, baseSvgW: Math.max(maxRight, 600), baseSvgH: Math.max(maxBot, 200) };
   }, [mainDevice, filteredRemotes, filteredConns, filterDev]);
@@ -402,6 +405,12 @@ export default function EICDDiagram({ mainDevice, remoteDevices, connections, si
     return { mPins: mp, rPins: rp };
   }, [layout, offsets]);
 
+  /* ── Legend height (for SVG bottom reservation) ── */
+  const legendH = useMemo(() => {
+    const ataCount = ataColorMap.size;
+    return 22 + (ataCount > 1 ? 14 + ataCount * 14 + 16 : 0);
+  }, [ataColorMap]);
+
   /* ── Dynamic SVG size: expand canvas when devices are dragged beyond initial bounds ── */
   const { svgW, svgH } = useMemo(() => {
     let maxR = layout.baseSvgW;
@@ -411,12 +420,12 @@ export default function EICDDiagram({ mainDevice, remoteDevices, connections, si
     const mMaxCW = layout.mDev.connectors.length > 0
       ? Math.max(...layout.mDev.connectors.map(c => connW(c.pins))) : 0;
     maxR = Math.max(maxR, layout.mX + mo.dx + layout.mBW + mMaxCW + PIN_SQ + MARGIN);
-    maxB = Math.max(maxB, layout.mY + mo.dy + layout.mBH + MARGIN + 30);
+    maxB = Math.max(maxB, layout.mY + mo.dy + layout.mBH + MARGIN + legendH);
     // Remote devices bounding box with offsets
     for (const rl of layout.rLayouts) {
       const o = offsets[rl.dev.id] || { dx: 0, dy: 0 };
       maxR = Math.max(maxR, rl.x + o.dx + rl.bw + MARGIN);
-      maxB = Math.max(maxB, rl.y + o.dy + rl.bh + MARGIN + 30);
+      maxB = Math.max(maxB, rl.y + o.dy + rl.bh + MARGIN + legendH);
     }
     return { svgW: maxR, svgH: maxB };
   }, [layout, offsets]);
