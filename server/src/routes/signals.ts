@@ -528,6 +528,9 @@ export function signalRoutes(db: Database) {
     try {
       const { project_id, endpoints, draft: isDraft, ...signalFields } = req.body;
       delete signalFields['导线等级']; delete signalFields.edges; delete signalFields.signal_group;
+      delete signalFields.can_edit; delete signalFields.pending_item_type; delete signalFields.approval_request_id;
+      delete signalFields.endpoint_summary; delete signalFields['信号名称摘要']; delete signalFields.endpoint_count;
+      delete signalFields.import_status; delete signalFields.import_conflicts;
       // 非协议连接类型时清空协议标识
       if (!PROTOCOL_CONNECTION_TYPES.has(signalFields['连接类型'])) {
         signalFields['协议标识'] = null;

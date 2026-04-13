@@ -561,6 +561,11 @@ export async function checkAndAdvancePhase(db: Database, approvalRequestId: numb
         delete newFields.pending_sub_item_type;
         delete newFields.has_pending_sub;
         delete newFields.sub_approval_request_ids;
+        delete newFields.设备负责人姓名;
+        delete newFields.management_claim_requester;
+        delete newFields.connector_count;
+        delete newFields.pin_count;
+        delete newFields.import_status;
 
         if (Object.keys(newFields).length > 0) {
           const setClauses = Object.keys(newFields).map(k => `"${k}" = ?`).join(', ');

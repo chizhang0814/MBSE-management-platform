@@ -1529,6 +1529,38 @@ export class Database {
       }
     } catch (e: any) { console.log('Migration: fix stuck Pending entities:', e.message); }
 
+    // ── 修复审批通过但字段未应用的设备/连接器（payload含虚拟字段导致UPDATE失败）──
+    try {
+      const virtualFields = new Set(['approval_request_id','pending_item_type','pending_sub_item_type','has_pending_sub',
+        'sub_approval_request_ids','设备负责人姓名','management_claim_requester','connector_count','pin_count',
+        'import_status','_connector_renames','_deleteImpact']);
+      for (const [actionType, entityTable] of [['edit_device','devices'],['edit_connector','connectors']] as const) {
+        const approvedReqs = await this.query(`
+          SELECT ar.id, ar.entity_id, ar.payload FROM approval_requests ar
+          WHERE ar.action_type = ? AND ar.status = 'approved' AND ar.payload IS NOT NULL
+            AND EXISTS (SELECT 1 FROM ${entityTable} t WHERE t.id = ar.entity_id AND t.status = 'normal')
+        `, [actionType]);
+        for (const req of approvedReqs) {
+          try {
+            const payload = JSON.parse(req.payload);
+            for (const vf of virtualFields) delete payload[vf];
+            if (Object.keys(payload).length === 0) continue;
+            // 检查是否有字段未正确应用（比较payload值与当前DB值）
+            const entity = await this.get(`SELECT * FROM ${entityTable} WHERE id = ?`, [req.entity_id]);
+            if (!entity) continue;
+            let needsUpdate = false;
+            for (const [k, v] of Object.entries(payload)) {
+              if (String(entity[k] ?? '') !== String(v ?? '')) { needsUpdate = true; break; }
+            }
+            if (needsUpdate) {
+              const setClauses = Object.keys(payload).map(k => `"${k}" = ?`).join(', ');
+              await this.run(`UPDATE ${entityTable} SET ${setClauses} WHERE id = ?`, [...Object.values(payload), req.entity_id]);
+            }
+          } catch {}
+        }
+      }
+    } catch (e: any) { console.log('Migration: re-apply approved payloads:', e.message); }
+
     // 初始化默认用户（不再创建示例数据）
     await this.initDefaultData();
   }

@@ -677,6 +677,9 @@ export function deviceRoutes(db: Database) {
   router.post('/', authenticate, async (req: AuthRequest, res) => {
     try {
       const { project_id, forceDraft, ...fields } = req.body;
+      delete fields.设备负责人姓名; delete fields.pending_item_type; delete fields.approval_request_id;
+      delete fields.pending_sub_item_type; delete fields.has_pending_sub; delete fields.sub_approval_request_ids;
+      delete fields.management_claim_requester; delete fields.connector_count; delete fields.import_status;
       if (!project_id || !fields['设备编号']) {
         return res.status(400).json({ error: '缺少必填字段: project_id, 设备编号' });
       }
@@ -1158,6 +1161,8 @@ export function deviceRoutes(db: Database) {
     try {
       const deviceId = parseInt(req.params.devId);
       const { forceDraft, ...fields } = req.body as { forceDraft?: boolean; [key: string]: any };
+      delete fields.has_pending_sub; delete fields.pin_count; delete fields.import_status;
+      delete fields.id; delete fields.device_id; delete fields.created_at;
       if (!fields['设备端元器件编号']) return res.status(400).json({ error: '缺少设备端元器件编号' });
 
       const username = req.user!.username;
