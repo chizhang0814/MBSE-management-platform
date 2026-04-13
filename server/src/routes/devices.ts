@@ -533,7 +533,8 @@ export function deviceRoutes(db: Database) {
         sql += ' AND d.设备负责人 = ?';
         params.push(username);
       }
-      sql += ` ORDER BY d.设备编号 LIMIT ${q ? 20 : 200}`;
+      // 我的设备排前面，然后按设备编号排序
+      sql += ` ORDER BY CASE WHEN d.设备负责人 = '${username.replace(/'/g, "''")}' THEN 0 ELSE 1 END, d.设备编号 LIMIT ${q ? 50 : 500}`;
 
       const devices = await db.query(sql, params);
       res.json({ devices });

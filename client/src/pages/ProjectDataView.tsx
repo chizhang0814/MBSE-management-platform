@@ -1526,15 +1526,20 @@ export default function ProjectDataView() {
     const newSearch = [...epDeviceSearch];
     newSearch[idx] = query;
     setEpDeviceSearch(newSearch);
+    // 清空搜索词时，清除已选设备
+    if (query === '') {
+      const newEp = [...signalEndpoints];
+      newEp[idx] = { ...newEp[idx], 设备编号: '', 设备端元器件编号: '', 针孔号: '', 设备负责人: '' };
+      setSignalEndpoints(newEp);
+      const opts = [...epConnectorOptions]; opts[idx] = []; setEpConnectorOptions(opts);
+      const pins2 = [...epPinOptions]; pins2[idx] = []; setEpPinOptions(pins2);
+    }
     if (!selectedProjectId) return;
     try {
       const res = await fetch(`/api/devices/search?projectId=${selectedProjectId}&q=${encodeURIComponent(query)}`, { headers: API_HEADERS() });
       const data = await res.json();
       const all: DeviceRow[] = data.devices || [];
-      // 我的设备排前面
-      const myIds = new Set(myDevicesList.map(d => d.id));
-      const sorted = [...all.filter(d => myIds.has(d.id)), ...all.filter(d => !myIds.has(d.id))];
-      const r = [...epDeviceResults]; r[idx] = sorted; setEpDeviceResults(r);
+      const r = [...epDeviceResults]; r[idx] = all; setEpDeviceResults(r);
     } catch { }
   };
 
@@ -5575,14 +5580,22 @@ export default function ProjectDataView() {
                         <>
                           <input
                             type="text"
-                            value={epDeviceSearch[idx] || ep.设备编号}
+                            value={epDeviceSearch[idx] !== undefined && epDeviceSearch[idx] !== null ? epDeviceSearch[idx] : (ep.设备编号 || '')}
                             onChange={e => searchEpDevice(idx, e.target.value)}
-                            onFocus={() => { if (!epDeviceSearch[idx] && !ep.设备编号) searchEpDevice(idx, ''); }}
+                            onFocus={() => {
+                              // 聚焦时如果没有搜索词，用当前设备编号初始化搜索（或空搜索显示全部）
+                              const current = epDeviceSearch[idx];
+                              if (current === undefined || current === null) {
+                                searchEpDevice(idx, ep.设备编号 || '');
+                              } else if (!current && !ep.设备编号) {
+                                searchEpDevice(idx, '');
+                              }
+                            }}
                             placeholder="搜索设备..."
                             className="w-full border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-xs"
                           />
                           {epDeviceResults[idx]?.length > 0 && (
-                            <div className="absolute top-full left-0 right-0 bg-white dark:bg-neutral-900 border border-gray-200 dark:border-white/10 rounded shadow-lg z-10 max-h-32 overflow-y-auto">
+                            <div className="absolute top-full left-0 right-0 bg-white dark:bg-neutral-900 border border-gray-200 dark:border-white/10 rounded shadow-lg z-10 max-h-60 overflow-y-auto">
                               {epDeviceResults[idx].map(d => (
                                 <button key={d.id} onClick={() => selectEpDevice(idx, d)}
                                   className={`w-full text-left px-2 py-1 text-xs hover:bg-black/[0.03] dark:hover:bg-white/[0.06] ${d.设备负责人 === user?.username ? 'font-medium text-black dark:text-white' : ''}`}>
