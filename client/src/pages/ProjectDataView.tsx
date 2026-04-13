@@ -2339,7 +2339,7 @@ export default function ProjectDataView() {
                                     <div key={item.id} className="flex items-center gap-1.5 text-xs mb-0.5">
                                       <span>{item.status === 'done' && !item.rejection_reason ? '✅' : item.status === 'cancelled' ? '❌' : '⏳'}</span>
                                       <span className="font-medium">{item.recipient_username}</span>
-                                      <span className="text-gray-500 dark:text-white/50">{item.status === 'done' && !item.rejection_reason ? '已通过' : item.status === 'done' && item.rejection_reason ? `已拒绝：${item.rejection_reason}` : item.status === 'cancelled' ? '已取消' : '待审批'}</span>
+                                      <span className="text-gray-500 dark:text-white/50">{item.status === 'done' && !item.rejection_reason ? '已通过' : item.status === 'done' && item.rejection_reason ? '已拒绝：' + item.rejection_reason : item.status === 'cancelled' ? '已取消' : '待审批'}</span>
                                     </div>
                                   ))}
                                 </div>
@@ -3321,8 +3321,8 @@ export default function ProjectDataView() {
         <div className="bg-white dark:bg-neutral-900 rounded-lg shadow">
           <div className="px-4 py-1.5 text-xs text-gray-500 dark:text-white/50 bg-gray-50 dark:bg-neutral-800 border-b sticky top-0 z-30">
             {isFiltering
-              ? `显示 ${filteredSignals.length} / ${signals.length} 条信号`
-              : `已载入 ${Math.min(signalDisplayCount, filteredSignals.length)} / ${signalTotal} 条信号`}
+              ? '显示 ' + filteredSignals.length + ' / ' + signals.length + ' 条信号'
+              : '已载入 ' + Math.min(signalDisplayCount, filteredSignals.length) + ' / ' + signalTotal + ' 条信号'}
           </div>
           <table className="w-full text-sm">
             <thead className="bg-gray-50 dark:bg-neutral-800 sticky top-[29px] z-10 whitespace-nowrap text-xs text-gray-500 dark:text-white/50">
@@ -3469,11 +3469,11 @@ export default function ProjectDataView() {
                     {/* 分组视觉：左边框色条 + 序号列组名 */}
                     <tr
                       ref={highlightRow?.type === 'signal' && highlightRow.id === signal.id ? highlightRowRef : undefined}
-                      className={`${highlightRow?.type === 'signal' && highlightRow.id === signal.id ? 'animate-highlight-row' : `hover:bg-gray-50 dark:hover:bg-white/[0.04] ${
+                      className={(highlightRow?.type === 'signal' && highlightRow.id === signal.id ? 'animate-highlight-row' : ('hover:bg-gray-50 dark:hover:bg-white/[0.04] ' + (
                         hasTodo(signal) || signalDetails[signal.id]?.endpoints?.some(ep => hasTodo(ep))
                           ? 'bg-orange-100'
                           : isExpanded ? 'bg-green-50 dark:bg-white/[0.06]' : ''
-                      } cursor-pointer`}
+                      ))) + ' cursor-pointer'}
                       style={groupInfo && !hasTodo(signal) && !isExpanded ? (() => {
                         const gn = (signal as any).signal_group || '';
                         const bgMap: Record<string, string> = {'A_429_':'rgba(129,140,248,0.08)','CAN_Bus_':'rgba(245,158,11,0.08)','PWR_LV_':'rgba(239,68,68,0.06)','PWR_HV_':'rgba(220,38,38,0.06)','RS422_F_':'rgba(139,92,246,0.08)','RS422_':'rgba(167,139,250,0.08)','RS485_':'rgba(20,184,166,0.08)','ETH100_':'rgba(34,197,94,0.08)','ETH1000_':'rgba(14,165,233,0.08)'};
@@ -3517,7 +3517,7 @@ export default function ProjectDataView() {
                                   totalH += (tr as HTMLElement).offsetHeight;
                                   const nextTr = tr.nextElementSibling;
                                   if (!nextTr) break;
-                                  const nextTd = nextTr.querySelector(`[data-group="${gn}"]`);
+                                  const nextTd = nextTr.querySelector('[data-group="' + gn + '"]');
                                   if (!nextTd) break;
                                   tr = nextTr;
                                 }
@@ -3533,9 +3533,9 @@ export default function ProjectDataView() {
                                 title="点击解散该信号组"
                                 onClick={async (e) => {
                                   e.stopPropagation();
-                                  if (!confirm(`确定解散信号组「${gn}」吗？`)) return;
+                                  if (!confirm('确定解散信号组「' + gn + '」吗？')) return;
                                   try {
-                                    const res = await fetch(`/api/signals/group/${encodeURIComponent(gn)}?project_id=${selectedProjectId}`, { method: 'DELETE', headers: API_HEADERS() });
+                                    const res = await fetch('/api/signals/group/' + encodeURIComponent(gn) + '?project_id=' + selectedProjectId, { method: 'DELETE', headers: API_HEADERS() });
                                     if (res.ok) { loadSignals(); }
                                     else { alert((await res.json()).error || '解散失败'); }
                                   } catch { alert('操作失败'); }
@@ -3609,14 +3609,14 @@ export default function ProjectDataView() {
                                 }
                               }}
                               className="leading-none text-gray-400 dark:text-white/40 hover:text-black dark:hover:text-white"
-                              title={(signal as any).signal_group ? `查看协议组 ${(signal as any).signal_group} 连接图` : '查看信号连接图（未分组）'}
+                              title={(signal as any).signal_group ? '查看协议组 ' + (signal as any).signal_group + ' 连接图' : '查看信号连接图（未分组）'}
                             >
                               <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" style={{ display: 'block', position: 'relative', top: '1px' }}><path d="M8 3C4.5 3 1.7 5.3.5 8c1.2 2.7 4 5 7.5 5s6.3-2.3 7.5-5c-1.2-2.7-4-5-7.5-5zm0 8.3c-1.8 0-3.3-1.5-3.3-3.3S6.2 4.7 8 4.7s3.3 1.5 3.3 3.3-1.5 3.3-3.3 3.3zM8 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>
                             </button>
                           )}
                         </div>
                       </td>
-                      <td className={`px-2 py-2 font-mono text-xs ${expandedCols.has('UniqueID') ? 'whitespace-normal break-all' : 'truncate max-w-[200px]'}`} title={signal.unique_id || '-'}>{signal.unique_id || '-'}</td>
+                      <td className={'px-2 py-2 font-mono text-xs ' + (expandedCols.has('UniqueID') ? 'whitespace-normal break-all' : 'truncate max-w-[200px]')} title={signal.unique_id || '-'}>{signal.unique_id || '-'}</td>
                       <td className="px-2 py-2">
                         {signal.status === 'Draft' && (
                           <span className="px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700 text-xs font-semibold">Draft</span>
@@ -3633,10 +3633,10 @@ export default function ProjectDataView() {
                         )}
                         {/* 已导入/已更新标签暂时隐藏 */}
                       </td>
-                      <td className={`px-2 py-2 text-xs ${expandedCols.has('信号名称摘要') ? 'whitespace-normal break-all' : 'truncate max-w-[240px]'}`} title={signal.信号名称摘要 || '-'}>{signal.信号名称摘要 || '-'}</td>
+                      <td className={'px-2 py-2 text-xs ' + (expandedCols.has('信号名称摘要') ? 'whitespace-normal break-all' : 'truncate max-w-[240px]')} title={signal.信号名称摘要 || '-'}>{signal.信号名称摘要 || '-'}</td>
                       <td className="px-2 py-2 text-gray-600 dark:text-white/60 text-xs" title={signal.连接类型 || '-'}>{signal.连接类型 || '-'}</td>
                       <td className="px-2 py-2 text-gray-600 dark:text-white/60 text-xs">{signal.导线等级 || '-'}</td>
-                      <td className={`px-2 py-2 text-gray-600 dark:text-white/60 text-xs ${expandedCols.has('端点摘要') ? 'whitespace-normal break-all' : 'truncate max-w-[240px]'}`} title={signal.endpoint_summary || '-'}>{signal.endpoint_summary || '-'}</td>
+                      <td className={'px-2 py-2 text-gray-600 dark:text-white/60 text-xs ' + (expandedCols.has('端点摘要') ? 'whitespace-normal break-all' : 'truncate max-w-[240px]')} title={signal.endpoint_summary || '-'}>{signal.endpoint_summary || '-'}</td>
                       <td className="px-2 py-2 text-gray-600 dark:text-white/60 text-xs">{signal.created_by || '-'}</td>
                       <td className="px-2 py-2 text-gray-400 dark:text-white/40 text-xs">{(signal as any).updated_at ? new Date((signal as any).updated_at).toLocaleDateString() : '-'}</td>
                       <td className="px-2 py-2 space-x-1 text-xs whitespace-nowrap">
@@ -3654,18 +3654,18 @@ export default function ProjectDataView() {
                             )}
                           </>
                         )}
-                        <button onClick={() => setHistoryTarget({ entityTable: 'signals', entityId: signal.id, entityLabel: `信号 ${signal.unique_id || signal.id}` })} className="text-gray-500 dark:text-white/50 hover:text-gray-700 dark:text-white/70">历史</button>
+                        <button onClick={() => setHistoryTarget({ entityTable: 'signals', entityId: signal.id, entityLabel: '信号 ' + (signal.unique_id || signal.id) })} className="text-gray-500 dark:text-white/50 hover:text-gray-700 dark:text-white/70">历史</button>
                       </td>
                     </tr>
 
                     {isExpanded && signal.status === 'Pending' && (() => {
-                      const approvalInfo = approvalInfoMap[`signal_${signal.id}`];
+                      const approvalInfo = approvalInfoMap['signal_' + signal.id];
                       if (!approvalInfo?.request) return null;
                       const { request, items, my_pending_item } = approvalInfo;
                       const completionItems = items.filter((i: any) => i.item_type === 'completion');
                       const approvalItems = items.filter((i: any) => i.item_type === 'approval');
                       return (
-                        <tr key={`${signal.id}-approval`}>
+                        <tr key={signal.id + '-approval'}>
                           {groupInfo && (() => {
                             const gn = (signal as any).signal_group || '';
                             const colorMap: Record<string, string> = {'A_429_':'#818cf8','CAN_Bus_':'#f59e0b','PWR_LV_':'#ef4444','PWR_HV_':'#dc2626','RS422_F_':'#8b5cf6','RS422_':'#a78bfa','RS485_':'#14b8a6','ETH100_':'#22c55e','ETH1000_':'#0ea5e9'};
@@ -3726,7 +3726,7 @@ export default function ProjectDataView() {
                                     <div key={item.id} className="flex items-center gap-1.5 text-xs mb-0.5">
                                       <span>{item.status === 'done' && !item.rejection_reason ? '✅' : item.status === 'cancelled' ? '❌' : '⏳'}</span>
                                       <span className="font-medium">{item.recipient_username}</span>
-                                      <span className="text-gray-500 dark:text-white/50">{item.status === 'done' && !item.rejection_reason ? '已通过' : item.status === 'done' && item.rejection_reason ? `已拒绝：${item.rejection_reason}` : item.status === 'cancelled' ? '已取消' : '待审批'}</span>
+                                      <span className="text-gray-500 dark:text-white/50">{item.status === 'done' && !item.rejection_reason ? '已通过' : item.status === 'done' && item.rejection_reason ? '已拒绝：' + item.rejection_reason : item.status === 'cancelled' ? '已取消' : '待审批'}</span>
                                     </div>
                                   ))}
                                 </div>
@@ -3750,7 +3750,7 @@ export default function ProjectDataView() {
                     })()}
 
                     {isExpanded && detail && (
-                      <tr key={`${signal.id}-detail`}>
+                      <tr key={signal.id + '-detail'}>
                         {groupInfo && (() => {
                           const gn = (signal as any).signal_group || '';
                           const colorMap: Record<string, string> = {'A_429_':'#818cf8','CAN_Bus_':'#f59e0b','PWR_LV_':'#ef4444','PWR_HV_':'#dc2626','RS422_F_':'#8b5cf6','RS422_':'#a78bfa','RS485_':'#14b8a6','ETH100_':'#22c55e','ETH1000_':'#0ea5e9'};
@@ -3762,7 +3762,7 @@ export default function ProjectDataView() {
 
                             {/* 导入更新 diff */}
                             {(signal as any).import_status === 'updated' && (() => {
-                              const diff = importDiffMap[`signals_${signal.id}`];
+                              const diff = importDiffMap['signals_' + signal.id];
                               if (!diff) return null;
                               const keys = Object.keys(diff.new_values);
                               if (keys.length === 0) return null;
@@ -3813,7 +3813,7 @@ export default function ProjectDataView() {
                                       </span>
                                     );
                                   }
-                                  const epId = ep.设备端元器件编号 || `${ep.设备编号}(?)`;
+                                  const epId = ep.设备端元器件编号 || (ep.设备编号 + '(?)');
                                   return (
                                     <span key={i}>
                                       {i > 0 && ' - '}
@@ -3932,7 +3932,7 @@ export default function ProjectDataView() {
                                       const isEdgeExpanded = expandedEdgeEpIds.has(epId);
                                       return (
                                       <React.Fragment key={i}>
-                                      <tr className={`border-b border-green-100 ${!ep.pin_id ? 'bg-orange-50' : ''}`}>
+                                      <tr className={'border-b border-green-100 ' + !ep.pin_id ? 'bg-orange-50' : ''}>
                                         <td className="px-2 py-1 text-gray-500 dark:text-white/50">端点{i + 1}</td>
                                         <td className="px-2 py-1">{ep.设备编号}</td>
                                         <td className="px-2 py-1 font-mono">
@@ -3958,7 +3958,7 @@ export default function ProjectDataView() {
                                                 return n;
                                               })}
                                               className="text-black/60 dark:text-white/60 hover:text-black dark:hover:text-white font-mono text-xs"
-                                              title={`${myEdges.length} 条连接`}
+                                              title={myEdges.length + ' 条连接'}
                                             >{isEdgeExpanded ? '▼' : '▶'} {myEdges.length}</button>
                                           ) : <span className="text-gray-300 dark:text-white/30">-</span>}
                                         </td>
@@ -3989,11 +3989,11 @@ export default function ProjectDataView() {
                                                 const arrow = edge.direction === 'bidirectional' ? '↔' : isFrom ? '→' : '←';
                                                 const dirLabel = edge.direction === 'bidirectional' ? '双向' : '单向';
                                                 const otherLabel = otherEp
-                                                  ? `${(otherEp as any).设备端元器件编号 || (otherEp as any).设备编号}-${(otherEp as any).针孔号 || '?'} (${(otherEp as any).设备编号})`
-                                                  : `endpoint#${otherEpId}`;
+                                                  ? (otherEp as any).设备端元器件编号 || (otherEp as any).设备编号 + '-' + (otherEp as any).针孔号 || '?' + ' (' + (otherEp as any).设备编号 + ')'
+                                                  : 'endpoint#' + otherEpId;
                                                 return (
                                                   <div key={edge.id} className="flex items-center gap-2 text-xs py-0.5">
-                                                    <span className={`font-bold text-sm ${edge.direction === 'bidirectional' ? 'text-purple-600' : 'text-black dark:text-white'}`}>{arrow}</span>
+                                                    <span className={'font-bold text-sm ' + edge.direction === 'bidirectional' ? 'text-purple-600' : 'text-black dark:text-white'}>{arrow}</span>
                                                     <span className="font-mono text-gray-800 dark:text-white">{otherLabel}</span>
                                                     <span className="text-gray-400 dark:text-white/40">{dirLabel}</span>
                                                     {edge.source_info && <span className="text-gray-300 dark:text-white/30 ml-auto">{edge.source_info}</span>}
