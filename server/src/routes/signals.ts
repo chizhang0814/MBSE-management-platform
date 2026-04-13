@@ -1457,6 +1457,31 @@ export function signalRoutes(db: Database) {
       .replace(/[_\s]+$/, '');
   }
 
+  // ── 自动赋值绞线组 ──────────────────────────────────────────
+  async function autoAssignTwistGroup(groupName: string, projectId: number) {
+    const sigs = await db.query(
+      'SELECT id, "推荐导线线型" FROM signals WHERE signal_group = ? AND project_id = ?',
+      [groupName, projectId]
+    );
+    if (sigs.length === 2) {
+      const allDouble = sigs.every((s: any) => /双绞/.test(s['推荐导线线型'] || ''));
+      if (allDouble) {
+        await db.run(
+          'UPDATE signals SET twist_group = ? WHERE signal_group = ? AND project_id = ?',
+          ['T1', groupName, projectId]
+        );
+      }
+    } else if (sigs.length === 3) {
+      const allTriple = sigs.every((s: any) => /三绞/.test(s['推荐导线线型'] || ''));
+      if (allTriple) {
+        await db.run(
+          'UPDATE signals SET twist_group = ? WHERE signal_group = ? AND project_id = ?',
+          ['T1', groupName, projectId]
+        );
+      }
+    }
+  }
+
   // ── POST /api/signals/group/auto — 智能分组 ──────────────
   router.post('/group/auto', authenticate, async (req: AuthRequest, res) => {
     try {
@@ -1595,6 +1620,8 @@ export function signalRoutes(db: Database) {
           }
 
           groupsCreated++;
+          // 自动赋值绞线组
+          await autoAssignTwistGroup(groupName, project_id);
           details.push({
             group_name: groupName,
             conn_type: ct,
@@ -1735,6 +1762,9 @@ export function signalRoutes(db: Database) {
       // 更新信号
       await db.run(`UPDATE signals SET signal_group = ? WHERE id IN (${ph})`, [groupName, ...signal_ids]);
 
+      // 自动赋值绞线组
+      await autoAssignTwistGroup(groupName, projectIds[0]);
+
       res.json({ success: true, group_name: groupName });
     } catch (error: any) {
       res.status(500).json({ error: error.message || '创建信号组失败' });
@@ -1751,7 +1781,7 @@ export function signalRoutes(db: Database) {
       }
 
       const result = await db.run(
-        `UPDATE signals SET signal_group = NULL WHERE signal_group = ? AND project_id = ?`,
+        `UPDATE signals SET signal_group = NULL, twist_group = NULL WHERE signal_group = ? AND project_id = ?`,
         [groupName, projectId]
       );
       if (result.changes === 0) {
@@ -1761,6 +1791,57 @@ export function signalRoutes(db: Database) {
       res.json({ success: true, updated: result.changes });
     } catch (error: any) {
       res.status(500).json({ error: error.message || '解散信号组失败' });
+    }
+  });
+
+  // ── PUT /api/signals/twist-group — 设置绞线组 ─────────────
+  router.put('/twist-group', authenticate, async (req: AuthRequest, res) => {
+    try {
+      const { signal_ids, twist_group, project_id } = req.body;
+      if (!Array.isArray(signal_ids) || !project_id) {
+        return res.status(400).json({ error: '缺少 signal_ids 或 project_id' });
+      }
+
+      // 校验：所有信号必须属于同一个 signal_group
+      const ph = signal_ids.map(() => '?').join(',');
+      const signals = await db.query(
+        `SELECT id, signal_group, "推荐导线线型" FROM signals WHERE id IN (${ph}) AND project_id = ?`,
+        [...signal_ids, project_id]
+      );
+      if (signals.length !== signal_ids.length) {
+        return res.status(400).json({ error: '部分信号不存在' });
+      }
+      const groups = [...new Set(signals.map((s: any) => s.signal_group))];
+      if (groups.length !== 1 || !groups[0]) {
+        return res.status(400).json({ error: '所有信号必须属于同一个信号分组' });
+      }
+
+      // 校验绞线组规则
+      if (twist_group) {
+        const wireTypes = signals.map((s: any) => s['推荐导线线型'] || '');
+        const allTwisted = wireTypes.every((t: string) => /绞/.test(t));
+        if (!allTwisted) {
+          return res.status(400).json({ error: '绞线组内所有信号的推荐导线线型必须包含"绞"' });
+        }
+        const isDouble = wireTypes.every((t: string) => /双绞/.test(t));
+        const isTriple = wireTypes.every((t: string) => /三绞/.test(t));
+        if (isDouble && signal_ids.length !== 2) {
+          return res.status(400).json({ error: '双绞线组必须恰好2条信号' });
+        }
+        if (isTriple && signal_ids.length !== 3) {
+          return res.status(400).json({ error: '三绞线组必须恰好3条信号' });
+        }
+      }
+
+      // 设置 twist_group（null 表示清除）
+      await db.run(
+        `UPDATE signals SET twist_group = ? WHERE id IN (${ph}) AND project_id = ?`,
+        [twist_group || null, ...signal_ids, project_id]
+      );
+
+      res.json({ success: true, updated: signal_ids.length });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || '设置绞线组失败' });
     }
   });
 

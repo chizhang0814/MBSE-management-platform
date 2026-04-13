@@ -3341,6 +3341,7 @@ export default function ProjectDataView() {
                 <th className="px-2 py-2 text-left cursor-pointer select-none" onClick={() => toggleColExpand('信号名称摘要')} title="点击切换展开/收起">信号名称摘要 {expandedCols.has('信号名称摘要') ? '◀' : '▸'}</th>
                 <th className="px-2 py-2 text-left">连接类型</th>
                 <th className="px-2 py-2 text-left w-14">等级</th>
+                <th className="px-2 py-2 text-left w-10">绞线</th>
                 <th className="px-2 py-2 text-left cursor-pointer select-none" onClick={() => toggleColExpand('端点摘要')} title="点击切换展开/收起">端点摘要 {expandedCols.has('端点摘要') ? '◀' : '▸'}</th>
                 <th className="px-2 py-2 text-left w-16">创建人</th>
                 <th className="px-2 py-2 text-left cursor-pointer select-none hover:text-black dark:hover:text-white"
@@ -3419,6 +3420,7 @@ export default function ProjectDataView() {
                     <option value="5级">5级</option>
                   </select>
                 </th>
+                <th className="px-2 py-1"></th>{/* 绞线组占位 */}
                 {/* 端点摘要、创建人 */}
                 {(['endpoint_summary', 'created_by'] as const).map(col => (
                   <th key={col} className="px-2 py-1">
@@ -3640,6 +3642,52 @@ export default function ProjectDataView() {
                       <td className={'px-2 py-2 text-xs ' + (expandedCols.has('信号名称摘要') ? 'whitespace-normal break-all' : 'truncate max-w-[240px]')} title={signal.信号名称摘要 || '-'}>{signal.信号名称摘要 || '-'}</td>
                       <td className="px-2 py-2 text-gray-600 dark:text-white/60 text-xs" title={signal.连接类型 || '-'}>{signal.连接类型 || '-'}</td>
                       <td className="px-2 py-2 text-gray-600 dark:text-white/60 text-xs">{signal.导线等级 || '-'}</td>
+                      <td className="px-1 py-2 text-center text-xs">
+                        {(signal as any).twist_group ? (
+                          <span className={'inline-block px-1 py-0.5 rounded text-white text-[10px] font-bold ' + ((signal as any).twist_group === 'T1' ? 'bg-indigo-500' : (signal as any).twist_group === 'T2' ? 'bg-amber-500' : (signal as any).twist_group === 'T3' ? 'bg-teal-500' : 'bg-gray-500')}>
+                            {(signal as any).twist_group}
+                          </span>
+                        ) : (signal as any).signal_group && /绞/.test((signal as any)['推荐导线线型'] || '') ? (
+                          <button
+                            className="text-gray-300 dark:text-white/20 hover:text-indigo-500 text-[10px]"
+                            title="点击设置绞线组"
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              // 找同组内所有含"绞"的信号
+                              const groupSigs = signals.filter((s: any) => s.signal_group === (signal as any).signal_group && /绞/.test(s['推荐导线线型'] || ''));
+                              const isDouble = /双绞/.test((signal as any)['推荐导线线型'] || '');
+                              const needed = isDouble ? 2 : 3;
+                              const label = isDouble ? '双绞' : '三绞';
+                              if (groupSigs.length < needed) {
+                                alert('组内' + label + '线不足' + needed + '条，无法自动配对');
+                                return;
+                              }
+                              // 找未分配绞线组的同类型信号
+                              const unassigned = groupSigs.filter((s: any) => !s.twist_group && /绞/.test(s['推荐导线线型'] || '') && (isDouble ? /双绞/.test(s['推荐导线线型'] || '') : /三绞/.test(s['推荐导线线型'] || '')));
+                              if (unassigned.length < needed) {
+                                alert('组内未分配的' + label + '线不足' + needed + '条');
+                                return;
+                              }
+                              // 取前 needed 条（包含当前信号）
+                              const toAssign = unassigned.slice(0, needed);
+                              if (!toAssign.some((s: any) => s.id === signal.id)) toAssign[0] = signal;
+                              // 找下一个可用的绞线组编号
+                              const usedTwists = new Set(groupSigs.map((s: any) => s.twist_group).filter(Boolean));
+                              let tNum = 1;
+                              while (usedTwists.has('T' + tNum)) tNum++;
+                              const twistName = 'T' + tNum;
+                              try {
+                                const res = await fetch('/api/signals/twist-group', {
+                                  method: 'PUT', headers: { ...API_HEADERS(), 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ signal_ids: toAssign.map((s: any) => s.id), twist_group: twistName, project_id: selectedProjectId })
+                                });
+                                if (res.ok) { loadSignals(); }
+                                else { alert((await res.json()).error || '设置失败'); }
+                              } catch { alert('操作失败'); }
+                            }}
+                          >+</button>
+                        ) : null}
+                      </td>
                       <td className={'px-2 py-2 text-gray-600 dark:text-white/60 text-xs ' + (expandedCols.has('端点摘要') ? 'whitespace-normal break-all' : 'truncate max-w-[240px]')} title={signal.endpoint_summary || '-'}>{signal.endpoint_summary || '-'}</td>
                       <td className="px-2 py-2 text-gray-600 dark:text-white/60 text-xs">{signal.created_by || '-'}</td>
                       <td className="px-2 py-2 text-gray-400 dark:text-white/40 text-xs">{(signal as any).updated_at ? new Date((signal as any).updated_at).toLocaleDateString() : '-'}</td>

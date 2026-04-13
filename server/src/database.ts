@@ -1356,7 +1356,11 @@ export class Database {
         await this.run(`ALTER TABLE signals ADD COLUMN signal_group TEXT`);
         console.log('Database migration: added signal_group column to signals');
       }
-    } catch (e: any) { console.log('Migration: signal_group:', e.message); }
+      if (!sigCols.some((c: any) => c.name === 'twist_group')) {
+        await this.run(`ALTER TABLE signals ADD COLUMN twist_group TEXT`);
+        console.log('Database migration: added twist_group column to signals');
+      }
+    } catch (e: any) { console.log('Migration: signal_group/twist_group:', e.message); }
 
     try {
       // 连接类型重命名：普通以太网 → 以太网（百兆），千兆网 → 以太网（千兆）
