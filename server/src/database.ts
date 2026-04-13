@@ -1566,6 +1566,24 @@ export class Database {
     } catch (e: any) { console.log('Migration: re-apply approved payloads:', e.message); }
 
     // 初始化默认用户（不再创建示例数据）
+    // ── 自动赋值绞线组（已有分组补赋值）──
+    try {
+      const groups: any[] = await this.query(`
+        SELECT signal_group, project_id, COUNT(*) as cnt,
+          SUM(CASE WHEN "推荐导线线型" LIKE '%双绞%' THEN 1 ELSE 0 END) as double_cnt,
+          SUM(CASE WHEN "推荐导线线型" LIKE '%三绞%' THEN 1 ELSE 0 END) as triple_cnt
+        FROM signals
+        WHERE signal_group IS NOT NULL AND twist_group IS NULL
+        GROUP BY signal_group, project_id
+        HAVING (cnt = 2 AND double_cnt = 2) OR (cnt = 3 AND triple_cnt = 3)
+      `);
+      for (const g of groups) {
+        await this.run('UPDATE signals SET twist_group = ? WHERE signal_group = ? AND project_id = ?',
+          ['T1', g.signal_group, g.project_id]);
+      }
+      if (groups.length > 0) console.log('Database migration: 自动赋值绞线组 ' + groups.length + ' 个分组');
+    } catch (e: any) { console.log('Migration: auto twist_group:', e.message); }
+
     await this.initDefaultData();
   }
 

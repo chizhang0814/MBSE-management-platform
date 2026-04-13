@@ -852,6 +852,50 @@ export function signalRoutes(db: Database) {
     }
   });
 
+  // ── PUT /api/signals/twist-group — 设置绞线组（必须在 /:id 之前注册）
+  router.put('/twist-group', authenticate, async (req: AuthRequest, res) => {
+    try {
+      const { signal_ids, twist_group, project_id } = req.body;
+      if (!Array.isArray(signal_ids) || !project_id) {
+        return res.status(400).json({ error: '缺少 signal_ids 或 project_id' });
+      }
+      const ph = signal_ids.map(() => '?').join(',');
+      const sigs = await db.query(
+        'SELECT id, signal_group, "推荐导线线型" FROM signals WHERE id IN (' + ph + ') AND project_id = ?',
+        [...signal_ids, project_id]
+      );
+      if (sigs.length !== signal_ids.length) {
+        return res.status(400).json({ error: '部分信号不存在' });
+      }
+      const groups = [...new Set(sigs.map((s: any) => s.signal_group))];
+      if (groups.length !== 1 || !groups[0]) {
+        return res.status(400).json({ error: '所有信号必须属于同一个信号分组' });
+      }
+      if (twist_group) {
+        const wireTypes = sigs.map((s: any) => s['推荐导线线型'] || '');
+        const allTwisted = wireTypes.every((t: string) => /绞/.test(t));
+        if (!allTwisted) {
+          return res.status(400).json({ error: '绞线组内所有信号的推荐导线线型必须包含"绞"' });
+        }
+        const isDouble = wireTypes.every((t: string) => /双绞/.test(t));
+        const isTriple = wireTypes.every((t: string) => /三绞/.test(t));
+        if (isDouble && signal_ids.length !== 2) {
+          return res.status(400).json({ error: '双绞线组必须恰好2条信号' });
+        }
+        if (isTriple && signal_ids.length !== 3) {
+          return res.status(400).json({ error: '三绞线组必须恰好3条信号' });
+        }
+      }
+      await db.run(
+        'UPDATE signals SET twist_group = ? WHERE id IN (' + ph + ') AND project_id = ?',
+        [twist_group || null, ...signal_ids, project_id]
+      );
+      res.json({ success: true, updated: signal_ids.length });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || '设置绞线组失败' });
+    }
+  });
+
   // ── 更新信号（可含 endpoints 数组替换端点）───────────────
 
   router.put('/:id', authenticate, async (req: AuthRequest, res) => {
@@ -1794,56 +1838,7 @@ export function signalRoutes(db: Database) {
     }
   });
 
-  // ── PUT /api/signals/twist-group — 设置绞线组 ─────────────
-  router.put('/twist-group', authenticate, async (req: AuthRequest, res) => {
-    try {
-      const { signal_ids, twist_group, project_id } = req.body;
-      if (!Array.isArray(signal_ids) || !project_id) {
-        return res.status(400).json({ error: '缺少 signal_ids 或 project_id' });
-      }
-
-      // 校验：所有信号必须属于同一个 signal_group
-      const ph = signal_ids.map(() => '?').join(',');
-      const signals = await db.query(
-        `SELECT id, signal_group, "推荐导线线型" FROM signals WHERE id IN (${ph}) AND project_id = ?`,
-        [...signal_ids, project_id]
-      );
-      if (signals.length !== signal_ids.length) {
-        return res.status(400).json({ error: '部分信号不存在' });
-      }
-      const groups = [...new Set(signals.map((s: any) => s.signal_group))];
-      if (groups.length !== 1 || !groups[0]) {
-        return res.status(400).json({ error: '所有信号必须属于同一个信号分组' });
-      }
-
-      // 校验绞线组规则
-      if (twist_group) {
-        const wireTypes = signals.map((s: any) => s['推荐导线线型'] || '');
-        const allTwisted = wireTypes.every((t: string) => /绞/.test(t));
-        if (!allTwisted) {
-          return res.status(400).json({ error: '绞线组内所有信号的推荐导线线型必须包含"绞"' });
-        }
-        const isDouble = wireTypes.every((t: string) => /双绞/.test(t));
-        const isTriple = wireTypes.every((t: string) => /三绞/.test(t));
-        if (isDouble && signal_ids.length !== 2) {
-          return res.status(400).json({ error: '双绞线组必须恰好2条信号' });
-        }
-        if (isTriple && signal_ids.length !== 3) {
-          return res.status(400).json({ error: '三绞线组必须恰好3条信号' });
-        }
-      }
-
-      // 设置 twist_group（null 表示清除）
-      await db.run(
-        `UPDATE signals SET twist_group = ? WHERE id IN (${ph}) AND project_id = ?`,
-        [twist_group || null, ...signal_ids, project_id]
-      );
-
-      res.json({ success: true, updated: signal_ids.length });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message || '设置绞线组失败' });
-    }
-  });
+  // twist-group 路由已移至 /:id 之前（第855行）
 
   return router;
 }
