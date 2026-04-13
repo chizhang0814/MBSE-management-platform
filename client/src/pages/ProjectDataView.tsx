@@ -315,6 +315,7 @@ export default function ProjectDataView() {
   const [sgCreating, setSgCreating] = useState(false);
   const [sgBlankType, setSgBlankType] = useState('');
   const [sgGroupFilter, setSgGroupFilter] = useState('');
+  const [twistFilter, setTwistFilter] = useState('');
   // ── 一键审批 ──
   const [batchApprovalIds, setBatchApprovalIds] = useState<number[]>([]);
   const [batchApproving, setBatchApproving] = useState(false);
@@ -474,7 +475,7 @@ export default function ProjectDataView() {
     if (activeView === 'devices') loadDevices();
     else if (activeView === 'signals') loadSignals();
     else loadSectionConnectors();
-  }, [selectedProjectId, activeView, effectiveFilterKey, deviceSortOrder, signalSortOrder]);
+  }, [selectedProjectId, activeView, effectiveFilterKey, deviceSortOrder, signalSortOrder, sgGroupFilter, twistFilter]);
 
   // 新通知到达时自动刷新当前视图数据
   const refreshDataRef = useRef(() => {});
@@ -712,7 +713,9 @@ export default function ProjectDataView() {
     const version = ++signalLoadVersion.current;
     setLoading(true);
     const myQ = filterMode === 'my' ? '&myDevices=true' : filterMode === 'related' ? '&relatedDevices=true' : '';
-    const baseUrl = `/api/signals?projectId=${selectedProjectId}${myQ}&sortBy=updated_at&sortOrder=${signalSortOrder}`;
+    const groupQ = sgGroupFilter ? '&signalGroup=' + encodeURIComponent(sgGroupFilter) : '';
+    const twistQ = twistFilter ? '&twistFilter=' + encodeURIComponent(twistFilter) : '';
+    const baseUrl = '/api/signals?projectId=' + selectedProjectId + myQ + groupQ + twistQ + '&sortBy=updated_at&sortOrder=' + signalSortOrder;
     try {
       // 第一批：50条，快速显示
       const res = await fetch(`${baseUrl}&limit=50&offset=0`, { headers: API_HEADERS() });
@@ -3332,6 +3335,7 @@ export default function ProjectDataView() {
             <thead className="bg-gray-50 dark:bg-neutral-800 sticky top-[29px] z-10 whitespace-nowrap text-xs text-gray-500 dark:text-white/50">
               <tr>
                 <th className="py-2 w-6">组</th>
+                <th className="px-0 py-2 w-8">绞线</th>
                 {!sgCheckMode && <th className="px-1 py-2 w-8"></th>}
                 <th className="px-1 py-2 w-8 text-left">#</th>
                 {sgCheckMode && <th className="px-1 py-2 w-8"></th>}
@@ -3341,7 +3345,6 @@ export default function ProjectDataView() {
                 <th className="px-2 py-2 text-left cursor-pointer select-none" onClick={() => toggleColExpand('信号名称摘要')} title="点击切换展开/收起">信号名称摘要 {expandedCols.has('信号名称摘要') ? '◀' : '▸'}</th>
                 <th className="px-2 py-2 text-left">连接类型</th>
                 <th className="px-2 py-2 text-left w-14">等级</th>
-                <th className="px-2 py-2 text-left w-10">绞线</th>
                 <th className="px-2 py-2 text-left cursor-pointer select-none" onClick={() => toggleColExpand('端点摘要')} title="点击切换展开/收起">端点摘要 {expandedCols.has('端点摘要') ? '◀' : '▸'}</th>
                 <th className="px-2 py-2 text-left w-16">创建人</th>
                 <th className="px-2 py-2 text-left cursor-pointer select-none hover:text-black dark:hover:text-white"
@@ -3365,6 +3368,13 @@ export default function ProjectDataView() {
                       <option key={p} value={p}>{p.replace(/_$/, '')}</option>
                     )}
                   </select>
+                </th>
+                <th className="px-0 py-1 text-center">
+                  <button
+                    onClick={() => setTwistFilter(twistFilter === 'unassigned' ? '' : 'unassigned')}
+                    className={'text-[9px] px-1 py-0.5 rounded ' + (twistFilter === 'unassigned' ? 'bg-red-500 text-white' : 'text-gray-400 dark:text-white/30 hover:text-red-500')}
+                    title="筛选未分配绞线组的绞线信号"
+                  >{twistFilter === 'unassigned' ? '!' : '?'}</button>
                 </th>
                 {!sgCheckMode && <th className="px-1 py-1"></th>}
                 <th className="px-1 py-1"></th>
@@ -3420,7 +3430,6 @@ export default function ProjectDataView() {
                     <option value="5级">5级</option>
                   </select>
                 </th>
-                <th className="px-2 py-1"></th>{/* 绞线组占位 */}
                 {/* 端点摘要、创建人 */}
                 {(['endpoint_summary', 'created_by'] as const).map(col => (
                   <th key={col} className="px-2 py-1">
@@ -3551,6 +3560,58 @@ export default function ProjectDataView() {
                           </td>
                         );
                       })()}
+                      {/* 绞线组列 */}
+                      <td className="px-0 py-1 text-center w-8">
+                        {(signal as any).twist_group ? (
+                          <button
+                            className={'inline-block px-1 py-0.5 rounded text-white text-[10px] font-bold cursor-pointer hover:opacity-70 ' + ((signal as any).twist_group === 'T1' ? 'bg-indigo-500' : (signal as any).twist_group === 'T2' ? 'bg-amber-500' : (signal as any).twist_group === 'T3' ? 'bg-teal-500' : 'bg-gray-500')}
+                            title={'点击取消绞线组 ' + (signal as any).twist_group}
+                            onClick={async (ev) => {
+                              ev.stopPropagation();
+                              if (!confirm('确定取消绞线组 ' + (signal as any).twist_group + ' 吗？同组信号也将取消。')) return;
+                              const tw = (signal as any).twist_group;
+                              const sameGroup = signals.filter((s: any) => s.signal_group === (signal as any).signal_group && s.twist_group === tw);
+                              try {
+                                const res = await fetch('/api/signals/twist-group', { method: 'PUT', headers: { ...API_HEADERS(), 'Content-Type': 'application/json' }, body: JSON.stringify({ signal_ids: sameGroup.map((s: any) => s.id), twist_group: null, project_id: selectedProjectId }) });
+                                if (res.ok) setSignals(prev => prev.map(s => sameGroup.some((g: any) => g.id === s.id) ? { ...s, twist_group: null } as any : s));
+                                else alert((await res.json()).error || '取消失败');
+                              } catch { alert('操作失败'); }
+                            }}
+                          >{(signal as any).twist_group}</button>
+                        ) : (signal as any).signal_group && /绞/.test((signal as any)['推荐导线线型'] || '') ? (
+                          <button
+                            className={(() => {
+                              const hasAssignedInGroup = signals.some((s: any) => s.signal_group === (signal as any).signal_group && s.twist_group);
+                              return hasAssignedInGroup
+                                ? 'text-red-500 hover:text-red-700 font-bold text-xs'
+                                : 'text-gray-400 dark:text-white/30 hover:text-indigo-500 font-bold text-xs';
+                            })()}
+                            title="点击加入/创建绞线组"
+                            onClick={async (ev) => {
+                              ev.stopPropagation();
+                              const isDouble = /双绞/.test((signal as any)['推荐导线线型'] || '');
+                              const isTriple = /三绞/.test((signal as any)['推荐导线线型'] || '');
+                              const needed = isDouble ? 2 : isTriple ? 3 : 0;
+                              if (!needed) return;
+                              const wireTypePattern = isDouble ? /双绞/ : /三绞/;
+                              const groupSigs = signals.filter((s: any) => s.signal_group === (signal as any).signal_group && wireTypePattern.test(s['推荐导线线型'] || ''));
+                              const twistCounts: Record<string, number> = {};
+                              groupSigs.forEach((s: any) => { if (s.twist_group) twistCounts[s.twist_group] = (twistCounts[s.twist_group] || 0) + 1; });
+                              const openTwist = Object.entries(twistCounts).find(([_, cnt]) => cnt < needed);
+                              let twistName: string;
+                              if (openTwist) { twistName = openTwist[0]; } else {
+                                const allTwists = new Set(signals.filter((s: any) => s.signal_group === (signal as any).signal_group).map((s: any) => s.twist_group).filter(Boolean));
+                                let tNum = 1; while (allTwists.has('T' + tNum)) tNum++; twistName = 'T' + tNum;
+                              }
+                              try {
+                                const res = await fetch('/api/signals/twist-group', { method: 'PUT', headers: { ...API_HEADERS(), 'Content-Type': 'application/json' }, body: JSON.stringify({ signal_ids: [signal.id], twist_group: twistName, project_id: selectedProjectId }) });
+                                if (res.ok) setSignals(prev => prev.map(s => s.id === signal.id ? { ...s, twist_group: twistName } as any : s));
+                                else alert((await res.json()).error || '设置失败');
+                              } catch { alert('操作失败'); }
+                            }}
+                          >+</button>
+                        ) : null}
+                      </td>
                       {!sgCheckMode && (
                         <td className="px-1 py-2 text-center w-8">
                           {filterMode === 'my_tasks' && signal.pending_item_type === 'approval' && (signal as any).approval_request_id && (
@@ -3642,66 +3703,6 @@ export default function ProjectDataView() {
                       <td className={'px-2 py-2 text-xs ' + (expandedCols.has('信号名称摘要') ? 'whitespace-normal break-all' : 'truncate max-w-[240px]')} title={signal.信号名称摘要 || '-'}>{signal.信号名称摘要 || '-'}</td>
                       <td className="px-2 py-2 text-gray-600 dark:text-white/60 text-xs" title={signal.连接类型 || '-'}>{signal.连接类型 || '-'}</td>
                       <td className="px-2 py-2 text-gray-600 dark:text-white/60 text-xs">{signal.导线等级 || '-'}</td>
-                      <td className="px-1 py-2 text-center text-xs">
-                        {(signal as any).twist_group ? (
-                          <button
-                            className={'inline-block px-1 py-0.5 rounded text-white text-[10px] font-bold cursor-pointer hover:opacity-70 ' + ((signal as any).twist_group === 'T1' ? 'bg-indigo-500' : (signal as any).twist_group === 'T2' ? 'bg-amber-500' : (signal as any).twist_group === 'T3' ? 'bg-teal-500' : 'bg-gray-500')}
-                            title={'点击取消绞线组 ' + (signal as any).twist_group}
-                            onClick={async (e) => {
-                              e.stopPropagation();
-                              if (!confirm('确定取消该信号的绞线组 ' + (signal as any).twist_group + ' 吗？同组其他信号也将取消。')) return;
-                              const tw = (signal as any).twist_group;
-                              const groupSigs = signals.filter((s: any) => s.signal_group === (signal as any).signal_group && s.twist_group === tw);
-                              try {
-                                const res = await fetch('/api/signals/twist-group', {
-                                  method: 'PUT', headers: { ...API_HEADERS(), 'Content-Type': 'application/json' },
-                                  body: JSON.stringify({ signal_ids: groupSigs.map((s: any) => s.id), twist_group: null, project_id: selectedProjectId })
-                                });
-                                if (res.ok) { setSignals(prev => prev.map(s => groupSigs.some((g: any) => g.id === s.id) ? { ...s, twist_group: null } as any : s)); } else { alert((await res.json()).error || '取消失败'); }
-                              } catch { alert('操作失败'); }
-                            }}
-                          >{(signal as any).twist_group}</button>
-                        ) : (signal as any).signal_group && /绞/.test((signal as any)['推荐导线线型'] || '') ? (
-                          <button
-                            className="text-gray-300 dark:text-white/20 hover:text-indigo-500 text-[10px]"
-                            title="点击设置绞线组"
-                            onClick={async (e) => {
-                              e.stopPropagation();
-                              // 找同组内所有含"绞"的信号
-                              const groupSigs = signals.filter((s: any) => s.signal_group === (signal as any).signal_group && /绞/.test(s['推荐导线线型'] || ''));
-                              const isDouble = /双绞/.test((signal as any)['推荐导线线型'] || '');
-                              const needed = isDouble ? 2 : 3;
-                              const label = isDouble ? '双绞' : '三绞';
-                              if (groupSigs.length < needed) {
-                                alert('组内' + label + '线不足' + needed + '条，无法自动配对');
-                                return;
-                              }
-                              // 找未分配绞线组的同类型信号
-                              const unassigned = groupSigs.filter((s: any) => !s.twist_group && /绞/.test(s['推荐导线线型'] || '') && (isDouble ? /双绞/.test(s['推荐导线线型'] || '') : /三绞/.test(s['推荐导线线型'] || '')));
-                              if (unassigned.length < needed) {
-                                alert('组内未分配的' + label + '线不足' + needed + '条');
-                                return;
-                              }
-                              // 取前 needed 条（包含当前信号）
-                              const toAssign = unassigned.slice(0, needed);
-                              if (!toAssign.some((s: any) => s.id === signal.id)) toAssign[0] = signal;
-                              // 找下一个可用的绞线组编号
-                              const usedTwists = new Set(groupSigs.map((s: any) => s.twist_group).filter(Boolean));
-                              let tNum = 1;
-                              while (usedTwists.has('T' + tNum)) tNum++;
-                              const twistName = 'T' + tNum;
-                              try {
-                                const res = await fetch('/api/signals/twist-group', {
-                                  method: 'PUT', headers: { ...API_HEADERS(), 'Content-Type': 'application/json' },
-                                  body: JSON.stringify({ signal_ids: toAssign.map((s: any) => s.id), twist_group: twistName, project_id: selectedProjectId })
-                                });
-                                if (res.ok) { setSignals(prev => prev.map(s => toAssign.some((a: any) => a.id === s.id) ? { ...s, twist_group: twistName } as any : s)); }
-                                else { alert((await res.json()).error || '设置失败'); }
-                              } catch { alert('操作失败'); }
-                            }}
-                          >+</button>
-                        ) : null}
-                      </td>
                       <td className={'px-2 py-2 text-gray-600 dark:text-white/60 text-xs ' + (expandedCols.has('端点摘要') ? 'whitespace-normal break-all' : 'truncate max-w-[240px]')} title={signal.endpoint_summary || '-'}>{signal.endpoint_summary || '-'}</td>
                       <td className="px-2 py-2 text-gray-600 dark:text-white/60 text-xs">{signal.created_by || '-'}</td>
                       <td className="px-2 py-2 text-gray-400 dark:text-white/40 text-xs">{(signal as any).updated_at ? new Date((signal as any).updated_at).toLocaleDateString() : '-'}</td>

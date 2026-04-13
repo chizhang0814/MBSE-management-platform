@@ -332,6 +332,29 @@ export function signalRoutes(db: Database) {
         sql = `SELECT s.* FROM signals s WHERE s.project_id = ? ${draftClause}`;
         if (!canSeeAllDrafts) params.push(username);
       }
+      // 后端分组筛选
+      const signalGroupFilter = req.query.signalGroup as string;
+      if (signalGroupFilter) {
+        if (signalGroupFilter === '_grouped') {
+          sql += ' AND s.signal_group IS NOT NULL AND s.signal_group != \'\'';
+        } else if (signalGroupFilter === '_ungrouped') {
+          sql += ' AND (s.signal_group IS NULL OR s.signal_group = \'\')';
+        } else {
+          sql += ' AND s.signal_group LIKE ?';
+          params.push(signalGroupFilter + '%');
+        }
+      }
+      // 绞线筛选：包含未分配绞线组的绞线信号的整个分组
+      const twistFilter = req.query.twistFilter as string;
+      if (twistFilter === 'unassigned') {
+        sql += ` AND s.signal_group IN (
+          SELECT DISTINCT signal_group FROM signals
+          WHERE project_id = ? AND signal_group IS NOT NULL AND signal_group != ''
+            AND "推荐导线线型" LIKE '%绞%' AND (twist_group IS NULL OR twist_group = '')
+        )`;
+        params.push(projectId);
+      }
+
       const sortBy = req.query.sortBy as string;
       const sortOrder = req.query.sortOrder === 'asc' ? 'ASC' : 'DESC';
       if (sortBy === 'updated_at') {
@@ -877,13 +900,19 @@ export function signalRoutes(db: Database) {
         if (!allTwisted) {
           return res.status(400).json({ error: '绞线组内所有信号的推荐导线线型必须包含"绞"' });
         }
+        // 校验：加上已有成员后不超限
         const isDouble = wireTypes.every((t: string) => /双绞/.test(t));
         const isTriple = wireTypes.every((t: string) => /三绞/.test(t));
-        if (isDouble && signal_ids.length !== 2) {
-          return res.status(400).json({ error: '双绞线组必须恰好2条信号' });
-        }
-        if (isTriple && signal_ids.length !== 3) {
-          return res.status(400).json({ error: '三绞线组必须恰好3条信号' });
+        const maxSize = isDouble ? 2 : isTriple ? 3 : 0;
+        if (maxSize > 0) {
+          const existing = await db.get(
+            'SELECT COUNT(*) as cnt FROM signals WHERE signal_group = ? AND project_id = ? AND twist_group = ? AND id NOT IN (' + ph + ')',
+            [groups[0], project_id, twist_group, ...signal_ids]
+          );
+          const totalAfter = (existing?.cnt || 0) + signal_ids.length;
+          if (totalAfter > maxSize) {
+            return res.status(400).json({ error: (isDouble ? '双绞' : '三绞') + '线组最多' + maxSize + '条信号，当前已有' + existing.cnt + '条' });
+          }
         }
       }
       await db.run(
