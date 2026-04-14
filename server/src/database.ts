@@ -1533,37 +1533,55 @@ export class Database {
       }
     } catch (e: any) { console.log('Migration: fix stuck Pending entities:', e.message); }
 
-    // ── 修复审批通过但字段未应用的设备/连接器（payload含虚拟字段导致UPDATE失败）──
+    // ── 修复设备字段：取每个设备最新approved edit的payload重新应用 ──
     try {
-      const virtualFields = new Set(['approval_request_id','pending_item_type','pending_sub_item_type','has_pending_sub',
-        'sub_approval_request_ids','设备负责人姓名','management_claim_requester','connector_count','pin_count',
-        'import_status','_connector_renames','_deleteImpact']);
-      for (const [actionType, entityTable] of [['edit_device','devices'],['edit_connector','connectors']] as const) {
-        const approvedReqs = await this.query(`
-          SELECT ar.id, ar.entity_id, ar.payload FROM approval_requests ar
-          WHERE ar.action_type = ? AND ar.status = 'approved' AND ar.payload IS NOT NULL
-            AND EXISTS (SELECT 1 FROM ${entityTable} t WHERE t.id = ar.entity_id AND t.status = 'normal')
-        `, [actionType]);
-        for (const req of approvedReqs) {
-          try {
-            const payload = JSON.parse(req.payload);
-            for (const vf of virtualFields) delete payload[vf];
-            if (Object.keys(payload).length === 0) continue;
-            // 检查是否有字段未正确应用（比较payload值与当前DB值）
-            const entity = await this.get(`SELECT * FROM ${entityTable} WHERE id = ?`, [req.entity_id]);
-            if (!entity) continue;
-            let needsUpdate = false;
-            for (const [k, v] of Object.entries(payload)) {
-              if (String(entity[k] ?? '') !== String(v ?? '')) { needsUpdate = true; break; }
+      const skipFields = new Set(['id','project_id','created_at','updated_at','version','status','created_by',
+        'import_status','import_conflicts','validation_errors','connector_count','pin_count',
+        'approval_request_id','pending_item_type','pending_sub_item_type','has_pending_sub',
+        'sub_approval_request_ids','设备负责人姓名','management_claim_requester','_connector_renames','_deleteImpact']);
+      // 找所有有approved edit_device的设备（取每个设备最新的一条）
+      const latestEdits: any[] = await this.query(`
+        SELECT ar.entity_id, ar.payload, ar.created_at as approved_at
+        FROM approval_requests ar
+        WHERE ar.action_type = 'edit_device' AND ar.status = 'approved' AND ar.payload IS NOT NULL
+          AND ar.id = (SELECT MAX(a2.id) FROM approval_requests a2 WHERE a2.entity_type = 'device' AND a2.entity_id = ar.entity_id AND a2.action_type = 'edit_device' AND a2.status = 'approved')
+      `);
+      let fixedCount = 0;
+      for (const edit of latestEdits) {
+        try {
+          const payload = JSON.parse(edit.payload);
+          const entity: any = await this.get('SELECT * FROM devices WHERE id = ?', [edit.entity_id]);
+          if (!entity) continue;
+          // 只取非系统字段
+          const updates: Record<string, any> = {};
+          for (const [k, v] of Object.entries(payload)) {
+            if (skipFields.has(k)) continue;
+            if (String(entity[k] ?? '') !== String(v ?? '')) updates[k] = v;
+          }
+          // status: 有approved edit则应为normal
+          if (entity.status !== 'normal') updates['__fix_status'] = true;
+          // updated_at: 从change_logs取最新时间
+          const latestLog = await this.get('SELECT MAX(created_at) as t FROM change_logs WHERE entity_table = ? AND entity_id = ?', ['devices', edit.entity_id]);
+          const needsTimefix = latestLog?.t && entity.updated_at < latestLog.t;
+
+          if (Object.keys(updates).length > 0 || updates['__fix_status'] || needsTimefix) {
+            delete updates['__fix_status'];
+            const setClauses: string[] = [];
+            const vals: any[] = [];
+            for (const [k, v] of Object.entries(updates)) {
+              setClauses.push(`"${k}" = ?`); vals.push(v);
             }
-            if (needsUpdate) {
-              const setClauses = Object.keys(payload).map(k => `"${k}" = ?`).join(', ');
-              await this.run(`UPDATE ${entityTable} SET ${setClauses} WHERE id = ?`, [...Object.values(payload), req.entity_id]);
+            if (entity.status !== 'normal') { setClauses.push('status = ?'); vals.push('normal'); }
+            if (needsTimefix) { setClauses.push('updated_at = ?'); vals.push(latestLog.t); }
+            if (setClauses.length > 0) {
+              await this.run(`UPDATE devices SET ${setClauses.join(', ')} WHERE id = ?`, [...vals, edit.entity_id]);
+              fixedCount++;
             }
-          } catch {}
-        }
+          }
+        } catch {}
       }
-    } catch (e: any) { console.log('Migration: re-apply approved payloads:', e.message); }
+      if (fixedCount > 0) console.log('Database migration: 修复 ' + fixedCount + ' 台设备（字段/状态/时间戳从最新approved payload恢复）');
+    } catch (e: any) { console.log('Migration: fix device fields:', e.message); }
 
     // 初始化默认用户（不再创建示例数据）
     // ── 自动赋值绞线组（已有分组补赋值）──
