@@ -313,7 +313,6 @@ export default function ProjectDataView() {
   const [sgCheckMode, setSgCheckMode] = useState(false);
   const [sgCheckedIds, setSgCheckedIds] = useState<number[]>([]);
   const [sgCreating, setSgCreating] = useState(false);
-  const [sgBlankType, setSgBlankType] = useState('');
   const [sgGroupFilter, setSgGroupFilter] = useState('');
   const [twistFilter, setTwistFilter] = useState('');
   // ── 一键审批 ──
@@ -475,7 +474,7 @@ export default function ProjectDataView() {
     if (activeView === 'devices') loadDevices();
     else if (activeView === 'signals') loadSignals();
     else loadSectionConnectors();
-  }, [selectedProjectId, activeView, effectiveFilterKey, deviceSortOrder, signalSortOrder, sgGroupFilter, twistFilter]);
+  }, [selectedProjectId, activeView, effectiveFilterKey, deviceSortOrder, signalSortOrder, twistFilter]);
 
   // 新通知到达时自动刷新当前视图数据
   const refreshDataRef = useRef(() => {});
@@ -713,9 +712,8 @@ export default function ProjectDataView() {
     const version = ++signalLoadVersion.current;
     setLoading(true);
     const myQ = filterMode === 'my' ? '&myDevices=true' : filterMode === 'related' ? '&relatedDevices=true' : '';
-    const groupQ = sgGroupFilter ? '&signalGroup=' + encodeURIComponent(sgGroupFilter) : '';
     const twistQ = twistFilter ? '&twistFilter=' + encodeURIComponent(twistFilter) : '';
-    const baseUrl = '/api/signals?projectId=' + selectedProjectId + myQ + groupQ + twistQ + '&sortBy=updated_at&sortOrder=' + signalSortOrder;
+    const baseUrl = '/api/signals?projectId=' + selectedProjectId + myQ + twistQ + '&sortBy=updated_at&sortOrder=' + signalSortOrder;
     try {
       // 第一批：50条，快速显示
       const res = await fetch(`${baseUrl}&limit=50&offset=0`, { headers: API_HEADERS() });
@@ -3122,51 +3120,7 @@ export default function ProjectDataView() {
 
           <div className="w-px h-5 bg-gray-200 shrink-0" />
 
-          {/* 中间左：创建空白分组 */}
-          <select
-            value={sgBlankType}
-            disabled={sgCheckedIds.length > 0}
-            onChange={e => setSgBlankType(e.target.value)}
-            className={`border rounded px-2 py-1 text-xs ${sgCheckedIds.length > 0 ? 'border-gray-200 dark:border-white/10 bg-gray-100 text-gray-400 dark:text-white/40 cursor-not-allowed' : 'border-gray-300 dark:border-white/20 bg-white dark:bg-neutral-900'}`}
-          >
-            <option value="">选择组类型...</option>
-            {([
-              { type: 'ARINC 429', prefix: 'A_429_', bg: 'rgba(224,231,255,0.7)', text: '#4f46e5' },
-              { type: 'CAN Bus', prefix: 'CAN_Bus_', bg: 'rgba(254,243,199,0.7)', text: '#b45309' },
-              { type: '电源（低压）', prefix: 'PWR_LV_', bg: 'rgba(254,226,226,0.7)', text: '#dc2626' },
-              { type: '电源（高压）', prefix: 'PWR_HV_', bg: 'rgba(254,202,202,0.7)', text: '#991b1b' },
-              { type: 'RS-422', prefix: 'RS422_', bg: 'rgba(245,243,255,0.7)', text: '#6d28d9' },
-              { type: 'RS-422（全双工）', prefix: 'RS422_F_', bg: 'rgba(237,233,254,0.7)', text: '#7c3aed' },
-              { type: 'RS-485', prefix: 'RS485_', bg: 'rgba(204,251,241,0.7)', text: '#0f766e' },
-              { type: '以太网（百兆）', prefix: 'ETH100_', bg: 'rgba(220,252,231,0.7)', text: '#15803d' },
-              { type: '以太网（千兆）', prefix: 'ETH1000_', bg: 'rgba(224,242,254,0.7)', text: '#0369a1' },
-            ]).map(({ type, bg, text }) =>
-              <option key={type} value={type} style={{ backgroundColor: bg, color: text }}>{type}</option>
-            )}
-          </select>
-          <button
-            disabled={!sgBlankType || sgCreating || sgCheckedIds.length > 0}
-            onClick={async () => {
-              setSgCreating(true);
-              try {
-                const res = await fetch('/api/signals/group/blank', {
-                  method: 'POST',
-                  headers: { ...API_HEADERS(), 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ project_id: selectedProjectId, conn_type: sgBlankType }),
-                });
-                const data = await res.json();
-                if (res.ok) {
-                  alert(`空白分组「${data.group_name}」创建成功（${data.signal_ids.length}条Draft信号）`);
-                  setSgBlankType('');
-                  loadSignals();
-                } else { alert(data.error || '创建失败'); }
-              } catch { alert('操作失败'); }
-              finally { setSgCreating(false); }
-            }}
-            className={`px-2 py-1 rounded text-xs shrink-0 ${!sgBlankType || sgCheckedIds.length > 0 ? 'bg-gray-300 text-gray-500 dark:text-white/50 cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700'}`}
-          >创建空白分组</button>
-
-          {/* 中间右：已有信号建组（勾选后显示） */}
+          {/* 已有信号建组（勾选后显示） */}
           {sgCheckedIds.length > 0 && (
             <>
               <div className="w-px h-5 bg-gray-200 shrink-0" />
@@ -3274,6 +3228,7 @@ export default function ProjectDataView() {
           'RS485_': ['RS-485_A', 'RS-485_B', 'RS-485_Gnd'],
           'ETH100_': ['ETH_TX+', 'ETH_TX-', 'ETH_RX+', 'ETH_RX-', 'ETH_Gnd'],
           'ETH1000_': ['ETH_A+', 'ETH_A-', 'ETH_B+', 'ETH_B-', 'ETH_C+', 'ETH_C-', 'ETH_D+', 'ETH_D-', 'ETH_Gnd'],
+          'HDMI_': ['HDMI_A+', 'HDMI_A-', 'HDMI_B+', 'HDMI_B-'],
         };
         const reorderedSignals = (() => {
           const grouped = new Map<string, typeof filteredSignals>();
@@ -3364,7 +3319,7 @@ export default function ProjectDataView() {
                     <option value="">全部</option>
                     <option value="_grouped">已分组</option>
                     <option value="_ungrouped">未分组</option>
-                    {(['A_429_','CAN_Bus_','PWR_LV_','PWR_HV_','RS422_','RS422_F_','RS485_','ETH100_','ETH1000_'] as const).map(p =>
+                    {(['A_429_','CAN_Bus_','ETH100_','ETH1000_','HDMI_','PWR_HV_','PWR_LV_','RS422_','RS422_F_','RS485_'] as const).map(p =>
                       <option key={p} value={p}>{p.replace(/_$/, '')}</option>
                     )}
                   </select>
@@ -5561,6 +5516,7 @@ export default function ProjectDataView() {
                     'RS-485': ['RS-485_A', 'RS-485_B', 'RS-485_Gnd'],
                     '以太网（百兆）': ['ETH_TX+', 'ETH_TX-', 'ETH_RX+', 'ETH_RX-', 'ETH_Gnd'],
                     '以太网（千兆）': ['ETH_A+', 'ETH_A-', 'ETH_B+', 'ETH_B-', 'ETH_C+', 'ETH_C-', 'ETH_D+', 'ETH_D-', 'ETH_Gnd'],
+                    'HDMI': ['HDMI_A+', 'HDMI_A-', 'HDMI_B+', 'HDMI_B-'],
                   };
                   const show协议标识 = connType in PROTOCOL_CONN_TYPES;
                   return SIGNAL_FIELDS.filter(f => {

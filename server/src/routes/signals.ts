@@ -10,6 +10,7 @@ import {
 const PROTOCOL_CONNECTION_TYPES = new Set([
   'ARINC 429', 'CAN Bus', '电源（低压）', '电源（高压）',
   'RS-422', 'RS-422（全双工）', 'RS-485', '以太网（百兆）', '以太网（千兆）',
+  'HDMI',
 ]);
 
 export function signalRoutes(db: Database) {
@@ -1465,6 +1466,7 @@ export function signalRoutes(db: Database) {
     'RS-485':         { prefix: 'RS485_',    count: 3, protocols: ['RS-485_A', 'RS-485_B', 'RS-485_Gnd'], required: ['RS-485_A', 'RS-485_B'], optional: ['RS-485_Gnd'] },
     '以太网（百兆）':  { prefix: 'ETH100_',   count: 5, protocols: ['ETH_TX+', 'ETH_TX-', 'ETH_RX+', 'ETH_RX-', 'ETH_Gnd'], required: ['ETH_TX+', 'ETH_TX-', 'ETH_RX+', 'ETH_RX-'], optional: ['ETH_Gnd'] },
     '以太网（千兆）':  { prefix: 'ETH1000_',  count: 9, protocols: ['ETH_A+', 'ETH_A-', 'ETH_B+', 'ETH_B-', 'ETH_C+', 'ETH_C-', 'ETH_D+', 'ETH_D-', 'ETH_Gnd'], required: ['ETH_A+', 'ETH_A-', 'ETH_B+', 'ETH_B-', 'ETH_C+', 'ETH_C-', 'ETH_D+', 'ETH_D-'], optional: ['ETH_Gnd'] },
+    'HDMI':            { prefix: 'HDMI_',     count: 4, protocols: ['HDMI_A+', 'HDMI_A-', 'HDMI_B+', 'HDMI_B-'] },
   };
 
   // 连接类型 → 线类型 映射
@@ -1474,6 +1476,7 @@ export function signalRoutes(db: Database) {
 
   function inferConnType(sigNames: string[]): string | null {
     const all = sigNames.join(' ').toUpperCase();
+    if (/\bHDMI[_\s]/.test(all)) return 'HDMI';
     if (/A429|ARINC\s*429|(?<!\w)429(?!\d)/.test(all) && !/RS429/.test(all)) return 'ARINC 429';
     if (/CAN[_\s]?H|CAN[_\s]?L|CANH|CANL|CAN\d?_GND|CAN\d?_H|CAN\d?_L/.test(all)) return 'CAN Bus';
     if (/RS[-_]?422|(?<!\w)422_/.test(all) && /_(HI|LO|POSITIVE|NEGATIVE|SIGNALGND|A\b|B\b)|TX[+-]|RX[+-]/i.test(all)) return 'RS-422';
@@ -1510,6 +1513,11 @@ export function signalRoutes(db: Database) {
       } else if (connType === '电源（低压）') {
         if (/[+]$|_PWR\b|_POWER\b|_P\b|_POS\b|正极|火线/.test(n)) result = '电源（低压）正极';
         else if (/[-]$|_RTN\b|_RETURN\b|_N\b|_NEG\b|_GND\b|负极|零线|地线/.test(n)) result = '电源（低压）负极';
+      } else if (connType === 'HDMI') {
+        if (/_0\+$|_2\+$/.test(n)) result = 'HDMI_A+';
+        else if (/_0-$|_2-$/.test(n)) result = 'HDMI_A-';
+        else if (/_1\+$|_CLK\+$/.test(n)) result = 'HDMI_B+';
+        else if (/_1-$|_CLK-$/.test(n)) result = 'HDMI_B-';
       }
       if (result) return result;
     }
@@ -1522,6 +1530,7 @@ export function signalRoutes(db: Database) {
 
   function extractStem(name: string): string {
     return name.toUpperCase()
+      .replace(/_(0|1|2|CLK)[+-]$/i, '')  // HDMI: _0+/_0-/_1+/_1-/_2+/_2-/_CLK+/_CLK-
       .replace(/[_\s]*(CAN[_\s]?GND|CAN[_\s]?HIGH|CAN[_\s]?LOW|CANH|CANL|CAN\d?_H|CAN\d?_L|CAN\d?_GND)$/i, '')
       .replace(/[_\s]*(POSITIVE|NEGATIVE|HIGH|LOW|HI|LO|GND|SIGNALGND\d*|[+-])$/i, '')
       .replace(/[_\s]+\d*[ABHL]$/i, '')  // 空格或下划线 + 可选数字 + 单字母 A/B/H/L 结尾（如 _1A, _1B）
@@ -1587,19 +1596,18 @@ export function signalRoutes(db: Database) {
         if (ep.sig_name) sigNamesMap[ep.sig_id].push(ep.sig_name);
       }
 
-      // 推断每条信号的连接类型和协议标识
+      // 读取每条信号的连接类型和协议标识（不推断，只用已有值）
       const inferredMap: Record<number, { conn_type: string; proto: string; line_type: string }> = {};
       const sigMeta: Record<number, { conn_type: string; proto: string; unique_id: string; signal_group: string | null }> = {};
 
       for (const ep of epRows) {
         if (sigMeta[ep.sig_id]) continue;
-        const names = sigNamesMap[ep.sig_id] || [];
-        const ct = ep.conn_type || inferConnType(names);
-        const proto = ep.proto || (ct ? inferProtocol(ct, names) : null);
+        const ct = ep.conn_type || '';
+        const proto = ep.proto || '';
         if (ct && proto) {
           inferredMap[ep.sig_id] = { conn_type: ct, proto, line_type: inferLineType(ct) };
         }
-        sigMeta[ep.sig_id] = { conn_type: ct || '', proto: proto || '', unique_id: ep.unique_id, signal_group: ep.signal_group };
+        sigMeta[ep.sig_id] = { conn_type: ct, proto, unique_id: ep.unique_id, signal_group: ep.signal_group };
       }
 
       // 统计每条信号的端点数量（用于区分组网/非组网信号）
@@ -1681,11 +1689,7 @@ export function signalRoutes(db: Database) {
             const updates: string[] = [];
             const vals: any[] = [];
 
-            const meta = sigMeta[sig.sig_id];
-            // 分组时强制统一连接类型和协议标识（即使已有值也覆盖，保证组内一致）
-            if (inf.conn_type) { updates.push('"连接类型" = ?'); vals.push(inf.conn_type); }
-            if (inf.proto) { updates.push('"协议标识" = ?'); vals.push(inf.proto); }
-            if (inf.line_type) { updates.push('"线类型" = ?'); vals.push(inf.line_type); }
+            // 只写入 signal_group，不覆盖连接类型、协议标识、线类型（必须已有值才能进入分组）
             updates.push('signal_group = ?'); vals.push(groupName);
 
             await db.run(
@@ -1717,51 +1721,6 @@ export function signalRoutes(db: Database) {
     } catch (error: any) {
       console.error('智能分组失败:', error);
       res.status(500).json({ error: error.message || '智能分组失败' });
-    }
-  });
-
-  // ── POST /api/signals/group/blank — 创建空白分组 ─────────
-  router.post('/group/blank', authenticate, async (req: AuthRequest, res) => {
-    try {
-      const { project_id, conn_type } = req.body;
-      if (!project_id || !conn_type) {
-        return res.status(400).json({ error: '缺少 project_id 或 conn_type' });
-      }
-
-      const groupDef = SIGNAL_GROUP_DEFS[conn_type];
-      if (!groupDef) {
-        return res.status(400).json({ error: `连接类型"${conn_type}"不支持信号分组` });
-      }
-
-      // 生成组编号
-      const existing = await db.query(
-        `SELECT signal_group FROM signals WHERE project_id = ? AND signal_group LIKE ?`,
-        [project_id, `${groupDef.prefix}%`]
-      );
-      let maxNum = -1;
-      for (const row of existing) {
-        const num = parseInt(row.signal_group.slice(groupDef.prefix.length));
-        if (!isNaN(num) && num > maxNum) maxNum = num;
-      }
-      const groupName = `${groupDef.prefix}${maxNum + 1}`;
-
-      const lineType = POWER_CONN_TYPES.has(conn_type) ? '功率线' : '信号线';
-      const username = req.user!.username;
-      const createdIds: number[] = [];
-
-      for (const protocol of groupDef.protocols) {
-        const uniqueId = `${groupDef.prefix}${protocol}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-        const result = await db.run(
-          `INSERT INTO signals (project_id, unique_id, "连接类型", "协议标识", "线类型", status, signal_group, created_by)
-           VALUES (?, ?, ?, ?, ?, 'Draft', ?, ?)`,
-          [project_id, uniqueId, conn_type, protocol, lineType, groupName, username]
-        );
-        createdIds.push(result.lastID);
-      }
-
-      res.json({ success: true, group_name: groupName, signal_ids: createdIds });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message || '创建空白分组失败' });
     }
   });
 
