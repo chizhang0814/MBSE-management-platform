@@ -3152,29 +3152,8 @@ export default function ProjectDataView() {
             </>
           )}
 
-          {/* 右侧：智能分组 + 退出 */}
+          {/* 右侧：退出 */}
           <div className="flex-1" />
-          <button
-            disabled={sgCreating}
-            onClick={async () => {
-              if (!confirm('将自动识别高置信度的信号分组（同连接器+名称共干+协议互补），并更新组内信号的连接类型/协议标识/线类型。\n\n是否继续？')) return;
-              setSgCreating(true);
-              try {
-                const res = await fetch('/api/signals/group/auto', {
-                  method: 'POST',
-                  headers: { ...API_HEADERS(), 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ project_id: selectedProjectId }),
-                });
-                const data = await res.json();
-                if (res.ok) {
-                  alert(`智能分组完成！\n\n创建 ${data.groups_created} 个分组\n更新 ${data.signals_updated} 条信号`);
-                  loadSignals();
-                } else { alert(data.error || '智能分组失败'); }
-              } catch { alert('操作失败'); }
-              finally { setSgCreating(false); }
-            }}
-            className="px-3 py-1 bg-amber-500 text-white rounded text-sm hover:bg-amber-600 disabled:bg-gray-400 shrink-0"
-          >{sgCreating ? '处理中...' : '智能分组'}</button>
           <button
             onClick={() => { setSgCheckMode(false); setSgCheckedIds([]); }}
             className="px-3 py-1 border border-gray-300 dark:border-white/20 rounded text-sm text-black dark:text-white hover:bg-black/[0.06] dark:hover:bg-white/[0.1] shrink-0"
