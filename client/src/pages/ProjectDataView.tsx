@@ -3311,7 +3311,7 @@ export default function ProjectDataView() {
                       ['HDMI_','#ec4899'],['PWR_HV_','#dc2626'],['PWR_LV_','#ef4444'],['RS422_','#a78bfa'],
                       ['RS422_F_','#8b5cf6'],['RS485_','#14b8a6'],['三相电_','#b91c1c'],
                     ] as const).map(([p, c]) =>
-                      <option key={p} value={p} style={{color: c}}>{p.replace(/_$/, '')}</option>
+                      <option key={p} value={p} style={{backgroundColor: c, color: '#fff'}}>{p.replace(/_$/, '')}</option>
                     )}
                   </select>
                 </th>
