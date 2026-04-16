@@ -1478,6 +1478,14 @@ export function projectRoutes(db: Database) {
         }
       };
 
+      // 信号分组背景色映射（与前端色带一致，淡色版）
+      const groupBgColors: Record<string, string> = {
+        'A_429_':'FFE0E7FF','A_453_':'FFDDD6FE','ANLG_2S_':'FFFED7AA','ANLG_3S_':'FFFED7AA',
+        'CAN_Bus_':'FFFEF3C7','Discrete_2S_':'FFF3F4F6','ETH100_':'FFD1FAE5','ETH1000_':'FFDBEAFE',
+        'HDMI_':'FFFCE7F3','PWR_LV_':'FFFEE2E2','PWR_HV_':'FFFECACA','RS422_F_':'FFEDE9FE',
+        'RS422_':'FFF5F3FF','RS485_':'FFCCFBF1','三相電_':'FFFECACA','三相电_':'FFFECACA',
+      };
+
       const sheetKeys = ['devices', 'connectors', 'signals'];
       const sheetNames = ['ATA章节设备表', '设备端元器件表', '电气接口数据表'];
 
@@ -1503,7 +1511,19 @@ export function projectRoutes(db: Database) {
           const excelRow = ws.addRow(dataRow);
           excelRow.eachCell((cell: any) => { cell.font = { size: 9 }; cell.border = thinBorder; cell.alignment = { vertical: 'middle' }; });
 
-          // 字段级高亮
+          // 信号分组背景色
+          if (sheetKeys[i] === 'signals') {
+            const sg = row._signal_group || row['信号组'] || '';
+            if (sg) {
+              const prefix = Object.keys(groupBgColors).find(p => sg.startsWith(p));
+              if (prefix) {
+                const groupFill: any = { type: 'pattern', pattern: 'solid', fgColor: { argb: groupBgColors[prefix] } };
+                excelRow.eachCell((cell: any) => { cell.fill = groupFill; });
+              }
+            }
+          }
+
+          // 字段级高亮（会覆盖分组背景色，优先级更高）
           if ((hlFromUTC || hlToUTC) && row._entity_table && row._entity_id) {
             const ut = row._updated_at || '';
             if (ut) {
@@ -1541,14 +1561,15 @@ export function projectRoutes(db: Database) {
           // 1. 合并信号组列
           if (groupColIdx > 0) mergeConsecutive(ws, groupColIdx, dataStartRow, endRow, false);
 
-          // 2. 合并绞线组列（不跨信号组边界，空值也合并）
+          // 2. 合并绞线组列（不跨信号组边界，空值也合并，但仅限有分组的区域）
           if (twistColIdx > 0 && groupColIdx > 0 && totalRows > 0) {
             let gStart = dataStartRow;
             let gVal = td.rows[0]?._signal_group || '';
             for (let r = 1; r <= totalRows; r++) {
               const curG = r < totalRows ? (td.rows[r]?._signal_group || '') : '___SENTINEL___';
               if (curG === gVal) continue;
-              mergeConsecutive(ws, twistColIdx, gStart, dataStartRow + r - 1, true);
+              // 只对有信号组的区域合并绞线组，无分组的跳过
+              if (gVal) mergeConsecutive(ws, twistColIdx, gStart, dataStartRow + r - 1, true);
               gStart = dataStartRow + r;
               gVal = curG;
             }
