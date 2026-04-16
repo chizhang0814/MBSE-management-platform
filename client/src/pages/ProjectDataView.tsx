@@ -309,6 +309,8 @@ export default function ProjectDataView() {
   const [importSigLoading, setImportSigLoading] = useState(false);
   const [importSigResult, setImportSigResult] = useState<any>(null);
   const [downloading, setDownloading] = useState(false);
+  const [highlightFrom, setHighlightFrom] = useState('');
+  const [highlightTo, setHighlightTo] = useState('');
   // ── 信号分组：列表勾选模式 ──
   const [sgCheckMode, setSgCheckMode] = useState(false);
   const [sgCheckedIds, setSgCheckedIds] = useState<number[]>([]);
@@ -333,7 +335,7 @@ export default function ProjectDataView() {
       '设备端元器件匹配的元器件是否随设备交付', '备注', '最后修改时间',
     ]},
     { key: 'signals', name: '电气接口数据表', cols: [
-      'Unique ID', '连接类型',
+      '信号组', '绞线组', 'Unique ID', '连接类型', '协议标识', '线类型',
       '设备（从）', 'LIN号（从）', '连接器（从）', '针孔号（从）', '端接尺寸（从）', '屏蔽类型（从）', '信号名称（从）', '信号定义（从）',
       '设备（到）', 'LIN号（到）', '连接器（到）', '针孔号（到）', '端接尺寸（到）', '屏蔽类型（到）', '信号名称（到）', '信号定义（到）',
       '推荐导线线规', '推荐导线线型', '独立电源代码', '敷设代码',
@@ -4625,6 +4627,8 @@ export default function ProjectDataView() {
                             if (selected.length < s.cols.length) params.set(`cols_${s.key}`, selected.join('||'));
                           }
                         }
+                        if (highlightFrom) params.set('highlightFrom', highlightFrom);
+                        if (highlightTo) params.set('highlightTo', highlightTo);
                         const res = await fetch(`/api/projects/${selectedProjectId}/download?${params.toString()}`, { headers: API_HEADERS() });
                         if (!res.ok) throw new Error((await res.json()).error || '下载失败');
                         const blob = await res.blob();
@@ -4682,6 +4686,25 @@ export default function ProjectDataView() {
                     )}
                   </div>
                 ))}
+                {/* 高亮时间范围 */}
+                <div className="mt-4 border border-gray-200 dark:border-white/10 rounded-lg overflow-hidden">
+                  <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-neutral-800 border-b border-gray-200 dark:border-white/10">
+                    <span className="font-medium text-sm">标记变更（黄色高亮）</span>
+                    {(highlightFrom || highlightTo) && (
+                      <button onClick={() => { setHighlightFrom(''); setHighlightTo(''); }}
+                        className="ml-auto text-xs text-gray-400 hover:text-red-500">清除</button>
+                    )}
+                  </div>
+                  <div className="px-3 py-2 flex items-center gap-2 text-xs">
+                    <span className="text-gray-500 dark:text-white/50">从</span>
+                    <input type="datetime-local" value={highlightFrom} onChange={e => setHighlightFrom(e.target.value)}
+                      className="border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-xs flex-1" />
+                    <span className="text-gray-500 dark:text-white/50">到</span>
+                    <input type="datetime-local" value={highlightTo} onChange={e => setHighlightTo(e.target.value)}
+                      className="border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-xs flex-1" />
+                    <span className="text-gray-400 dark:text-white/30 text-[10px]">北京时间</span>
+                  </div>
+                </div>
               </div>
             </div>
           </div>

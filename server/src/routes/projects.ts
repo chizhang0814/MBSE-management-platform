@@ -1408,7 +1408,7 @@ export function projectRoutes(db: Database) {
     }
   );
 
-  // ── 下载项目数据（从5表重建3-Sheet xlsx）─────────────────
+  // ── 下载项目数据（exceljs，支持样式+合并单元格+高亮）─────
 
   router.get('/:id/download', authenticate, async (req: AuthRequest, res) => {
     try {
@@ -1416,18 +1416,68 @@ export function projectRoutes(db: Database) {
       const project = await db.get('SELECT * FROM projects WHERE id = ?', [projectId]);
       if (!project) return res.status(404).json({ error: '项目不存在' });
 
-      // 解析选择的 sheets 和列
       const sheetsParam = (req.query.sheets as string) || 'devices,connectors,signals,adl';
       const selectedSheets = new Set(sheetsParam.split(','));
       const colFilters: Record<string, Set<string> | null> = {};
       for (const key of ['devices', 'connectors', 'signals']) {
         const colsParam = req.query[`cols_${key}`] as string;
-        colFilters[key] = colsParam ? new Set(colsParam.split('||')) : null; // null = 全部列
+        colFilters[key] = colsParam ? new Set(colsParam.split('||')) : null;
+      }
+
+      // 高亮时间范围（前端传北京时间，后端转UTC）
+      const highlightFrom = req.query.highlightFrom as string | undefined;
+      const highlightTo = req.query.highlightTo as string | undefined;
+      let hlFromUTC: Date | null = null;
+      let hlToUTC: Date | null = null;
+      if (highlightFrom) hlFromUTC = new Date(new Date(highlightFrom).getTime() - 8 * 3600 * 1000);
+      if (highlightTo) hlToUTC = new Date(new Date(highlightTo).getTime() - 8 * 3600 * 1000);
+
+      // 构建字段级变更映射
+      const changedFieldsMap = new Map<string, Set<string>>();
+      if (hlFromUTC || hlToUTC) {
+        const hlFromStr = hlFromUTC ? hlFromUTC.toISOString().replace('T', ' ').slice(0, 19) : '1970-01-01 00:00:00';
+        const hlToStr = hlToUTC ? hlToUTC.toISOString().replace('T', ' ').slice(0, 19) : '2099-12-31 23:59:59';
+        const changeLogs = await db.query(
+          `SELECT entity_table, entity_id, new_values FROM change_logs
+           WHERE created_at >= ? AND created_at <= ? AND entity_table IN ('devices','connectors','signals')`,
+          [hlFromStr, hlToStr]
+        );
+        for (const log of changeLogs) {
+          const key = log.entity_table + ':' + log.entity_id;
+          if (!changedFieldsMap.has(key)) changedFieldsMap.set(key, new Set());
+          if (log.new_values) {
+            try { for (const f of Object.keys(JSON.parse(log.new_values))) changedFieldsMap.get(key)!.add(f); } catch {}
+          }
+        }
       }
 
       const tablesData = await loadTableDataFromRelational(db, projectId);
+      const ExcelJS = await import('exceljs');
+      const workbook = new ExcelJS.default.Workbook();
 
-      const workbook = xlsx.utils.book_new();
+      const headerFont: any = { bold: true, size: 10 };
+      const headerFill: any = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9E1F2' } };
+      const thinBorder: any = { top: { style: 'thin', color: { argb: 'FFD0D0D0' } }, bottom: { style: 'thin', color: { argb: 'FFD0D0D0' } }, left: { style: 'thin', color: { argb: 'FFD0D0D0' } }, right: { style: 'thin', color: { argb: 'FFD0D0D0' } } };
+      const headerBorder: any = { top: { style: 'thin' }, bottom: { style: 'thin' }, left: { style: 'thin' }, right: { style: 'thin' } };
+      const highlightFill: any = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFF00' } };
+
+      // 合并连续相同值的辅助函数
+      const mergeConsecutive = (wsRef: any, colIdx: number, rangeStart: number, rangeEnd: number, allowEmpty: boolean) => {
+        if (colIdx === 0 || rangeStart > rangeEnd) return;
+        let mStart = rangeStart;
+        let mVal = wsRef.getCell(mStart, colIdx).value;
+        for (let r = rangeStart + 1; r <= rangeEnd + 1; r++) {
+          const curVal = r <= rangeEnd ? wsRef.getCell(r, colIdx).value : '___SENTINEL___';
+          if (curVal === mVal) continue;
+          if (r - 1 > mStart && (mVal || allowEmpty)) {
+            wsRef.mergeCells(mStart, colIdx, r - 1, colIdx);
+            wsRef.getCell(mStart, colIdx).alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+          }
+          mStart = r;
+          mVal = curVal;
+        }
+      };
+
       const sheetKeys = ['devices', 'connectors', 'signals'];
       const sheetNames = ['ATA章节设备表', '设备端元器件表', '电气接口数据表'];
 
@@ -1436,47 +1486,113 @@ export function projectRoutes(db: Database) {
         const td = tablesData[i];
         const filter = colFilters[sheetKeys[i]];
         const cols = filter ? td.originalColumns.filter(c => filter.has(c)) : td.originalColumns;
-        const rows: any[][] = [cols];
+        const ws = workbook.addWorksheet(sheetNames[i]);
+
+        // 表头
+        const headerRow = ws.addRow(cols);
+        headerRow.eachCell((cell: any) => { cell.font = headerFont; cell.fill = headerFill; cell.border = headerBorder; cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true }; });
+
+        // 数据行
+        const dataStartRow = 2;
         for (const row of td.rows) {
           const dataRow = cols.map(col => {
             const v = row[col] ?? row[col.replace(/[^\w\u4e00-\u9fa5]/g, '_')] ?? '';
-            if (typeof v === 'object' && v !== null) {
-              try { return JSON.stringify(v, null, 2); } catch { return String(v); }
-            }
+            if (typeof v === 'object' && v !== null) { try { return JSON.stringify(v, null, 2); } catch { return String(v); } }
             return v;
           });
-          rows.push(dataRow);
+          const excelRow = ws.addRow(dataRow);
+          excelRow.eachCell((cell: any) => { cell.font = { size: 9 }; cell.border = thinBorder; cell.alignment = { vertical: 'middle' }; });
+
+          // 字段级高亮
+          if ((hlFromUTC || hlToUTC) && row._entity_table && row._entity_id) {
+            const ut = row._updated_at || '';
+            if (ut) {
+              const rowTime = new Date(ut + (ut.includes('T') ? '' : 'Z'));
+              const inRange = (!hlFromUTC || rowTime >= hlFromUTC) && (!hlToUTC || rowTime <= hlToUTC);
+              if (inRange) {
+                const ct = row._created_at || '';
+                const createdTime = ct ? new Date(ct + (ct.includes('T') ? '' : 'Z')) : null;
+                const isNew = createdTime && (!hlFromUTC || createdTime >= hlFromUTC) && (!hlToUTC || createdTime <= hlToUTC);
+                if (isNew) {
+                  excelRow.eachCell((cell: any) => { cell.fill = highlightFill; });
+                } else {
+                  const entityKey = row._entity_table + ':' + row._entity_id;
+                  const changedFields = changedFieldsMap.get(entityKey);
+                  if (changedFields && changedFields.size > 0) {
+                    cols.forEach((col, ci) => { if (changedFields.has(col)) excelRow.getCell(ci + 1).fill = highlightFill; });
+                  } else {
+                    const timeIdx = cols.indexOf('最后修改时间');
+                    if (timeIdx >= 0) excelRow.getCell(timeIdx + 1).fill = highlightFill;
+                  }
+                }
+              }
+            }
+          }
         }
-        const ws = xlsx.utils.aoa_to_sheet(rows);
-        xlsx.utils.book_append_sheet(workbook, ws, sheetNames[i]);
+
+        // 信号Sheet：合并单元格
+        if (sheetKeys[i] === 'signals') {
+          const groupColIdx = cols.indexOf('信号组') + 1;
+          const twistColIdx = cols.indexOf('绞线组') + 1;
+          const uidColIdx = cols.indexOf('Unique ID') + 1;
+          const totalRows = td.rows.length;
+          const endRow = dataStartRow + totalRows - 1;
+
+          // 1. 合并信号组列
+          if (groupColIdx > 0) mergeConsecutive(ws, groupColIdx, dataStartRow, endRow, false);
+
+          // 2. 合并绞线组列（不跨信号组边界，空值也合并）
+          if (twistColIdx > 0 && groupColIdx > 0 && totalRows > 0) {
+            let gStart = dataStartRow;
+            let gVal = td.rows[0]?._signal_group || '';
+            for (let r = 1; r <= totalRows; r++) {
+              const curG = r < totalRows ? (td.rows[r]?._signal_group || '') : '___SENTINEL___';
+              if (curG === gVal) continue;
+              mergeConsecutive(ws, twistColIdx, gStart, dataStartRow + r - 1, true);
+              gStart = dataStartRow + r;
+              gVal = curG;
+            }
+          } else if (twistColIdx > 0) {
+            mergeConsecutive(ws, twistColIdx, dataStartRow, endRow, true);
+          }
+
+          // 3. 合并 Unique ID 列
+          if (uidColIdx > 0) mergeConsecutive(ws, uidColIdx, dataStartRow, endRow, false);
+
+          // 冻结
+          const freezeCol = cols.indexOf('连接类型') + 1;
+          ws.views = [{ state: 'frozen' as const, xSplit: freezeCol > 0 ? freezeCol - 1 : 3, ySplit: 1 }];
+        } else {
+          ws.views = [{ state: 'frozen' as const, xSplit: 0, ySplit: 1 }];
+        }
+
+        // 列宽
+        cols.forEach((col, ci) => {
+          const maxLen = Math.max(col.length, ...td.rows.slice(0, 50).map(r => String(r[col] ?? '').length));
+          ws.getColumn(ci + 1).width = Math.min(Math.max(maxLen * 1.2 + 2, 8), 35);
+        });
       }
 
-      // ── 全机设备清单 Sheet（DOORS 格式，11列）─────────────
+      // 全机设备清单 Sheet
       if (selectedSheets.has('adl')) {
-        const adlCols = [
-          'Object Identifier', '系统名称', '电设备编号', '设备编号', 'LIN号',
-          'Object Text', '设备布置区域', '飞机构型', '是否有EICD', '是否是用电设备', '类型',
-        ];
-        const adlDbCols = [
-          'object_identifier', '系统名称', '电设备编号', '设备编号_DOORS', 'LIN号_DOORS',
-          'object_text', '设备布置区域', '飞机构型', '是否有EICD', '是否是用电设备', '类型',
-        ];
-        const adlRows = await db.query(
-          'SELECT * FROM aircraft_device_list WHERE project_id = ? ORDER BY id',
-          [projectId]
-        );
-        const adlSheetData: any[][] = [adlCols];
+        const adlCols = ['Object Identifier', '系统名称', '电设备编号', '设备编号', 'LIN号', 'Object Text', '设备布置区域', '飞机构型', '是否有EICD', '是否是用电设备', '类型'];
+        const adlDbCols = ['object_identifier', '系统名称', '电设备编号', '设备编号_DOORS', 'LIN号_DOORS', 'object_text', '设备布置区域', '飞机构型', '是否有EICD', '是否是用电设备', '类型'];
+        const adlRows = await db.query('SELECT * FROM aircraft_device_list WHERE project_id = ? ORDER BY id', [projectId]);
+        const ws = workbook.addWorksheet('全机设备清单');
+        const hr = ws.addRow(adlCols);
+        hr.eachCell((cell: any) => { cell.font = headerFont; cell.fill = headerFill; cell.border = headerBorder; cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true }; });
         for (const row of adlRows) {
-          adlSheetData.push(adlDbCols.map(col => row[col] ?? ''));
+          const dr = ws.addRow(adlDbCols.map(col => row[col] ?? ''));
+          dr.eachCell((cell: any) => { cell.font = { size: 9 }; cell.border = thinBorder; });
         }
-        xlsx.utils.book_append_sheet(workbook, xlsx.utils.aoa_to_sheet(adlSheetData), '全机设备清单');
+        ws.views = [{ state: 'frozen' as const, xSplit: 0, ySplit: 1 }];
       }
 
-      const buffer = xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+      const buffer = await workbook.xlsx.writeBuffer();
       const filename = `${project.name}_${new Date().toISOString().split('T')[0]}.xlsx`;
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
       res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
-      res.send(buffer);
+      res.send(Buffer.from(buffer));
     } catch (error: any) {
       console.error('下载项目数据失败:', error);
       res.status(500).json({ error: error.message || '下载项目数据失败' });

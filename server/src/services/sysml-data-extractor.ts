@@ -298,7 +298,7 @@ export async function loadTableDataFromRelational(db: Database, projectId: numbe
   const deviceRows = (await db.query(
     'SELECT * FROM devices WHERE project_id = ? ORDER BY 设备编号',
     [projectId]
-  )).map((r: any) => ({ ...r, '最后修改时间': r.updated_at }));
+  )).map((r: any) => ({ ...r, '最后修改时间': r.updated_at, _entity_table: 'devices', _entity_id: r.id, _created_at: r.created_at, _updated_at: r.updated_at }));
   const deviceCols = [
     '设备编号', '设备编号（DOORS）', '设备LIN号（DOORS）', '设备中文名称', '设备英文名称', '设备英文缩写',
     '设备供应商件号', '设备供应商名称', '设备部件所属系统（4位ATA）',
@@ -309,18 +309,18 @@ export async function loadTableDataFromRelational(db: Database, projectId: numbe
   ];
 
   // ② 设备端元器件表 → device_component 行（pins JOIN connectors JOIN devices）
-  const compRows = await db.query(
-    `SELECT d.设备编号, d."设备LIN号（DOORS）", d.设备中文名称 as 设备名称,
+  const compRows = (await db.query(
+    `SELECT c.id as _cid, d.设备编号, d."设备LIN号（DOORS）", d.设备中文名称 as 设备名称,
             c.设备端元器件编号, c."设备端元器件名称及类型",
             c."设备端元器件件号类型及件号", c."设备端元器件供应商名称",
             c."匹配的线束端元器件件号", c."设备端元器件匹配的元器件是否随设备交付",
-            c.备注, c.updated_at as 最后修改时间
+            c.备注, c.updated_at as 最后修改时间, c.created_at as _created_at
      FROM connectors c
      JOIN devices d ON c.device_id = d.id
      WHERE d.project_id = ?
      ORDER BY d.设备编号, c.设备端元器件编号`,
     [projectId]
-  );
+  )).map((r: any) => ({ ...r, _entity_table: 'connectors', _entity_id: r._cid, _updated_at: r['最后修改时间'] }));
   const compCols = [
     '设备编号', '设备LIN号（DOORS）', '设备名称', '设备端元器件编号', '设备端元器件名称及类型',
     '设备端元器件件号类型及件号', '设备端元器件供应商名称', '匹配的线束端元器件件号',
@@ -329,7 +329,13 @@ export async function loadTableDataFromRelational(db: Database, projectId: numbe
 
   // ③ 电气接口数据表 → 每行一对端点（from-to），超过2个端点的信号展开为多行
   const signalRows = await db.query(
-    'SELECT * FROM signals WHERE project_id = ? ORDER BY unique_id, id',
+    `SELECT * FROM signals WHERE project_id = ?
+     ORDER BY
+       CASE WHEN signal_group IS NOT NULL AND signal_group != '' THEN 0 ELSE 1 END,
+       signal_group,
+       CASE WHEN twist_group IS NOT NULL AND twist_group != '' THEN 0 ELSE 1 END,
+       twist_group,
+       "协议标识", unique_id, id`,
     [projectId]
   );
 
@@ -354,8 +360,12 @@ export async function loadTableDataFromRelational(db: Database, projectId: numbe
 
     // 信号基础字段（不含端点相关）
     const base: Record<string, any> = {
+      '信号组': sig['signal_group'] || '',
+      '绞线组': (sig['signal_group'] && sig['twist_group']) ? sig['signal_group'] + '-' + sig['twist_group'] : (sig['twist_group'] || ''),
       'Unique ID': sig.unique_id,
       '连接类型': sig['连接类型'],
+      '协议标识': sig['协议标识'] || '',
+      '线类型': sig['线类型'] || '',
       '推荐导线线规': sig['推荐导线线规'],
       '推荐导线线型': sig['推荐导线线型'],
       '独立电源代码': sig['独立电源代码'],
@@ -382,6 +392,9 @@ export async function loadTableDataFromRelational(db: Database, projectId: numbe
       '成品线安装责任': sig['成品线安装责任'],
       '备注': sig['备注'],
       '最后修改时间': sig['updated_at'],
+      _entity_table: 'signals', _entity_id: sig.id,
+      _created_at: sig.created_at, _updated_at: sig.updated_at,
+      _signal_group: sig.signal_group || '',
     };
 
     const epMap = new Map(endpoints.map((e: any) => [e.ep_id, e]));
@@ -417,7 +430,7 @@ export async function loadTableDataFromRelational(db: Database, projectId: numbe
   }
 
   const ifaceCols = [
-    'Unique ID', '连接类型',
+    '信号组', '绞线组', 'Unique ID', '连接类型', '协议标识', '线类型',
     '设备（从）', 'LIN号（从）', '连接器（从）', '针孔号（从）', '端接尺寸（从）', '屏蔽类型（从）', '信号名称（从）', '信号定义（从）',
     '设备（到）', 'LIN号（到）', '连接器（到）', '针孔号（到）', '端接尺寸（到）', '屏蔽类型（到）', '信号名称（到）', '信号定义（到）',
     '推荐导线线规', '推荐导线线型', '独立电源代码', '敷设代码',
