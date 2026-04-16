@@ -1454,20 +1454,41 @@ export function signalRoutes(db: Database) {
   });
 
   // ── 信号分组定义 ─────────────────────────────────────────
+  // connTypes: 该分组接受哪些连接类型（组内必须一致）
   // required: 必须包含的协议标识, optional: 可选的协议标识
-  // count: 固定数量（required + optional 全部），minCount: 最少数量（仅 required）
-  const SIGNAL_GROUP_DEFS: Record<string, { prefix: string; count: number; protocols: string[]; required?: string[]; optional?: string[] }> = {
-    'ARINC 429':      { prefix: 'A_429_',    count: 2, protocols: ['A429_Positive', 'A429_Negative'] },
-    'CAN Bus':        { prefix: 'CAN_Bus_',  count: 3, protocols: ['CAN_High', 'CAN_Low', 'CAN_Gnd'] },
-    '电源（低压）':    { prefix: 'PWR_LV_',   count: 2, protocols: ['电源（低压）正极', '电源（低压）负极'] },
-    '电源（高压）':    { prefix: 'PWR_HV_',   count: 2, protocols: ['电源（高压）正极', '电源（高压）负极'] },
-    'RS-422':         { prefix: 'RS422_',    count: 3, protocols: ['RS-422_A', 'RS-422_B', 'RS-422_Gnd'], required: ['RS-422_A', 'RS-422_B'], optional: ['RS-422_Gnd'] },
-    'RS-422（全双工）': { prefix: 'RS422_F_',  count: 5, protocols: ['RS-422_TX_A', 'RS-422_TX_B', 'RS-422_RX_A', 'RS-422_RX_B', 'RS-422_Gnd'], required: ['RS-422_TX_A', 'RS-422_TX_B', 'RS-422_RX_A', 'RS-422_RX_B'], optional: ['RS-422_Gnd'] },
-    'RS-485':         { prefix: 'RS485_',    count: 3, protocols: ['RS-485_A', 'RS-485_B', 'RS-485_Gnd'], required: ['RS-485_A', 'RS-485_B'], optional: ['RS-485_Gnd'] },
-    '以太网（百兆）':  { prefix: 'ETH100_',   count: 5, protocols: ['ETH_TX+', 'ETH_TX-', 'ETH_RX+', 'ETH_RX-', 'ETH_Gnd'], required: ['ETH_TX+', 'ETH_TX-', 'ETH_RX+', 'ETH_RX-'], optional: ['ETH_Gnd'] },
-    '以太网（千兆）':  { prefix: 'ETH1000_',  count: 9, protocols: ['ETH_A+', 'ETH_A-', 'ETH_B+', 'ETH_B-', 'ETH_C+', 'ETH_C-', 'ETH_D+', 'ETH_D-', 'ETH_Gnd'], required: ['ETH_A+', 'ETH_A-', 'ETH_B+', 'ETH_B-', 'ETH_C+', 'ETH_C-', 'ETH_D+', 'ETH_D-'], optional: ['ETH_Gnd'] },
-    'HDMI':            { prefix: 'HDMI_',     count: 4, protocols: ['HDMI_A+', 'HDMI_A-', 'HDMI_B+', 'HDMI_B-'] },
+  type GroupDef = { prefix: string; count: number; protocols: string[]; required?: string[]; optional?: string[]; connTypes: string[] };
+  const SIGNAL_GROUP_DEFS: Record<string, GroupDef> = {
+    'A_429':       { prefix: 'A_429_',       connTypes: ['ARINC 429'],        count: 2, protocols: ['A429_Positive', 'A429_Negative'] },
+    'A_453':       { prefix: 'A_453_',       connTypes: ['ARINC 453'],        count: 2, protocols: ['A453_Positive', 'A453_Negative'] },
+    'CAN_Bus':     { prefix: 'CAN_Bus_',     connTypes: ['CAN Bus'],          count: 3, protocols: ['CAN_High', 'CAN_Low', 'CAN_Gnd'], required: ['CAN_High', 'CAN_Low'], optional: ['CAN_Gnd'] },
+    'Discrete_2S': { prefix: 'Discrete_2S_', connTypes: ['Discrete'],         count: 2, protocols: ['Positive_+', 'Negative_-'] },
+    'HDMI':        { prefix: 'HDMI_',        connTypes: ['HDMI'],             count: 4, protocols: ['HDMI_A+', 'HDMI_A-', 'HDMI_B+', 'HDMI_B-'] },
+    'RS422':       { prefix: 'RS422_',       connTypes: ['RS-422'],           count: 3, protocols: ['RS-422_A', 'RS-422_B', 'RS-422_Gnd'], required: ['RS-422_A', 'RS-422_B'], optional: ['RS-422_Gnd'] },
+    'RS422_F':     { prefix: 'RS422_F_',     connTypes: ['RS-422（全双工）'],  count: 5, protocols: ['RS-422_TX_A', 'RS-422_TX_B', 'RS-422_RX_A', 'RS-422_RX_B', 'RS-422_Gnd'], required: ['RS-422_TX_A', 'RS-422_TX_B', 'RS-422_RX_A', 'RS-422_RX_B'], optional: ['RS-422_Gnd'] },
+    'RS485':       { prefix: 'RS485_',       connTypes: ['RS-485'],           count: 3, protocols: ['RS-485_A', 'RS-485_B', 'RS-485_Gnd'], required: ['RS-485_A', 'RS-485_B'], optional: ['RS-485_Gnd'] },
+    'ETH100':      { prefix: 'ETH100_',      connTypes: ['以太网（百兆）'],    count: 5, protocols: ['ETH_TX+', 'ETH_TX-', 'ETH_RX+', 'ETH_RX-', 'ETH_Gnd'], required: ['ETH_TX+', 'ETH_TX-', 'ETH_RX+', 'ETH_RX-'], optional: ['ETH_Gnd'] },
+    'ETH1000':     { prefix: 'ETH1000_',     connTypes: ['以太网（千兆）'],    count: 9, protocols: ['ETH_A+', 'ETH_A-', 'ETH_B+', 'ETH_B-', 'ETH_C+', 'ETH_C-', 'ETH_D+', 'ETH_D-', 'ETH_Gnd'], required: ['ETH_A+', 'ETH_A-', 'ETH_B+', 'ETH_B-', 'ETH_C+', 'ETH_C-', 'ETH_D+', 'ETH_D-'], optional: ['ETH_Gnd'] },
+    'ANLG_2S':     { prefix: 'ANLG_2S_',     connTypes: ['模拟量'],            count: 2, protocols: ['模拟量A', '模拟量B'] },
+    'ANLG_3S':     { prefix: 'ANLG_3S_',     connTypes: ['模拟量'],            count: 3, protocols: ['模拟量A', '模拟量B', '模拟量C'] },
+    'PWR_LV':      { prefix: 'PWR_LV_',      connTypes: ['电源（低压）'],      count: 2, protocols: ['电源（低压）正极', '电源（低压）负极'] },
+    'PWR_HV':      { prefix: 'PWR_HV_',      connTypes: ['电源（高压）'],      count: 2, protocols: ['电源（高压）正极', '电源（高压）负极'] },
+    '三相电_LV':   { prefix: '三相电_',       connTypes: ['电源（低压）'],      count: 3, protocols: ['电源（低压）正极', '电源（低压）负极', '电源（低压）Gnd'] },
+    '三相电_HV':   { prefix: '三相电_',       connTypes: ['电源（高压）'],      count: 3, protocols: ['电源（高压）正极', '电源（高压）负极', '电源（高压）Gnd'] },
   };
+
+  // 根据连接类型+协议标识组合查找最匹配的分组定义
+  function findBestGroupDef(connType: string, protocols: string[]): { name: string; def: GroupDef } | null {
+    for (const [name, def] of Object.entries(SIGNAL_GROUP_DEFS)) {
+      if (!def.connTypes.includes(connType)) continue;
+      const defRequired = def.required || def.protocols;
+      const defAll = def.protocols;
+      if (protocols.length < defRequired.length || protocols.length > defAll.length) continue;
+      const hasAllRequired = defRequired.every(p => protocols.includes(p));
+      const noExtra = protocols.every(p => defAll.includes(p));
+      if (hasAllRequired && noExtra) return { name, def };
+    }
+    return null;
+  }
 
   // ── 自动赋值绞线组 ──────────────────────────────────────────
   async function autoAssignTwistGroup(groupName: string, projectId: number) {
@@ -1534,30 +1555,17 @@ export function signalRoutes(db: Database) {
       }
 
       const connType = connTypes[0];
-      const groupDef = SIGNAL_GROUP_DEFS[connType];
-      if (!groupDef) {
-        return res.status(400).json({ error: `连接类型"${connType}"不支持信号分组` });
+      const protocols = signals.map((s: any) => s['协议标识']).filter((p: string) => p);
+      const match = findBestGroupDef(connType, protocols);
+      if (!match) {
+        const available = Object.values(SIGNAL_GROUP_DEFS).filter(d => d.connTypes.includes(connType));
+        if (available.length === 0) {
+          return res.status(400).json({ error: `连接类型"${connType}"不支持信号分组` });
+        }
+        const options = available.map(d => `${d.protocols.join(' + ')}（${(d.required || d.protocols).length}${d.optional ? '~' + d.protocols.length : ''}条）`).join('；\n');
+        return res.status(400).json({ error: `所选信号的协议标识组合不匹配任何分组规则。\n连接类型"${connType}"支持的分组：\n${options}` });
       }
-
-      // 检查：信号数量（支持可选协议标识时，数量在 required.length ~ protocols.length 之间）
-      const requiredProtos = groupDef.required || groupDef.protocols;
-      const allProtos = groupDef.protocols;
-      const minCount = requiredProtos.length;
-      const maxCount = allProtos.length;
-      if (signals.length < minCount || signals.length > maxCount) {
-        return res.status(400).json({ error: `${connType} 组需要 ${minCount === maxCount ? minCount : minCount + '~' + maxCount} 条信号，当前选择了 ${signals.length} 条` });
-      }
-
-      // 检查：协议标识完整性（必须包含所有 required，不能有 allProtos 之外的）
-      const protocols = signals.map((s: any) => s['协议标识']);
-      const missingRequired = requiredProtos.filter(p => !protocols.includes(p));
-      const extra = protocols.filter((p: string) => !allProtos.includes(p));
-      if (missingRequired.length > 0 || extra.length > 0) {
-        let msg = `${connType} 组的协议标识要求：必须包含 ${requiredProtos.join('、')}${groupDef.optional ? `，可选 ${groupDef.optional.join('、')}` : ''}。`;
-        if (missingRequired.length > 0) msg += `\n缺少：${missingRequired.join('、')}`;
-        if (extra.length > 0) msg += `\n多余：${extra.join('、')}`;
-        return res.status(400).json({ error: msg });
-      }
+      const groupDef = match.def;
 
       // 生成编号：查当前项目最大编号
       const existing = await db.query(

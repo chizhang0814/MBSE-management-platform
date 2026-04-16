@@ -3201,15 +3201,20 @@ export default function ProjectDataView() {
         // 同组信号排序挨着：组的位置由组内首条信号决定，组内按协议标识固定顺序
         const GROUP_PROTOCOL_ORDER: Record<string, string[]> = {
           'A_429_': ['A429_Positive', 'A429_Negative'],
+          'A_453_': ['A453_Positive', 'A453_Negative'],
+          'ANLG_2S_': ['模拟量A', '模拟量B'],
+          'ANLG_3S_': ['模拟量A', '模拟量B', '模拟量C'],
           'CAN_Bus_': ['CAN_High', 'CAN_Low', 'CAN_Gnd'],
+          'Discrete_2S_': ['Positive_+', 'Negative_-'],
+          'ETH100_': ['ETH_TX+', 'ETH_TX-', 'ETH_RX+', 'ETH_RX-', 'ETH_Gnd'],
+          'ETH1000_': ['ETH_A+', 'ETH_A-', 'ETH_B+', 'ETH_B-', 'ETH_C+', 'ETH_C-', 'ETH_D+', 'ETH_D-', 'ETH_Gnd'],
+          'HDMI_': ['HDMI_A+', 'HDMI_A-', 'HDMI_B+', 'HDMI_B-'],
           'PWR_LV_': ['电源（低压）正极', '电源（低压）负极'],
           'PWR_HV_': ['电源（高压）正极', '电源（高压）负极'],
           'RS422_F_': ['RS-422_TX_A', 'RS-422_TX_B', 'RS-422_RX_A', 'RS-422_RX_B', 'RS-422_Gnd'],
           'RS422_': ['RS-422_A', 'RS-422_B', 'RS-422_Gnd'],
           'RS485_': ['RS-485_A', 'RS-485_B', 'RS-485_Gnd'],
-          'ETH100_': ['ETH_TX+', 'ETH_TX-', 'ETH_RX+', 'ETH_RX-', 'ETH_Gnd'],
-          'ETH1000_': ['ETH_A+', 'ETH_A-', 'ETH_B+', 'ETH_B-', 'ETH_C+', 'ETH_C-', 'ETH_D+', 'ETH_D-', 'ETH_Gnd'],
-          'HDMI_': ['HDMI_A+', 'HDMI_A-', 'HDMI_B+', 'HDMI_B-'],
+          '三相电_': ['电源（低压）正极', '电源（低压）负极', '电源（低压）Gnd', '电源（高压）正极', '电源（高压）负极', '电源（高压）Gnd'],
         };
         const reorderedSignals = (() => {
           const grouped = new Map<string, typeof filteredSignals>();
@@ -3300,8 +3305,13 @@ export default function ProjectDataView() {
                     <option value="">全部</option>
                     <option value="_grouped">已分组</option>
                     <option value="_ungrouped">未分组</option>
-                    {(['A_429_','CAN_Bus_','ETH100_','ETH1000_','HDMI_','PWR_HV_','PWR_LV_','RS422_','RS422_F_','RS485_'] as const).map(p =>
-                      <option key={p} value={p}>{p.replace(/_$/, '')}</option>
+                    {([
+                      ['A_429_','#818cf8'],['A_453_','#6366f1'],['ANLG_2S_','#fb923c'],['ANLG_3S_','#fb923c'],
+                      ['CAN_Bus_','#f59e0b'],['Discrete_2S_','#9ca3af'],['ETH100_','#22c55e'],['ETH1000_','#0ea5e9'],
+                      ['HDMI_','#ec4899'],['PWR_HV_','#dc2626'],['PWR_LV_','#ef4444'],['RS422_','#a78bfa'],
+                      ['RS422_F_','#8b5cf6'],['RS485_','#14b8a6'],['三相电_','#b91c1c'],
+                    ] as const).map(([p, c]) =>
+                      <option key={p} value={p} style={{color: c}}>{p.replace(/_$/, '')}</option>
                     )}
                   </select>
                 </th>
@@ -3427,7 +3437,7 @@ export default function ProjectDataView() {
                       ))) + ' cursor-pointer'}
                       style={groupInfo && !hasTodo(signal) && !isExpanded ? (() => {
                         const gn = (signal as any).signal_group || '';
-                        const bgMap: Record<string, string> = {'A_429_':'rgba(129,140,248,0.08)','CAN_Bus_':'rgba(245,158,11,0.08)','PWR_LV_':'rgba(239,68,68,0.06)','PWR_HV_':'rgba(220,38,38,0.06)','RS422_F_':'rgba(139,92,246,0.08)','RS422_':'rgba(167,139,250,0.08)','RS485_':'rgba(20,184,166,0.08)','ETH100_':'rgba(34,197,94,0.08)','ETH1000_':'rgba(14,165,233,0.08)'};
+                        const bgMap: Record<string, string> = {'A_429_':'rgba(129,140,248,0.08)','A_453_':'rgba(99,102,241,0.08)','ANLG_2S_':'rgba(251,146,60,0.08)','ANLG_3S_':'rgba(251,146,60,0.08)','CAN_Bus_':'rgba(245,158,11,0.08)','Discrete_2S_':'rgba(156,163,175,0.08)','ETH100_':'rgba(34,197,94,0.08)','ETH1000_':'rgba(14,165,233,0.08)','HDMI_':'rgba(236,72,153,0.08)','PWR_LV_':'rgba(239,68,68,0.06)','PWR_HV_':'rgba(220,38,38,0.06)','RS422_F_':'rgba(139,92,246,0.08)','RS422_':'rgba(167,139,250,0.08)','RS485_':'rgba(20,184,166,0.08)','三相电_':'rgba(185,28,28,0.08)'};
                         const gp = Object.keys(bgMap).find(p => gn.startsWith(p));
                         return gp ? { backgroundColor: bgMap[gp] } : undefined;
                       })() : undefined}
@@ -3443,8 +3453,8 @@ export default function ProjectDataView() {
                       {/* 组名列：每行都渲染色条，首行显示组名 */}
                       {(() => {
                         const gn = (signal as any).signal_group || '';
-                        const colorMap: Record<string, string> = {'A_429_':'#818cf8','CAN_Bus_':'#f59e0b','PWR_LV_':'#ef4444','PWR_HV_':'#dc2626','RS422_F_':'#8b5cf6','RS422_':'#a78bfa','RS485_':'#14b8a6','ETH100_':'#22c55e','ETH1000_':'#0ea5e9'};
-                        const textColorMap: Record<string, string> = {'A_429_':'#4f46e5','CAN_Bus_':'#b45309','PWR_LV_':'#dc2626','PWR_HV_':'#991b1b','RS422_F_':'#7c3aed','RS422_':'#6d28d9','RS485_':'#0f766e','ETH100_':'#15803d','ETH1000_':'#0369a1'};
+                        const colorMap: Record<string, string> = {'A_429_':'#818cf8','A_453_':'#6366f1','ANLG_2S_':'#fb923c','ANLG_3S_':'#fb923c','CAN_Bus_':'#f59e0b','Discrete_2S_':'#9ca3af','ETH100_':'#22c55e','ETH1000_':'#0ea5e9','HDMI_':'#ec4899','PWR_LV_':'#ef4444','PWR_HV_':'#dc2626','RS422_F_':'#8b5cf6','RS422_':'#a78bfa','RS485_':'#14b8a6','三相电_':'#b91c1c'};
+                        const textColorMap: Record<string, string> = {'A_429_':'#4f46e5','A_453_':'#4338ca','ANLG_2S_':'#ea580c','ANLG_3S_':'#ea580c','CAN_Bus_':'#b45309','Discrete_2S_':'#6b7280','ETH100_':'#15803d','ETH1000_':'#0369a1','HDMI_':'#be185d','PWR_LV_':'#dc2626','PWR_HV_':'#991b1b','RS422_F_':'#7c3aed','RS422_':'#6d28d9','RS485_':'#0f766e','三相电_':'#7f1d1d'};
                         if (!groupInfo) return <td className="p-0 w-6"></td>;
                         const gp = gn ? Object.keys(colorMap).find(p => gn.startsWith(p)) : null;
                         const barColor = gp ? colorMap[gp] : '#818cf8';
@@ -3480,7 +3490,7 @@ export default function ProjectDataView() {
                               <button
                                 data-group-label
                                 className="font-mono whitespace-nowrap hover:opacity-70 absolute left-0 right-0 top-0 flex items-center justify-center z-[1]"
-                                style={{ color: textColor, fontSize: '9px', writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
+                                style={{ color: textColor, fontSize: '9px', writingMode: 'vertical-rl', textOrientation: 'sideways', transform: 'rotate(180deg)' }}
                                 title="点击解散该信号组"
                                 onClick={async (e) => {
                                   e.stopPropagation();
@@ -3671,7 +3681,7 @@ export default function ProjectDataView() {
                         <tr key={signal.id + '-approval'}>
                           {groupInfo && (() => {
                             const gn = (signal as any).signal_group || '';
-                            const colorMap: Record<string, string> = {'A_429_':'#818cf8','CAN_Bus_':'#f59e0b','PWR_LV_':'#ef4444','PWR_HV_':'#dc2626','RS422_F_':'#8b5cf6','RS422_':'#a78bfa','RS485_':'#14b8a6','ETH100_':'#22c55e','ETH1000_':'#0ea5e9'};
+                            const colorMap: Record<string, string> = {'A_429_':'#818cf8','A_453_':'#6366f1','ANLG_2S_':'#fb923c','ANLG_3S_':'#fb923c','CAN_Bus_':'#f59e0b','Discrete_2S_':'#9ca3af','ETH100_':'#22c55e','ETH1000_':'#0ea5e9','HDMI_':'#ec4899','PWR_LV_':'#ef4444','PWR_HV_':'#dc2626','RS422_F_':'#8b5cf6','RS422_':'#a78bfa','RS485_':'#14b8a6','三相电_':'#b91c1c'};
                             const gp = gn ? Object.keys(colorMap).find(p => gn.startsWith(p)) : null;
                             return <td className="p-0 w-6 border-r-[3px]" style={{ borderRightColor: gp ? colorMap[gp] : '#818cf8' }}></td>;
                           })()}
@@ -3756,7 +3766,7 @@ export default function ProjectDataView() {
                       <tr key={signal.id + '-detail'}>
                         {groupInfo && (() => {
                           const gn = (signal as any).signal_group || '';
-                          const colorMap: Record<string, string> = {'A_429_':'#818cf8','CAN_Bus_':'#f59e0b','PWR_LV_':'#ef4444','PWR_HV_':'#dc2626','RS422_F_':'#8b5cf6','RS422_':'#a78bfa','RS485_':'#14b8a6','ETH100_':'#22c55e','ETH1000_':'#0ea5e9'};
+                          const colorMap: Record<string, string> = {'A_429_':'#818cf8','A_453_':'#6366f1','ANLG_2S_':'#fb923c','ANLG_3S_':'#fb923c','CAN_Bus_':'#f59e0b','Discrete_2S_':'#9ca3af','ETH100_':'#22c55e','ETH1000_':'#0ea5e9','HDMI_':'#ec4899','PWR_LV_':'#ef4444','PWR_HV_':'#dc2626','RS422_F_':'#8b5cf6','RS422_':'#a78bfa','RS485_':'#14b8a6','三相电_':'#b91c1c'};
                           const gp = gn ? Object.keys(colorMap).find(p => gn.startsWith(p)) : null;
                           return <td className="p-0 w-6 border-r-[3px]" style={{ borderRightColor: gp ? colorMap[gp] : '#818cf8' }}></td>;
                         })()}
@@ -5520,8 +5530,8 @@ export default function ProjectDataView() {
                     '以太网（百兆）': ['ETH_TX+', 'ETH_TX-', 'ETH_RX+', 'ETH_RX-', 'ETH_Gnd'],
                     '以太网（千兆）': ['ETH_A+', 'ETH_A-', 'ETH_B+', 'ETH_B-', 'ETH_C+', 'ETH_C-', 'ETH_D+', 'ETH_D-', 'ETH_Gnd'],
                     '模拟量': ['模拟量A', '模拟量B', '模拟量C'],
-                    '电源（低压）': ['电源（低压）正极', '电源（低压）负极'],
-                    '电源（高压）': ['电源（高压）正极', '电源（高压）负极'],
+                    '电源（低压）': ['电源（低压）正极', '电源（低压）负极', '电源（低压）Gnd'],
+                    '电源（高压）': ['电源（高压）正极', '电源（高压）负极', '电源（高压）Gnd'],
                   };
                   const show协议标识 = connType in PROTOCOL_CONN_TYPES;
                   return SIGNAL_FIELDS.filter(f => {
