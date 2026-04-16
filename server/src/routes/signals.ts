@@ -8,9 +8,9 @@ import {
 
 // 支持协议标识的连接类型集合
 const PROTOCOL_CONNECTION_TYPES = new Set([
-  'ARINC 429', 'CAN Bus', '电源（低压）', '电源（高压）',
-  'RS-422', 'RS-422（全双工）', 'RS-485', '以太网（百兆）', '以太网（千兆）',
-  'HDMI',
+  'ARINC 429', 'ARINC 453', 'CAN Bus', 'Discrete', 'HDMI',
+  'RS-422', 'RS-422（全双工）', 'RS-485',
+  '以太网（百兆）', '以太网（千兆）', '模拟量', '电源（低压）', '电源（高压）',
 ]);
 
 export function signalRoutes(db: Database) {

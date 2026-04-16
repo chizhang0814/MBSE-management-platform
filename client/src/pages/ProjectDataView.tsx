@@ -5506,19 +5506,22 @@ export default function ProjectDataView() {
                   const is信号线 = (signalForm as any)['线类型'] === '信号线';
                   const connType = (signalForm as any)['连接类型'] || '';
                   const POWER_CONN_TYPES = new Set(['电源（低压）', '电源（高压）']);
-                  const SIGNAL_CONN_TYPES = new Set(['ARINC 429', 'Discrete', 'CAN Bus', 'RS-422', 'RS-422（全双工）', 'RS-485', 'RS-232', '模拟量', '以太网（百兆）', '以太网（千兆）', '光纤', '射频', 'HDMI']);
+                  const SIGNAL_CONN_TYPES = new Set(['ARINC 429', 'ARINC 453', 'CAN Bus', 'Discrete', 'HDMI', 'RS-232', 'RS-422', 'RS-422（全双工）', 'RS-485', '光纤', '模拟量', '射频', '以太网（百兆）', '以太网（千兆）']);
                   const FREE_CONN_TYPES = new Set(['其他（在备注中说明）']);
                   const PROTOCOL_CONN_TYPES: Record<string, string[]> = {
                     'ARINC 429': ['A429_Positive', 'A429_Negative'],
+                    'ARINC 453': ['A453_Positive', 'A453_Negative'],
                     'CAN Bus': ['CAN_High', 'CAN_Low', 'CAN_Gnd'],
-                    '电源（低压）': ['电源（低压）正极', '电源（低压）负极'],
-                    '电源（高压）': ['电源（高压）正极', '电源（高压）负极'],
+                    'Discrete': ['Positive_+', 'Negative_-'],
+                    'HDMI': ['HDMI_A+', 'HDMI_A-', 'HDMI_B+', 'HDMI_B-'],
                     'RS-422': ['RS-422_A', 'RS-422_B', 'RS-422_Gnd'],
                     'RS-422（全双工）': ['RS-422_TX_A', 'RS-422_TX_B', 'RS-422_RX_A', 'RS-422_RX_B', 'RS-422_Gnd'],
                     'RS-485': ['RS-485_A', 'RS-485_B', 'RS-485_Gnd'],
                     '以太网（百兆）': ['ETH_TX+', 'ETH_TX-', 'ETH_RX+', 'ETH_RX-', 'ETH_Gnd'],
                     '以太网（千兆）': ['ETH_A+', 'ETH_A-', 'ETH_B+', 'ETH_B-', 'ETH_C+', 'ETH_C-', 'ETH_D+', 'ETH_D-', 'ETH_Gnd'],
-                    'HDMI': ['HDMI_A+', 'HDMI_A-', 'HDMI_B+', 'HDMI_B-'],
+                    '模拟量': ['模拟量A', '模拟量B', '模拟量C'],
+                    '电源（低压）': ['电源（低压）正极', '电源（低压）负极'],
+                    '电源（高压）': ['电源（高压）正极', '电源（高压）负极'],
                   };
                   const show协议标识 = connType in PROTOCOL_CONN_TYPES;
                   return SIGNAL_FIELDS.filter(f => {
@@ -5534,7 +5537,7 @@ export default function ProjectDataView() {
                       </label>
                       {f.key === '连接类型' ? (() => {
                         const curLineType = (signalForm as any)['线类型'] || '';
-                        const allConnTypes = ['ARINC 429', 'CAN Bus', 'Discrete', 'HDMI', 'RS-232', 'RS-422', 'RS-422（全双工）', 'RS-485', '光纤', '模拟量', '射频', '电源（低压）', '电源（高压）', '以太网（百兆）', '以太网（千兆）', '其他（在备注中说明）'];
+                        const allConnTypes = ['ARINC 429', 'ARINC 453', 'CAN Bus', 'Discrete', 'HDMI', 'RS-232', 'RS-422', 'RS-422（全双工）', 'RS-485', '光纤', '模拟量', '射频', '电源（低压）', '电源（高压）', '以太网（百兆）', '以太网（千兆）', '其他（在备注中说明）'];
                         const filteredConnTypes = curLineType === '功率线'
                           ? allConnTypes.filter(v => POWER_CONN_TYPES.has(v) || FREE_CONN_TYPES.has(v))
                           : curLineType === '信号线'
