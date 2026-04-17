@@ -3557,7 +3557,6 @@ export default function ProjectDataView() {
                               data-rhi-btn
                               className="absolute left-0 right-0 top-0 flex items-center justify-center z-[1] cursor-pointer hover:opacity-80"
                               style={{
-                                display: 'none', /* TODO: 恢复RHI功能时去掉此行 */
                                 writingMode: 'vertical-rl', textOrientation: 'upright', letterSpacing: '-1px', fontSize: '8px', fontWeight: 700,
                                 borderRadius: '9999px', margin: '2px auto', width: '16px',
                                 ...(rhiStatusMap[gn]?.ic_count > 0 || rhiStatusMap[gn]?.link_count > 0
@@ -4226,7 +4225,6 @@ export default function ProjectDataView() {
             <button
               onClick={() => setShowInterconnectModal(true)}
               className="ml-2 btn-secondary text-xs !px-3 !py-1"
-              style={{ display: 'none' }} /* TODO: 恢复RHI功能时去掉此行 */
             >
               互联点管理
             </button>
