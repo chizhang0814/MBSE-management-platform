@@ -1349,6 +1349,16 @@ export class Database {
       }
     } catch (e: any) { console.log('Migration: signal_edges:', e.message); }
 
+    // ── 清理重复 edge + UNIQUE 约束 ──
+    try {
+      const dupCount = await this.get(`SELECT COUNT(*) as cnt FROM signal_edges WHERE id NOT IN (SELECT MIN(id) FROM signal_edges GROUP BY signal_id, from_endpoint_id, to_endpoint_id)`);
+      if (dupCount?.cnt > 0) {
+        await this.run(`DELETE FROM signal_edges WHERE id NOT IN (SELECT MIN(id) FROM signal_edges GROUP BY signal_id, from_endpoint_id, to_endpoint_id)`);
+        console.log(`Database migration: 清理 ${dupCount.cnt} 条重复 signal_edges`);
+      }
+      await this.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_edge_unique ON signal_edges(signal_id, from_endpoint_id, to_endpoint_id)`);
+    } catch (e: any) { console.log('Migration: edge dedup/unique:', e.message); }
+
     // ── 信号分组列 + 连接类型重命名 ──
     try {
       const sigCols = await this.query('PRAGMA table_info(signals)');

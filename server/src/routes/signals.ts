@@ -30,6 +30,7 @@ export function signalRoutes(db: Database) {
       [signalId]
     );
 
+    await db.run('DELETE FROM signal_edges WHERE signal_id = ?', [signalId]);
     await db.run('DELETE FROM signal_endpoints WHERE signal_id = ?', [signalId]);
 
     const newEpByPin: Record<number, number> = {};

@@ -1253,16 +1253,22 @@ export function projectRoutes(db: Database) {
                     if (sep.pin_id) primaryPinSet.add(sep.pin_id);
                   }
 
-                  // 迁移次信号的 edges 到主信号（重映射 endpoint_id）
+                  // 迁移次信号的 edges 到主信号（重映射 endpoint_id，跳过已存在的）
                   const secEdges = await db.query('SELECT * FROM signal_edges WHERE signal_id = ?', [secId]);
                   for (const edge of secEdges) {
                     const newFrom = secEpIdMap[edge.from_endpoint_id];
                     const newTo = secEpIdMap[edge.to_endpoint_id];
                     if (newFrom && newTo) {
-                      await db.run(
-                        `INSERT INTO signal_edges (signal_id, from_endpoint_id, to_endpoint_id, direction, source_info) VALUES (?, ?, ?, ?, ?)`,
-                        [primaryId, newFrom, newTo, edge.direction, edge.source_info]
+                      const exists = await db.get(
+                        'SELECT id FROM signal_edges WHERE signal_id = ? AND from_endpoint_id = ? AND to_endpoint_id = ?',
+                        [primaryId, newFrom, newTo]
                       );
+                      if (!exists) {
+                        await db.run(
+                          `INSERT INTO signal_edges (signal_id, from_endpoint_id, to_endpoint_id, direction, source_info) VALUES (?, ?, ?, ?, ?)`,
+                          [primaryId, newFrom, newTo, edge.direction, edge.source_info]
+                        );
+                      }
                     }
                   }
 
@@ -1311,14 +1317,20 @@ export function projectRoutes(db: Database) {
                   addedEps.push(`${ep.devNum}/${ep.compId}/${ep.pinNum}`);
                 }
 
-                // 为本行导入的端点对创建 edge（from → to）
+                // 为本行导入的端点对创建 edge（from → to，跳过已存在的）
                 if (mergeNewEpIds.length >= 2) {
                   const dirRaw = getV(row, '信号方向（从）').toUpperCase();
                   const direction = dirRaw.includes('BI') ? 'bidirectional' : 'directed';
-                  await db.run(
-                    `INSERT INTO signal_edges (signal_id, from_endpoint_id, to_endpoint_id, direction, source_info) VALUES (?, ?, ?, ?, ?)`,
-                    [primaryId, mergeNewEpIds[0], mergeNewEpIds[1], direction, `${originalName} / ${sigSheetName} / 第${rowNum}行`]
+                  const edgeExists = await db.get(
+                    'SELECT id FROM signal_edges WHERE signal_id = ? AND from_endpoint_id = ? AND to_endpoint_id = ?',
+                    [primaryId, mergeNewEpIds[0], mergeNewEpIds[1]]
                   );
+                  if (!edgeExists) {
+                    await db.run(
+                      `INSERT INTO signal_edges (signal_id, from_endpoint_id, to_endpoint_id, direction, source_info) VALUES (?, ?, ?, ?, ?)`,
+                      [primaryId, mergeNewEpIds[0], mergeNewEpIds[1], direction, `${originalName} / ${sigSheetName} / 第${rowNum}行`]
+                    );
+                  }
                 }
 
                 // 拼接新记录的 unique_id
