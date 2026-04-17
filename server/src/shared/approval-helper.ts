@@ -60,12 +60,38 @@ export async function getProjectRoleMembers(db: Database, projectId: number, rol
   return result;
 }
 
+// ── 设备冻结检查 ──────────────────────────────────────────────────────────────
+
+/** 检查设备是否已冻结 */
+export async function isDeviceFrozen(db: Database, deviceId: number): Promise<boolean> {
+  const d = await db.get('SELECT status FROM devices WHERE id = ?', [deviceId]);
+  return d?.status === 'Frozen';
+}
+
+/** 检查信号是否关联了冻结设备（返回冻结设备编号列表，无则返回空数组） */
+export async function getFrozenDevicesForSignal(db: Database, signalId: number): Promise<string[]> {
+  const rows = await db.query(
+    `SELECT DISTINCT d."设备编号" FROM signal_endpoints se
+     JOIN devices d ON se.device_id = d.id
+     WHERE se.signal_id = ? AND d.status = 'Frozen'`,
+    [signalId]
+  );
+  return rows.map((r: any) => r['设备编号']);
+}
+
 // ── 设备校验（审批通过后重跑，同步更新 validation_errors）────────────────────
 
 export const SPECIAL_ERN_LIN = '8800G0000';
 
 /** 检查 pin 是否属于待删除审批中的设备或连接器 */
 export async function isPinFrozen(db: Database, pinId: number): Promise<string | null> {
+  // 0. 检查所属设备是否已冻结（最高优先级）
+  const frozenDev = await db.get(
+    `SELECT d.status, d."设备编号" FROM pins p JOIN connectors c ON p.connector_id = c.id JOIN devices d ON c.device_id = d.id WHERE p.id = ?`,
+    [pinId]
+  );
+  if (frozenDev?.status === 'Frozen') return `所属设备「${frozenDev['设备编号']}」已冻结，不可操作`;
+
   // 1. 检查连接器是否 Pending 删除
   const connDel = await db.get(
     `SELECT ar.id FROM approval_requests ar
@@ -439,6 +465,56 @@ export async function checkAndAdvancePhase(db: Database, approvalRequestId: numb
     [approvalRequestId]
   );
   if ((doneApproval?.cnt ?? 0) === 0) return; // 还没有人通过
+
+  // ── 冻结二次检查：审批通过生效前，检查相关设备是否已冻结 ──
+  if (req.entity_type === 'device' || req.entity_type === 'connector' || req.entity_type === 'pin') {
+    // 设备/连接器/针孔操作：检查所属设备是否已冻结
+    let checkDeviceId: number | null = null;
+    if (req.entity_type === 'device') checkDeviceId = req.entity_id;
+    else if (req.entity_type === 'connector') {
+      const c = await db.get('SELECT device_id FROM connectors WHERE id = ?', [req.entity_id]);
+      checkDeviceId = c?.device_id;
+    } else if (req.entity_type === 'pin') {
+      const p = await db.get('SELECT d.id as device_id FROM pins p JOIN connectors c ON p.connector_id = c.id JOIN devices d ON c.device_id = d.id WHERE p.id = ?', [req.entity_id]);
+      checkDeviceId = p?.device_id;
+    }
+    if (checkDeviceId && await isDeviceFrozen(db, checkDeviceId)) {
+      // 设备已冻结，拒绝生效：回滚审批状态
+      await db.run(`UPDATE approval_requests SET status = 'rejected', rejected_by_username = 'SYSTEM', rejected_at = CURRENT_TIMESTAMP WHERE id = ?`, [approvalRequestId]);
+      // 取消所有审批项
+      await db.run(`UPDATE approval_items SET status = 'cancelled' WHERE approval_request_id = ? AND status IN ('pending','done')`, [approvalRequestId]);
+      // 恢复实体状态
+      const entityTable = req.entity_type === 'device' ? 'devices' : req.entity_type === 'connector' ? 'connectors' : 'pins';
+      const oldData = (() => { try { return JSON.parse(req.old_payload || '{}'); } catch { return {}; } })();
+      const originalStatus = oldData.status || 'normal';
+      await db.run(`UPDATE ${entityTable} SET status = ? WHERE id = ?`, [originalStatus, req.entity_id]);
+      // 通知请求人
+      const entDesc = await getEntityDescription(db, req.entity_type, req.entity_id);
+      await db.run(
+        `INSERT INTO notifications (recipient_username, type, title, message) VALUES (?, 'approval_rejected', ?, ?)`,
+        [req.requester_username, `审批被系统拒绝：设备已冻结`, `${entDesc}的审批已通过，但因所属设备已被冻结，操作无法生效。请联系总体组解冻后重新提交。`]
+      );
+      return;
+    }
+  } else if (req.entity_type === 'signal') {
+    // 信号操作：检查是否涉及冻结设备
+    if (req.action_type === 'delete_signal') {
+      const frozenDevs = await getFrozenDevicesForSignal(db, req.entity_id);
+      if (frozenDevs.length > 0) {
+        await db.run(`UPDATE approval_requests SET status = 'rejected', rejected_by_username = 'SYSTEM', rejected_at = CURRENT_TIMESTAMP WHERE id = ?`, [approvalRequestId]);
+        await db.run(`UPDATE approval_items SET status = 'cancelled' WHERE approval_request_id = ? AND status IN ('pending','done')`, [approvalRequestId]);
+        const oldData = (() => { try { return JSON.parse(req.old_payload || '{}'); } catch { return {}; } })();
+        await db.run(`UPDATE signals SET status = ? WHERE id = ?`, [oldData.status || 'Active', req.entity_id]);
+        const entDesc = await getEntityDescription(db, 'signal', req.entity_id);
+        await db.run(
+          `INSERT INTO notifications (recipient_username, type, title, message) VALUES (?, 'approval_rejected', ?, ?)`,
+          [req.requester_username, `审批被系统拒绝：关联设备已冻结`, `${entDesc}的删除审批已通过，但因关联设备「${frozenDevs.join('、')}」已冻结，操作无法生效。`]
+        );
+        return;
+      }
+    }
+    // edit_signal 涉及冻结设备端点的检查：在信号编辑的 payload 对比中已做拦截，此处不重复
+  }
 
   // 取消其他未处理的审批项
   await db.run(

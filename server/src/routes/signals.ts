@@ -4,6 +4,7 @@ import { authenticate, AuthRequest } from '../middleware/auth.js';
 import {
   isZontiRenyuan, isDeviceManager, isEwisAdmin, getProjectRoleMembers,
   submitChangeRequest, checkAndAdvancePhase, ApprovalItemSpec, SPECIAL_ERN_LIN, isPinFrozen,
+  isDeviceFrozen, getFrozenDevicesForSignal,
 } from '../shared/approval-helper.js';
 
 // 支持协议标识的连接类型集合
@@ -492,9 +493,9 @@ export function signalRoutes(db: Database) {
         groups: groups.map((g: any) => ({
           name: g.signal_group,
           conn_type: g.conn_type,
-          signal_ids: g.signal_ids.split(',').map(Number),
-          unique_ids: g.unique_ids.split(','),
-          protocols: g.protocols.split(','),
+          signal_ids: g.signal_ids ? g.signal_ids.split(',').map(Number) : [],
+          unique_ids: g.unique_ids ? g.unique_ids.split(',') : [],
+          protocols: g.protocols ? g.protocols.split(',') : [],
         })),
         group_defs: SIGNAL_GROUP_DEFS,
       });
@@ -639,6 +640,14 @@ export function signalRoutes(db: Database) {
       }
 
       const newPinIds = resolved.filter(r => r.pinId !== null).map(r => r.pinId!);
+
+      // ── 检查端点设备是否已冻结 ─────────────────────
+      for (const { deviceId } of resolved) {
+        if (await isDeviceFrozen(db, deviceId)) {
+          const d = await db.get('SELECT "设备编号" FROM devices WHERE id = ?', [deviceId]);
+          return res.status(403).json({ error: `设备「${d?.['设备编号']}」已冻结，不可创建包含该设备的信号` });
+        }
+      }
 
       // ── 检查是否有端点被冻结（待删除审批中）─────────
       for (const { pinId } of resolved) {
@@ -962,6 +971,54 @@ export function signalRoutes(db: Database) {
         }
       }
 
+      // ── 冻结检查（信号编辑）─────────────────────────────────
+      const frozenDevs = await getFrozenDevicesForSignal(db, signalId);
+      if (frozenDevs.length > 0 && Array.isArray(endpoints)) {
+        // 信号关联冻结设备：检查端点变更是否涉及冻结侧
+        const oldEndpoints = await db.query(
+          `SELECT se.*, d.id as dev_id, d.status as dev_status, d."设备编号" as dev_num
+           FROM signal_endpoints se JOIN devices d ON se.device_id = d.id
+           WHERE se.signal_id = ? ORDER BY se.endpoint_index`, [signalId]
+        );
+        const frozenOldEps = oldEndpoints.filter((e: any) => e.dev_status === 'Frozen');
+
+        // 不允许删除任何端点（保护拓扑完整）
+        const oldDevPinKeys = new Set(oldEndpoints.map((e: any) => `${e.dev_id}:${e.pin_id}`));
+        const newDevPinKeys = new Set<string>();
+        for (const ep of endpoints) {
+          if (ep.device_id && ep.pin_id) newDevPinKeys.add(`${ep.device_id}:${ep.pin_id}`);
+          // 也可能用 设备编号+针孔号 定位
+          if (ep['设备编号'] && ep['针孔号']) {
+            const d = await db.get('SELECT id FROM devices WHERE project_id = ? AND "设备编号" = ?', [signal.project_id, ep['设备编号']]);
+            const p = await db.get('SELECT p.id FROM pins p JOIN connectors c ON p.connector_id = c.id WHERE c.device_id = ? AND c."设备端元器件编号" = ? AND p."针孔号" = ?',
+              [d?.id, ep['设备端元器件编号'], ep['针孔号']]);
+            if (d && p) newDevPinKeys.add(`${d.id}:${p.id}`);
+          }
+        }
+        for (const oldEp of frozenOldEps) {
+          const key = `${oldEp.dev_id}:${oldEp.pin_id}`;
+          if (!newDevPinKeys.has(key)) {
+            return res.status(403).json({ error: `不可删除冻结设备「${oldEp.dev_num}」的端点` });
+          }
+        }
+
+        // 冻结设备的端点字段不允许修改
+        for (const ep of endpoints) {
+          const devId = ep.device_id || (await db.get('SELECT id FROM devices WHERE project_id = ? AND "设备编号" = ?', [signal.project_id, ep['设备编号']]))?.id;
+          if (devId && await isDeviceFrozen(db, devId)) {
+            const oldEp = frozenOldEps.find((e: any) => e.dev_id === devId);
+            if (oldEp) {
+              if ((ep['信号名称'] !== undefined && ep['信号名称'] !== oldEp['信号名称']) ||
+                  (ep['信号定义'] !== undefined && ep['信号定义'] !== oldEp['信号定义']) ||
+                  (ep.pin_id !== undefined && ep.pin_id !== oldEp.pin_id)) {
+                const d = await db.get('SELECT "设备编号" FROM devices WHERE id = ?', [devId]);
+                return res.status(403).json({ error: `冻结设备「${d?.['设备编号']}」侧的端点不可修改` });
+              }
+            }
+          }
+        }
+      }
+
       // 仅 admin 直接更新不走审批
       const isPrivilegedRole = role === 'admin';
 
@@ -1233,6 +1290,12 @@ export function signalRoutes(db: Database) {
       const signal = await db.get('SELECT * FROM signals WHERE id = ?', [signalId]);
       if (!signal) return res.status(404).json({ error: '信号不存在' });
 
+      // 冻结检查：关联冻结设备的信号不可删除
+      const frozenDevs = await getFrozenDevicesForSignal(db, signalId);
+      if (frozenDevs.length > 0) {
+        return res.status(403).json({ error: `信号关联的设备「${frozenDevs.join('、')}」已冻结，不可删除` });
+      }
+
       const username = req.user!.username;
       const role = req.user!.role;
 
@@ -1462,7 +1525,7 @@ export function signalRoutes(db: Database) {
     'A_453':       { prefix: 'A_453_',       connTypes: ['ARINC 453'],        count: 2, protocols: ['A453_Positive', 'A453_Negative'] },
     'CAN_Bus':     { prefix: 'CAN_Bus_',     connTypes: ['CAN Bus'],          count: 3, protocols: ['CAN_High', 'CAN_Low', 'CAN_Gnd'], required: ['CAN_High', 'CAN_Low'], optional: ['CAN_Gnd'] },
     'Discrete_2S': { prefix: 'Discrete_2S_', connTypes: ['Discrete'],         count: 2, protocols: ['Positive_+', 'Negative_-'] },
-    'HDMI':        { prefix: 'HDMI_',        connTypes: ['HDMI'],             count: 4, protocols: ['HDMI_A+', 'HDMI_A-', 'HDMI_B+', 'HDMI_B-'] },
+    'HDMI':        { prefix: 'HDMI_',        connTypes: ['HDMI'],             count: 8, protocols: ['HDMI_A+', 'HDMI_A-', 'HDMI_B+', 'HDMI_B-', 'HDMI_C+', 'HDMI_C-', 'HDMI_D+', 'HDMI_D-'] },
     'RS422':       { prefix: 'RS422_',       connTypes: ['RS-422'],           count: 3, protocols: ['RS-422_A', 'RS-422_B', 'RS-422_Gnd'], required: ['RS-422_A', 'RS-422_B'], optional: ['RS-422_Gnd'] },
     'RS422_F':     { prefix: 'RS422_F_',     connTypes: ['RS-422（全双工）'],  count: 5, protocols: ['RS-422_TX_A', 'RS-422_TX_B', 'RS-422_RX_A', 'RS-422_RX_B', 'RS-422_Gnd'], required: ['RS-422_TX_A', 'RS-422_TX_B', 'RS-422_RX_A', 'RS-422_RX_B'], optional: ['RS-422_Gnd'] },
     'RS485':       { prefix: 'RS485_',       connTypes: ['RS-485'],           count: 3, protocols: ['RS-485_A', 'RS-485_B', 'RS-485_Gnd'], required: ['RS-485_A', 'RS-485_B'], optional: ['RS-485_Gnd'] },

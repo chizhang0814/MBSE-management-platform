@@ -6,9 +6,9 @@ import fs from 'fs';
 import { Database } from '../database.js';
 import { authenticate, requireRole, AuthRequest } from '../middleware/auth.js';
 import {
-  isZontiRenyuan, isDeviceManager, getProjectRoleMembers,
+  isZontiRenyuan, isZontiApprover, isDeviceManager, getProjectRoleMembers,
   submitChangeRequest, ApprovalItemSpec, SPECIAL_ERN_LIN, cascadeDeletePinShared, isPinFrozen,
-  renameConnectorsForLINChange,
+  renameConnectorsForLINChange, isDeviceFrozen,
 } from '../shared/approval-helper.js';
 import { validateConnectorCompId } from '../shared/column-schema.js';
 
@@ -630,6 +630,105 @@ export function deviceRoutes(db: Database) {
     }
   });
 
+  // ── POST /api/devices/:id/freeze — 冻结设备 ────────────────
+  router.post('/:id/freeze', authenticate, async (req: AuthRequest, res) => {
+    try {
+      const deviceId = parseInt(req.params.id);
+      const device = await db.get('SELECT * FROM devices WHERE id = ?', [deviceId]);
+      if (!device) return res.status(404).json({ error: '设备不存在' });
+
+      // 权限检查：admin 或 总体组
+      const role = req.user!.role;
+      const username = req.user!.username;
+      if (role !== 'admin' && !await isZontiRenyuan(db, username, device.project_id)) {
+        return res.status(403).json({ error: '无权限，需要管理员或总体组角色' });
+      }
+
+      // 前置条件1: 设备 status = 'normal'
+      if (device.status !== 'normal') {
+        return res.status(400).json({ error: `设备当前状态为「${device.status}」，只有normal状态可以冻结` });
+      }
+
+      // 前置条件2: 所有连接器 status = 'normal'
+      const badConn = await db.get(
+        `SELECT c."设备端元器件编号", c.status FROM connectors c WHERE c.device_id = ? AND c.status != 'normal'`,
+        [deviceId]
+      );
+      if (badConn) return res.status(400).json({ error: `连接器「${badConn['设备端元器件编号']}」状态为${badConn.status}，无法冻结` });
+
+      // 前置条件3: 所有针孔 status = 'normal'
+      const badPin = await db.get(
+        `SELECT p."针孔号", p.status, c."设备端元器件编号" FROM pins p JOIN connectors c ON p.connector_id = c.id WHERE c.device_id = ? AND p.status != 'normal'`,
+        [deviceId]
+      );
+      if (badPin) return res.status(400).json({ error: `针孔「${badPin['设备端元器件编号']}-${badPin['针孔号']}」状态为${badPin.status}，无法冻结` });
+
+      // 前置条件4-6: 无 pending 审批请求（设备/连接器/针孔）
+      const pendingDevReq = await db.get(
+        `SELECT id FROM approval_requests WHERE entity_type = 'device' AND entity_id = ? AND status = 'pending'`, [deviceId]
+      );
+      if (pendingDevReq) return res.status(400).json({ error: '设备有待处理的审批请求，无法冻结' });
+
+      const pendingConnReq = await db.get(
+        `SELECT ar.id, c."设备端元器件编号" FROM approval_requests ar JOIN connectors c ON ar.entity_id = c.id WHERE ar.entity_type = 'connector' AND c.device_id = ? AND ar.status = 'pending'`,
+        [deviceId]
+      );
+      if (pendingConnReq) return res.status(400).json({ error: `连接器「${pendingConnReq['设备端元器件编号']}」有待处理的审批请求，无法冻结` });
+
+      const pendingPinReq = await db.get(
+        `SELECT ar.id, p."针孔号", c."设备端元器件编号" FROM approval_requests ar JOIN pins p ON ar.entity_id = p.id JOIN connectors c ON p.connector_id = c.id WHERE ar.entity_type = 'pin' AND c.device_id = ? AND ar.status = 'pending'`,
+        [deviceId]
+      );
+      if (pendingPinReq) return res.status(400).json({ error: `针孔「${pendingPinReq['设备端元器件编号']}-${pendingPinReq['针孔号']}」有待处理的审批请求，无法冻结` });
+
+      // 执行冻结
+      await db.run(`UPDATE devices SET status = 'Frozen', updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [deviceId]);
+
+      // 写 change_log
+      await db.run(
+        `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, reason, status)
+         VALUES ('devices', ?, ?, 'devices', ?, ?, 'approved')`,
+        [deviceId, deviceId, req.user!.id, `${username} 冻结设备「${device['设备编号']}」`]
+      );
+
+      res.json({ success: true, message: `设备「${device['设备编号']}」已冻结` });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || '冻结设备失败' });
+    }
+  });
+
+  // ── POST /api/devices/:id/unfreeze — 解冻设备 ──────────────
+  router.post('/:id/unfreeze', authenticate, async (req: AuthRequest, res) => {
+    try {
+      const deviceId = parseInt(req.params.id);
+      const device = await db.get('SELECT * FROM devices WHERE id = ?', [deviceId]);
+      if (!device) return res.status(404).json({ error: '设备不存在' });
+
+      const role = req.user!.role;
+      const username = req.user!.username;
+      if (role !== 'admin' && !await isZontiRenyuan(db, username, device.project_id)) {
+        return res.status(403).json({ error: '无权限，需要管理员或总体组角色' });
+      }
+
+      if (device.status !== 'Frozen') {
+        return res.status(400).json({ error: '设备当前未冻结' });
+      }
+
+      await db.run(`UPDATE devices SET status = 'normal', updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [deviceId]);
+
+      // 写 change_log
+      await db.run(
+        `INSERT INTO change_logs (entity_table, entity_id, data_id, table_name, changed_by, reason, status)
+         VALUES ('devices', ?, ?, 'devices', ?, ?, 'approved')`,
+        [deviceId, deviceId, req.user!.id, `${username} 解冻设备「${device['设备编号']}」`]
+      );
+
+      res.json({ success: true, message: `设备「${device['设备编号']}」已解冻` });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || '解冻设备失败' });
+    }
+  });
+
   // GET /api/devices/:id
   router.get('/:id', authenticate, async (req, res) => {
     try {
@@ -820,6 +919,9 @@ export function deviceRoutes(db: Database) {
       const deviceId = parseInt(req.params.id);
       const device = await db.get('SELECT * FROM devices WHERE id = ?', [deviceId]);
       if (!device) return res.status(404).json({ error: '设备不存在' });
+
+      // 冻结检查
+      if (device.status === 'Frozen') return res.status(403).json({ error: `设备「${device['设备编号']}」已冻结，不可编辑` });
 
       // 固有ERN设备仅admin可编辑
       const isERN = String(device['设备LIN号（DOORS）'] || '').trim() === SPECIAL_ERN_LIN;
@@ -1067,6 +1169,9 @@ export function deviceRoutes(db: Database) {
       const device = await db.get('SELECT * FROM devices WHERE id = ?', [deviceId]);
       if (!device) return res.status(404).json({ error: '设备不存在' });
 
+      // 冻结检查
+      if (device.status === 'Frozen') return res.status(403).json({ error: `设备「${device['设备编号']}」已冻结，不可删除` });
+
       const isERN = String(device['设备LIN号（DOORS）'] || '').trim() === SPECIAL_ERN_LIN;
       const username = req.user!.username;
       const role = req.user!.role;
@@ -1167,8 +1272,11 @@ export function deviceRoutes(db: Database) {
 
       const username = req.user!.username;
       const role = req.user!.role;
-      const devRow = await db.get('SELECT 设备负责人, project_id, "设备LIN号（DOORS）" as lin, "设备部件所属系统（4位ATA）" as ata FROM devices WHERE id = ?', [deviceId]);
+      const devRow = await db.get('SELECT 设备负责人, project_id, status, "设备LIN号（DOORS）" as lin, "设备部件所属系统（4位ATA）" as ata, "设备编号" FROM devices WHERE id = ?', [deviceId]);
       if (!devRow) return res.status(404).json({ error: '设备不存在' });
+
+      // 冻结检查
+      if (devRow.status === 'Frozen') return res.status(403).json({ error: `设备「${devRow['设备编号']}」已冻结，不可添加连接器` });
 
       const isAdmin = role === 'admin';
       // 固有ERN设备的连接器仅admin可操作
@@ -1271,8 +1379,9 @@ export function deviceRoutes(db: Database) {
       const connectorId = parseInt(req.params.id);
       const username = req.user!.username;
       const role = req.user!.role;
-      const devRow = await db.get('SELECT 设备负责人, project_id, "设备LIN号（DOORS）" as lin, "设备部件所属系统（4位ATA）" as ata FROM devices WHERE id = ?', [req.params.devId]);
+      const devRow = await db.get('SELECT 设备负责人, project_id, status, "设备LIN号（DOORS）" as lin, "设备部件所属系统（4位ATA）" as ata, "设备编号" FROM devices WHERE id = ?', [req.params.devId]);
       if (!devRow) return res.status(404).json({ error: '设备不存在' });
+      if (devRow.status === 'Frozen') return res.status(403).json({ error: `设备「${devRow['设备编号']}」已冻结，不可编辑连接器` });
 
       const isAdmin = role === 'admin';
       if (String(devRow.lin || '').trim() === SPECIAL_ERN_LIN && !isAdmin) {
@@ -1401,8 +1510,9 @@ export function deviceRoutes(db: Database) {
       const username = req.user!.username;
       const role = req.user!.role;
 
-      const devRow = await db.get('SELECT 设备负责人, project_id, "设备LIN号（DOORS）" as lin FROM devices WHERE id = ?', [req.params.devId]);
+      const devRow = await db.get('SELECT 设备负责人, project_id, status, "设备LIN号（DOORS）" as lin, "设备编号" FROM devices WHERE id = ?', [req.params.devId]);
       if (!devRow) return res.status(404).json({ error: '设备不存在' });
+      if (devRow.status === 'Frozen') return res.status(403).json({ error: `设备「${devRow['设备编号']}」已冻结，不可删除连接器` });
 
       const isAdmin = role === 'admin';
       if (String(devRow.lin || '').trim() === SPECIAL_ERN_LIN && !isAdmin) {
@@ -1475,8 +1585,9 @@ export function deviceRoutes(db: Database) {
 
       const username = req.user!.username;
       const role = req.user!.role;
-      const devRow = await db.get('SELECT 设备负责人, project_id, "设备LIN号（DOORS）" as lin FROM devices WHERE id = ?', [deviceId]);
+      const devRow = await db.get('SELECT 设备负责人, project_id, status, "设备LIN号（DOORS）" as lin, "设备编号" FROM devices WHERE id = ?', [deviceId]);
       if (!devRow) return res.status(404).json({ error: '设备不存在' });
+      if (devRow.status === 'Frozen') return res.status(403).json({ error: `设备「${devRow['设备编号']}」已冻结，不可合并连接器` });
 
       const isAdmin = role === 'admin';
       const isZonti = !isAdmin && await isZontiRenyuan(db, username, devRow.project_id);
@@ -1585,10 +1696,11 @@ export function deviceRoutes(db: Database) {
       const username = req.user!.username;
       const role = req.user!.role;
       const devRow = await db.get(
-        'SELECT d.设备负责人, d.project_id, d."设备LIN号（DOORS）" as lin FROM devices d JOIN connectors c ON c.device_id = d.id WHERE c.id = ?',
+        'SELECT d.设备负责人, d.project_id, d.status, d."设备LIN号（DOORS）" as lin, d."设备编号" FROM devices d JOIN connectors c ON c.device_id = d.id WHERE c.id = ?',
         [connectorId]
       );
       if (!devRow) return res.status(404).json({ error: '设备不存在' });
+      if (devRow.status === 'Frozen') return res.status(403).json({ error: `设备「${devRow['设备编号']}」已冻结，不可添加针孔` });
 
       const isAdmin = role === 'admin';
       // 固有ERN设备的针孔仅admin可操作
@@ -1646,10 +1758,11 @@ export function deviceRoutes(db: Database) {
       const username = req.user!.username;
       const role = req.user!.role;
       const devRow = await db.get(
-        'SELECT d.设备负责人, d.project_id, d."设备LIN号（DOORS）" as lin FROM devices d JOIN connectors c ON c.device_id = d.id WHERE c.id = ?',
+        'SELECT d.设备负责人, d.project_id, d.status, d."设备LIN号（DOORS）" as lin, d."设备编号" FROM devices d JOIN connectors c ON c.device_id = d.id WHERE c.id = ?',
         [req.params.connId]
       );
       if (!devRow) return res.status(404).json({ error: '设备不存在' });
+      if (devRow.status === 'Frozen') return res.status(403).json({ error: `设备「${devRow['设备编号']}」已冻结，不可编辑针孔` });
 
       const isAdmin = role === 'admin';
       if (String(devRow.lin || '').trim() === SPECIAL_ERN_LIN && !isAdmin) {
@@ -1804,10 +1917,11 @@ export function deviceRoutes(db: Database) {
       const role = req.user!.role;
 
       const devRow = await db.get(
-        'SELECT d.设备负责人, d.project_id, d."设备LIN号（DOORS）" as lin FROM devices d JOIN connectors c ON c.device_id = d.id WHERE c.id = ?',
+        'SELECT d.设备负责人, d.project_id, d.status, d."设备LIN号（DOORS）" as lin, d."设备编号" FROM devices d JOIN connectors c ON c.device_id = d.id WHERE c.id = ?',
         [req.params.connId]
       );
       if (!devRow) return res.status(404).json({ error: '设备不存在' });
+      if (devRow.status === 'Frozen') return res.status(403).json({ error: `设备「${devRow['设备编号']}」已冻结，不可删除针孔` });
 
       const isAdmin = role === 'admin';
       if (String(devRow.lin || '').trim() === SPECIAL_ERN_LIN && !isAdmin) {
@@ -1960,10 +2074,11 @@ export function deviceRoutes(db: Database) {
 
           // 查找设备
           const device = await db.get(
-            `SELECT id, "设备负责人" FROM devices WHERE project_id = ? AND "设备LIN号（DOORS）" = ?`,
+            `SELECT id, status, "设备负责人", "设备编号" FROM devices WHERE project_id = ? AND "设备LIN号（DOORS）" = ?`,
             [projectId, lin]
           );
           if (!device) { errorCount++; errors.push(`第${rowNum}行: 未找到设备（LIN=${lin}）`); continue; }
+          if (device.status === 'Frozen') { errorCount++; errors.push(`第${rowNum}行: 设备「${device['设备编号']}」已冻结，跳过`); continue; }
 
           // 权限检查：系统组只能操作自己负责的设备
           if (!isAdmin && device['设备负责人'] !== username) {

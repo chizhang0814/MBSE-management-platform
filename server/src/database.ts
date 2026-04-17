@@ -1627,6 +1627,154 @@ export class Database {
       if (doubleGroups.length + tripleGroups.length > 0) console.log('Database migration: 自动赋值绞线组 双绞' + doubleGroups.length + '组 三绞' + tripleGroups.length + '组');
     } catch (e: any) { console.log('Migration: auto twist_group:', e.message); }
 
+    // ── 修复 RHI 表旧外键引用 (_wire_end_nodes_old / separation_planes) ──
+    try {
+      const wenSchema = await this.get("SELECT sql FROM sqlite_master WHERE type='table' AND name='wire_end_nodes'");
+      const slotsSchema = await this.get("SELECT sql FROM sqlite_master WHERE type='table' AND name='wire_end_node_slots'");
+      const linksSchema = await this.get("SELECT sql FROM sqlite_master WHERE type='table' AND name='wire_end_node_links'");
+      const needFix = [wenSchema, slotsSchema, linksSchema].some(s => s?.sql?.includes('separation_planes') || s?.sql?.includes('_wire_end_nodes_old'));
+      if (needFix) {
+        console.log('Database migration: rebuilding RHI tables to fix broken FK references...');
+        await this.run('PRAGMA foreign_keys = OFF');
+
+        // 1) 备份数据
+        const nodesData: any[] = await this.query('SELECT * FROM wire_end_nodes');
+        const slotsData: any[] = slotsSchema ? await this.query('SELECT * FROM wire_end_node_slots') : [];
+        const linksData: any[] = linksSchema ? await this.query('SELECT * FROM wire_end_node_links') : [];
+
+        // 2) 删除旧表（顺序：依赖表先删）
+        await this.run('DROP TABLE IF EXISTS wire_end_node_links');
+        await this.run('DROP TABLE IF EXISTS wire_end_node_slots');
+        await this.run('DROP TABLE IF EXISTS wire_end_nodes');
+        await this.run('DROP TABLE IF EXISTS _wire_end_nodes_old');
+
+        // 3) 重建干净的表
+        await this.run(`
+          CREATE TABLE wire_end_nodes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            signal_group TEXT NOT NULL, project_id INTEGER NOT NULL,
+            type TEXT NOT NULL DEFAULT 'device', device_id INTEGER, connector_id INTEGER,
+            interconnect_id INTEGER, sort_order INTEGER DEFAULT 0,
+            dead_end_label TEXT, plane_id INTEGER, pos_x REAL, pos_y REAL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (project_id) REFERENCES projects(id)
+          )
+        `);
+        await this.run(`
+          CREATE TABLE wire_end_node_slots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            node_id INTEGER NOT NULL, protocol TEXT NOT NULL, twist_group TEXT DEFAULT '',
+            endpoint_id INTEGER, pin_id INTEGER, interconnect_pin_id INTEGER,
+            sort_order INTEGER DEFAULT 0, dead_end_pin_num TEXT, dead_end_term_size TEXT,
+            FOREIGN KEY (node_id) REFERENCES wire_end_nodes(id) ON DELETE CASCADE
+          )
+        `);
+        await this.run(`
+          CREATE TABLE wire_end_node_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            from_node_id INTEGER NOT NULL, to_node_id INTEGER NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (from_node_id) REFERENCES wire_end_nodes(id) ON DELETE CASCADE,
+            FOREIGN KEY (to_node_id) REFERENCES wire_end_nodes(id) ON DELETE CASCADE,
+            UNIQUE(from_node_id, to_node_id)
+          )
+        `);
+
+        // 4) 恢复数据
+        for (const n of nodesData) {
+          await this.run('INSERT INTO wire_end_nodes (id,signal_group,project_id,type,device_id,connector_id,interconnect_id,sort_order,dead_end_label,plane_id,pos_x,pos_y,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            [n.id, n.signal_group, n.project_id, n.type, n.device_id, n.connector_id, n.interconnect_id, n.sort_order, n.dead_end_label, n.plane_id, n.pos_x, n.pos_y, n.created_at]);
+        }
+        for (const s of slotsData) {
+          await this.run('INSERT INTO wire_end_node_slots (id,node_id,protocol,twist_group,endpoint_id,pin_id,interconnect_pin_id,sort_order,dead_end_pin_num,dead_end_term_size) VALUES (?,?,?,?,?,?,?,?,?,?)',
+            [s.id, s.node_id, s.protocol, s.twist_group, s.endpoint_id, s.pin_id, s.interconnect_pin_id, s.sort_order, s.dead_end_pin_num, s.dead_end_term_size]);
+        }
+        for (const l of linksData) {
+          await this.run('INSERT INTO wire_end_node_links (id,from_node_id,to_node_id,created_at) VALUES (?,?,?,?)',
+            [l.id, l.from_node_id, l.to_node_id, l.created_at]);
+        }
+
+        await this.run('PRAGMA foreign_keys = ON');
+        console.log(`Database migration: RHI tables rebuilt OK (${nodesData.length} nodes, ${slotsData.length} slots, ${linksData.length} links)`);
+      }
+    } catch (e: any) { console.log('Migration: fix RHI tables FK:', e.message); }
+
+    // ── RHI 相关表（互联点 + 线端节点） ──
+    try {
+      await this.run(`
+        CREATE TABLE IF NOT EXISTS interconnects (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          project_id INTEGER NOT NULL,
+          label TEXT NOT NULL,
+          ic_type TEXT DEFAULT '',
+          ic_zone TEXT DEFAULT '',
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (project_id) REFERENCES projects(id)
+        )
+      `);
+      // 旧表可能缺 ic_type / ic_zone 列
+      try { await this.run("ALTER TABLE interconnects ADD COLUMN ic_type TEXT DEFAULT ''"); } catch {}
+      try { await this.run("ALTER TABLE interconnects ADD COLUMN ic_zone TEXT DEFAULT ''"); } catch {}
+      await this.run(`
+        CREATE TABLE IF NOT EXISTS interconnect_pins (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          interconnect_id INTEGER NOT NULL,
+          pin_num TEXT NOT NULL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (interconnect_id) REFERENCES interconnects(id) ON DELETE CASCADE
+        )
+      `);
+      await this.run(`
+        CREATE TABLE IF NOT EXISTS wire_end_nodes (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          signal_group TEXT NOT NULL,
+          project_id INTEGER NOT NULL,
+          type TEXT NOT NULL DEFAULT 'device',
+          device_id INTEGER,
+          connector_id INTEGER,
+          interconnect_id INTEGER,
+          sort_order INTEGER DEFAULT 0,
+          dead_end_label TEXT,
+          plane_id INTEGER,
+          pos_x REAL,
+          pos_y REAL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (project_id) REFERENCES projects(id)
+        )
+      `);
+      await this.run(`
+        CREATE TABLE IF NOT EXISTS wire_end_node_slots (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          node_id INTEGER NOT NULL,
+          protocol TEXT NOT NULL,
+          twist_group TEXT DEFAULT '',
+          endpoint_id INTEGER,
+          pin_id INTEGER,
+          interconnect_pin_id INTEGER,
+          sort_order INTEGER DEFAULT 0,
+          dead_end_pin_num TEXT,
+          dead_end_term_size TEXT,
+          FOREIGN KEY (node_id) REFERENCES wire_end_nodes(id) ON DELETE CASCADE
+        )
+      `);
+      await this.run(`
+        CREATE TABLE IF NOT EXISTS wire_end_node_links (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          from_node_id INTEGER NOT NULL,
+          to_node_id INTEGER NOT NULL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (from_node_id) REFERENCES wire_end_nodes(id) ON DELETE CASCADE,
+          FOREIGN KEY (to_node_id) REFERENCES wire_end_nodes(id) ON DELETE CASCADE,
+          UNIQUE(from_node_id, to_node_id)
+        )
+      `);
+      await this.run(`CREATE INDEX IF NOT EXISTS idx_wen_group ON wire_end_nodes(signal_group, project_id)`);
+      await this.run(`CREATE INDEX IF NOT EXISTS idx_wens_node ON wire_end_node_slots(node_id)`);
+      await this.run(`CREATE INDEX IF NOT EXISTS idx_wenl_from ON wire_end_node_links(from_node_id)`);
+      await this.run(`CREATE INDEX IF NOT EXISTS idx_wenl_to ON wire_end_node_links(to_node_id)`);
+      console.log('Database migration: RHI tables ready (interconnects, wire_end_nodes, etc.)');
+    } catch (e: any) { console.log('Migration: RHI tables:', e.message); }
+
     await this.initDefaultData();
   }
 

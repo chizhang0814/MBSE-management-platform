@@ -4,6 +4,7 @@ import Layout from '../components/Layout';
 import HistoryModal from '../components/HistoryModal';
 import EICDModal from '../components/EICDModal';
 import SignalGroupModal from '../components/SignalGroupModal';
+import RhiEditor from '../components/RhiEditor';
 import type { Selection } from '../components/EICDDiagram';
 import { useAuth } from '../context/AuthContext';
 
@@ -290,6 +291,17 @@ export default function ProjectDataView() {
   const [signals, setSignals] = useState<SignalRow[]>([]);
   // ── 下载配置 ──
   const [showDownloadModal, setShowDownloadModal] = useState(false);
+  const [showInterconnectModal, setShowInterconnectModal] = useState(false);
+  const [showRhiModal, setShowRhiModal] = useState(false);
+  const [rhiGroup, setRhiGroup] = useState('');
+  const [rhiStatusMap, setRhiStatusMap] = useState<Record<string, { ic_count: number; link_count: number }>>({});
+  const [interconnects, setInterconnects] = useState<any[]>([]);
+  const [icNewLabel, setIcNewLabel] = useState('');
+  const [icNewType, setIcNewType] = useState('');
+  const [icNewZone, setIcNewZone] = useState('');
+  const [icNewPin, setIcNewPin] = useState<Record<number, string>>({});
+  const [icEditId, setIcEditId] = useState<number | null>(null);
+  const [icEditFields, setIcEditFields] = useState<{ label: string; ic_type: string; ic_zone: string }>({ label: '', ic_type: '', ic_zone: '' });
   // ── 导入/更新设备数据弹窗 ──
   const [showImportDevDataModal, setShowImportDevDataModal] = useState(false);
   const [importDevFile, setImportDevFile] = useState<File | null>(null);
@@ -708,6 +720,17 @@ export default function ProjectDataView() {
     } catch (e) { console.error('加载SC针孔失败', e); }
   };
 
+  const loadInterconnects = async () => {
+    if (!selectedProjectId) return;
+    try {
+      const res = await fetch(`/api/interconnects?project_id=${selectedProjectId}`, { headers: API_HEADERS() });
+      if (res.ok) { const data = await res.json(); setInterconnects(data.interconnects || []); }
+    } catch {}
+  };
+
+  // 弹窗打开时加载
+  useEffect(() => { if (showInterconnectModal) loadInterconnects(); }, [showInterconnectModal]);
+
   const loadSignals = async () => {
     if (!selectedProjectId) return;
     // 递增版本号，让旧的后台循环自动放弃
@@ -728,6 +751,10 @@ export default function ProjectDataView() {
       setSignalDisplayCount(50);
       setExpandedSignalId(null);
       setLoading(false);
+
+      // 并行加载 RHI 状态
+      fetch(`/api/rhi/status/all?project_id=${selectedProjectId}`, { headers: API_HEADERS() })
+        .then(r => r.json()).then(d => { if (d.status) setRhiStatusMap(d.status); }).catch(() => {});
 
       // 后台静默拉取剩余，每批200条
       if (total > 50) {
@@ -1928,6 +1955,7 @@ export default function ProjectDataView() {
                     <option value="Draft">Draft</option>
                     <option value="Pending">审批中</option>
                     <option value="normal">已生效</option>
+                    <option value="Frozen">已冻结</option>
                     <option value="sub_pending">子项待审批/完善</option>
                   </select>
                 </th>
@@ -2109,6 +2137,9 @@ export default function ProjectDataView() {
                         {device.status === 'normal' && (
                           <span className="px-1.5 py-0.5 rounded bg-green-100 text-green-700 text-xs font-semibold">已生效</span>
                         )}
+                        {device.status === 'Frozen' && (
+                          <span className="px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 text-xs font-semibold">🔒 已冻结</span>
+                        )}
                         {device.has_pending_sub && (
                           <span className="ml-1 px-1.5 py-0.5 rounded bg-orange-50 text-orange-600 text-xs" title="包含待审批的连接器或针孔">
                             子项待审批
@@ -2137,7 +2168,9 @@ export default function ProjectDataView() {
                           const isERN = (device as any)['设备LIN号（DOORS）'] === SPECIAL_ERN_LIN;
                           if (isERN) return <span className="text-xs text-gray-400 dark:text-white/40">固有ERN</span>;
                           return (<>
-                          {canEditDevice(device) && (device.status === 'Pending' ? (
+                          {canEditDevice(device) && (device.status === 'Frozen' ? (
+                            <span className="text-xs text-gray-400 dark:text-white/40 cursor-not-allowed" title="设备已冻结，不可编辑">编辑/删除</span>
+                          ) : device.status === 'Pending' ? (
                             <span className="text-xs text-gray-400 dark:text-white/40 cursor-not-allowed" title="记录审批中，不可编辑">编辑/删除</span>
                           ) : lock ? (
                             <span className="text-xs text-amber-600">🔒{lock.lockedBy}</span>
@@ -2149,6 +2182,23 @@ export default function ProjectDataView() {
                           ))}
                           {myProjectRole === '系统组' && !device.设备负责人 && !device.management_claim_requester && (
                             <button onClick={() => handleClaimManagement(device)} className="text-purple-600 hover:text-purple-800 text-xs">申请管理权限</button>
+                          )}
+                          {(user?.role === 'admin' || myProjectRole === '总体组') && device.status !== 'Pending' && device.status !== 'Draft' && (
+                            device.status === 'Frozen' ? (
+                              <button onClick={async () => {
+                                if (!confirm(`确定解冻设备「${device.设备编号}」？`)) return;
+                                const r = await fetch(`/api/devices/${device.id}/unfreeze`, { method: 'POST', headers: API_HEADERS() });
+                                const d = await r.json();
+                                if (r.ok) { loadDevices(); } else alert(d.error || '解冻失败');
+                              }} className="text-blue-600 hover:text-blue-800 text-xs">解冻</button>
+                            ) : (
+                              <button onClick={async () => {
+                                if (!confirm(`确定冻结设备「${device.设备编号}」？\n冻结后该设备及其连接器、针孔、关联信号均不可删改。`)) return;
+                                const r = await fetch(`/api/devices/${device.id}/freeze`, { method: 'POST', headers: API_HEADERS() });
+                                const d = await r.json();
+                                if (r.ok) { loadDevices(); } else alert(d.error || '冻结失败');
+                              }} className="text-blue-600 hover:text-blue-800 text-xs">冻结</button>
+                            )
                           )}
                           <button onClick={() => setHistoryTarget({ entityTable: 'devices', entityId: device.id, entityLabel: `设备 ${device.设备编号}` })} className="text-gray-500 dark:text-white/50 hover:text-gray-700 dark:text-white/70 text-xs">历史</button>
                           </>);
@@ -2383,7 +2433,7 @@ export default function ProjectDataView() {
                           <div className="pl-8 pr-4 py-2">
                             <div className="flex justify-between items-center mb-1">
                               <span className="text-xs font-semibold text-black dark:text-white">连接器列表</span>
-                              {canEditDevice(device) && device.status !== 'Pending' && (device as any)['设备LIN号（DOORS）'] !== SPECIAL_ERN_LIN && (
+                              {canEditDevice(device) && device.status !== 'Pending' && device.status !== 'Frozen' && (device as any)['设备LIN号（DOORS）'] !== SPECIAL_ERN_LIN && (
                                 <div className="flex gap-2">
                                   <button onClick={() => openAddConnector(device.id)} className="text-xs text-black dark:text-white hover:text-black/60 dark:hover:text-white/60">+ 添加连接器</button>
                                   {(connectors[device.id]?.length ?? 0) >= 2 && (
@@ -2454,7 +2504,9 @@ export default function ProjectDataView() {
                                               <span className="ml-1 px-1 py-0.5 text-xs bg-orange-100 text-orange-700 rounded">子项待审批</span>
                                             )}
                                             {conn.status === 'normal' && !(conn as any).has_pending_sub && (
-                                              <span className="ml-1 px-1 py-0.5 text-xs bg-green-100 text-green-700 rounded">已生效</span>
+                                              device.status === 'Frozen'
+                                                ? <span className="ml-1 px-1 py-0.5 text-xs bg-blue-100 text-blue-700 rounded">🔒 已冻结</span>
+                                                : <span className="ml-1 px-1 py-0.5 text-xs bg-green-100 text-green-700 rounded">已生效</span>
                                             )}
                                             {/* 已导入/已更新标签暂时隐藏 */}
                                           </td>
@@ -2465,7 +2517,9 @@ export default function ProjectDataView() {
                                             {(device as any)['设备LIN号（DOORS）'] === SPECIAL_ERN_LIN ? (
                                               <span className="text-xs text-gray-400 dark:text-white/40">固有ERN</span>
                                             ) : (<>
-                                              {canEditDevice(device) && (conn.status === 'Pending' ? (
+                                              {canEditDevice(device) && (device.status === 'Frozen' ? (
+                                                <span className="text-xs text-gray-400 dark:text-white/40 cursor-not-allowed" title="设备已冻结，不可编辑">编辑/删除</span>
+                                              ) : conn.status === 'Pending' ? (
                                                 <span className="text-xs text-gray-400 dark:text-white/40">审批中</span>
                                               ) : connectorLockMap[conn.id] ? (
                                                 <span className="text-xs text-amber-600">🔒{connectorLockMap[conn.id].lockedBy}</span>
@@ -2605,7 +2659,7 @@ export default function ProjectDataView() {
                                                 })()}
                                                 <div className="flex justify-between items-center mb-1">
                                                   <span className="text-xs font-semibold text-black/70 dark:text-white/70">针孔列表</span>
-                                                  {canEditPin(device) && conn.status !== 'Pending' && (device as any)['设备LIN号（DOORS）'] !== SPECIAL_ERN_LIN && (
+                                                  {canEditPin(device) && conn.status !== 'Pending' && device.status !== 'Frozen' && (device as any)['设备LIN号（DOORS）'] !== SPECIAL_ERN_LIN && (
                                                     <button onClick={() => openAddPin(device.id, conn.id)} className="text-xs text-black/70 dark:text-white/70">+ 添加针孔</button>
                                                   )}
                                                 </div>
@@ -2633,7 +2687,11 @@ export default function ProjectDataView() {
                                                             {pin.status === 'Pending' && <span className="ml-1 px-1 py-0.5 text-xs bg-black/10 dark:bg-white/15 text-black dark:text-white rounded">审批中</span>}
                                                             {(pin as any).pending_item_type === 'approval' && <span className="ml-1 px-1 py-0.5 text-xs bg-orange-100 text-orange-700 rounded">待我审批</span>}
                                                             {(pin as any).pending_item_type === 'completion' && <span className="ml-1 px-1 py-0.5 text-xs bg-blue-100 text-blue-700 rounded">待我完善</span>}
-                                                            {pin.status === 'normal' && <span className="ml-1 px-1 py-0.5 text-xs bg-green-100 text-green-700 rounded">已生效</span>}
+                                                            {pin.status === 'normal' && (
+                                                              device.status === 'Frozen'
+                                                                ? <span className="ml-1 px-1 py-0.5 text-xs bg-blue-100 text-blue-700 rounded">🔒 已冻结</span>
+                                                                : <span className="ml-1 px-1 py-0.5 text-xs bg-green-100 text-green-700 rounded">已生效</span>
+                                                            )}
                                                             {/* 已导入/已更新标签暂时隐藏 */}
                                                           </td>
                                                           <td className="px-2 py-1 text-gray-400 dark:text-white/40 text-xs">{(pin as any).updated_at ? new Date((pin as any).updated_at).toLocaleDateString() : '-'}</td>
@@ -2641,7 +2699,9 @@ export default function ProjectDataView() {
                                                             {(device as any)['设备LIN号（DOORS）'] === SPECIAL_ERN_LIN ? (
                                                               <span className="text-xs text-gray-400 dark:text-white/40">固有ERN</span>
                                                             ) : (<>
-                                                              {pin.status === 'Pending' ? (
+                                                              {device.status === 'Frozen' ? (
+                                                                <span className="text-xs text-gray-400 dark:text-white/40 cursor-not-allowed" title="设备已冻结，不可编辑">编辑/删除</span>
+                                                              ) : pin.status === 'Pending' ? (
                                                                 <button onClick={() => loadApprovalInfo('pin', pin.id)} className="text-xs text-black dark:text-white hover:text-black/60 dark:hover:text-white/60">审批详情</button>
                                                               ) : canEditPin(device) ? (
                                                                 <>
@@ -3193,6 +3253,10 @@ export default function ProjectDataView() {
               if ((s.导线等级 || '') !== val) return false;
               continue;
             }
+            if (key === '连接类型') {
+              if ((s.连接类型 || '') !== val) return false;
+              continue;
+            }
             const cell = String((s as any)[key] ?? '').toLowerCase();
             if (!cell.includes(val.toLowerCase())) return false;
           }
@@ -3208,7 +3272,7 @@ export default function ProjectDataView() {
           'Discrete_2S_': ['Positive_+', 'Negative_-'],
           'ETH100_': ['ETH_TX+', 'ETH_TX-', 'ETH_RX+', 'ETH_RX-', 'ETH_Gnd'],
           'ETH1000_': ['ETH_A+', 'ETH_A-', 'ETH_B+', 'ETH_B-', 'ETH_C+', 'ETH_C-', 'ETH_D+', 'ETH_D-', 'ETH_Gnd'],
-          'HDMI_': ['HDMI_A+', 'HDMI_A-', 'HDMI_B+', 'HDMI_B-'],
+          'HDMI_': ['HDMI_A+', 'HDMI_A-', 'HDMI_B+', 'HDMI_B-', 'HDMI_C+', 'HDMI_C-', 'HDMI_D+', 'HDMI_D-'],
           'PWR_LV_': ['电源（低压）正极', '电源（低压）负极'],
           'PWR_HV_': ['电源（高压）正极', '电源（高压）负极'],
           'RS422_F_': ['RS-422_TX_A', 'RS-422_TX_B', 'RS-422_RX_A', 'RS-422_RX_B', 'RS-422_Gnd'],
@@ -3275,6 +3339,7 @@ export default function ProjectDataView() {
           <table className="w-full text-sm">
             <thead className="bg-gray-50 dark:bg-neutral-800 sticky top-[29px] z-10 whitespace-nowrap text-xs text-gray-500 dark:text-white/50">
               <tr>
+                <th className="py-2 w-5"></th>{/* RHI按钮列 */}
                 <th className="py-2 w-6">组</th>
                 <th className="px-0 py-2 w-8">绞线</th>
                 {!sgCheckMode && <th className="px-1 py-2 w-8"></th>}
@@ -3295,6 +3360,7 @@ export default function ProjectDataView() {
                 <th className="px-2 py-2 text-left w-[110px]">操作</th>
               </tr>
               <tr className="bg-white dark:bg-neutral-900 border-b">
+                <th className="p-0 w-5"></th>{/* RHI按钮列筛选行占位 */}
                 <th className="p-0 w-6">
                   <select
                     value={sgGroupFilter}
@@ -3349,20 +3415,29 @@ export default function ProjectDataView() {
                     <option value="Active">已生效</option>
                   </select>
                 </th>
-                {/* 信号名称摘要、连接类型 */}
-                {(['信号名称摘要', '连接类型'] as const).map(col => (
-                  <th key={col} className="px-2 py-1">
-                    <div className="relative">
-                      <input type="text" placeholder="筛选..." value={signalFilters[col] || ''}
-                        onChange={e => setSignalFilters(prev => ({ ...prev, [col]: e.target.value }))}
-                        className="w-full px-1.5 py-0.5 pr-5 text-xs border border-gray-300 dark:border-white/20 rounded focus:outline-none focus:border-black" />
-                      {signalFilters[col] && (
-                        <button onClick={() => setSignalFilters(prev => ({ ...prev, [col]: '' }))}
-                          className="absolute right-1 top-1/2 -translate-y-1/2 text-gray-400 dark:text-white/40 hover:text-gray-600 dark:text-white/60 text-xs leading-none">&times;</button>
-                      )}
-                    </div>
-                  </th>
-                ))}
+                {/* 信号名称摘要 */}
+                <th className="px-2 py-1">
+                  <div className="relative">
+                    <input type="text" placeholder="筛选..." value={signalFilters['信号名称摘要'] || ''}
+                      onChange={e => setSignalFilters(prev => ({ ...prev, '信号名称摘要': e.target.value }))}
+                      className="w-full px-1.5 py-0.5 pr-5 text-xs border border-gray-300 dark:border-white/20 rounded focus:outline-none focus:border-black" />
+                    {signalFilters['信号名称摘要'] && (
+                      <button onClick={() => setSignalFilters(prev => ({ ...prev, '信号名称摘要': '' }))}
+                        className="absolute right-1 top-1/2 -translate-y-1/2 text-gray-400 dark:text-white/40 hover:text-gray-600 dark:text-white/60 text-xs leading-none">&times;</button>
+                    )}
+                  </div>
+                </th>
+                {/* 连接类型 - 下拉菜单筛选 */}
+                <th className="px-2 py-1">
+                  <select value={signalFilters['连接类型'] || ''}
+                    onChange={e => setSignalFilters(prev => ({ ...prev, '连接类型': e.target.value }))}
+                    className="w-full px-1 py-0.5 text-xs border border-gray-300 dark:border-white/20 rounded focus:outline-none focus:border-black dark:focus:border-white bg-white dark:bg-neutral-800 dark:text-white">
+                    <option value="">全部</option>
+                    {['ARINC 429','ARINC 453','CAN Bus','Discrete','HDMI','RS-232','RS-422','RS-422（全双工）','RS-485','光纤','模拟量','射频','电源（低压）','电源（高压）','以太网（百兆）','以太网（千兆）','其他（在备注中说明）'].map(v =>
+                      <option key={v} value={v}>{v}</option>
+                    )}
+                  </select>
+                </th>
                 {/* 导线等级 - 下拉菜单筛选 */}
                 <th className="px-2 py-1">
                   <select value={signalFilters['导线等级'] || ''}
@@ -3450,6 +3525,57 @@ export default function ProjectDataView() {
                         else { setExpandedSignalId(null); }
                       }}
                     >
+                      {/* RHI按钮列 */}
+                      {(() => {
+                        const gn = (signal as any).signal_group || '';
+                        const gi = groupInfo as any;
+                        const isGroupFirst = gi && (gi.pos === 'first' || gi.pos === 'solo');
+                        if (!gn || !isGroupFirst) return <td className="px-0 py-0 w-5"></td>;
+                        return (
+                          <td
+                            className="px-0 py-0 w-5 text-center relative"
+                            data-rhi-group={gn}
+                            ref={(el) => {
+                              if (!el) return;
+                              requestAnimationFrame(() => {
+                                const btn = el.querySelector('[data-rhi-btn]') as HTMLElement;
+                                if (!btn) return;
+                                let totalH = 0;
+                                let tr = el.closest('tr') as HTMLElement;
+                                while (tr) {
+                                  totalH += tr.offsetHeight;
+                                  const nextTr = tr.nextElementSibling as HTMLElement;
+                                  if (!nextTr || !nextTr.querySelector('[data-rhi-group="' + gn + '"]')) break;
+                                  tr = nextTr;
+                                }
+                                btn.style.height = totalH + 'px';
+                              });
+                            }}
+                          >
+                            <button
+                              data-rhi-btn
+                              className="absolute left-0 right-0 top-0 flex items-center justify-center z-[1] cursor-pointer hover:opacity-80"
+                              style={{
+                                writingMode: 'vertical-rl', textOrientation: 'upright', letterSpacing: '-1px', fontSize: '8px', fontWeight: 700,
+                                borderRadius: '9999px', margin: '2px auto', width: '16px',
+                                ...(rhiStatusMap[gn]?.ic_count > 0 || rhiStatusMap[gn]?.link_count > 0
+                                  ? { color: '#fff', background: '#f97316', border: '1.5px solid #ea580c' }
+                                  : { color: '#6b7280', background: '#f3f4f6', border: '1.5px solid #9ca3af' }),
+                              }}
+                              title={
+                                rhiStatusMap[gn]?.ic_count > 0 || rhiStatusMap[gn]?.link_count > 0
+                                  ? gn + ' — 已构建（' + (rhiStatusMap[gn]?.ic_count || 0) + '互联点 ' + (rhiStatusMap[gn]?.link_count || 0) + '连线）'
+                                  : gn + ' — 待构建'
+                              }
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setRhiGroup(gn);
+                                setShowRhiModal(true);
+                              }}
+                            >RHI</button>
+                          </td>
+                        );
+                      })()}
                       {/* 组名列：每行都渲染色条，首行显示组名 */}
                       {(() => {
                         const gn = (signal as any).signal_group || '';
@@ -4094,6 +4220,14 @@ export default function ProjectDataView() {
               下载项目数据
             </button>
           )}
+          {selectedProjectId && (
+            <button
+              onClick={() => setShowInterconnectModal(true)}
+              className="ml-2 btn-secondary text-xs !px-3 !py-1"
+            >
+              互联点管理
+            </button>
+          )}
         </div>
 
         {/* 视图切换 */}
@@ -4715,6 +4849,118 @@ export default function ProjectDataView() {
                     <span className="text-gray-400 dark:text-white/30 text-[10px]">北京时间</span>
                   </div>
                 </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── RHI编辑器弹窗 ── */}
+        {showRhiModal && rhiGroup && (
+          <RhiEditor signalGroup={rhiGroup} projectId={selectedProjectId!} onClose={() => {
+            setShowRhiModal(false);
+            // 刷新 RHI 状态
+            fetch(`/api/rhi/status/all?project_id=${selectedProjectId}`, { headers: API_HEADERS() })
+              .then(r => r.json()).then(d => { if (d.status) setRhiStatusMap(d.status); }).catch(() => {});
+          }} />
+        )}
+
+        {/* ── 互联点管理弹窗 ── */}
+        {showInterconnectModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white dark:bg-neutral-900 rounded-lg max-w-2xl w-full max-h-[85vh] flex flex-col">
+              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-white/10 shrink-0">
+                <h2 className="text-lg font-bold">互联点管理</h2>
+                <button onClick={() => setShowInterconnectModal(false)} className="px-3 py-1 border border-gray-300 dark:border-white/20 rounded text-sm">关闭</button>
+              </div>
+              <div className="flex-1 overflow-y-auto px-6 py-4">
+                {/* 导入 */}
+                <div className="mb-4 flex items-center gap-2">
+                  <input type="file" accept=".xlsx,.xls" id="icImportFile" className="text-xs" />
+                  <button onClick={async () => {
+                    const fileInput = document.getElementById('icImportFile') as HTMLInputElement;
+                    if (!fileInput?.files?.[0]) { alert('请选择文件'); return; }
+                    const fd = new FormData();
+                    fd.append('file', fileInput.files[0]);
+                    fd.append('project_id', String(selectedProjectId));
+                    try {
+                      const res = await fetch('/api/interconnects/import', { method: 'POST', headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }, body: fd });
+                      const data = await res.json();
+                      if (data.success) { alert(`导入成功：新建${data.created}个互联点，添加${data.pinsAdded}个针孔，跳过${data.skipped}个重复`); loadInterconnects(); }
+                      else alert(data.error || '导入失败');
+                    } catch { alert('导入失败'); }
+                  }} className="px-3 py-1 bg-blue-600 text-white rounded text-xs">导入Excel</button>
+                </div>
+                {/* 新建 */}
+                <div className="mb-4 flex items-center gap-2 flex-wrap">
+                  <input value={icNewLabel} onChange={e => setIcNewLabel(e.target.value)} placeholder="名称 *" className="border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-sm w-36" />
+                  <input value={icNewType} onChange={e => setIcNewType(e.target.value)} placeholder="类型" className="border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-sm w-28" />
+                  <input value={icNewZone} onChange={e => setIcNewZone(e.target.value)} placeholder="区域" className="border border-gray-300 dark:border-white/20 rounded px-2 py-1 text-sm w-28" />
+                  <button onClick={async () => {
+                    if (!icNewLabel.trim()) return;
+                    try {
+                      const res = await fetch('/api/interconnects', { method: 'POST', headers: { ...API_HEADERS(), 'Content-Type': 'application/json' }, body: JSON.stringify({ project_id: selectedProjectId, label: icNewLabel.trim(), ic_type: icNewType.trim(), ic_zone: icNewZone.trim() }) });
+                      const data = await res.json();
+                      if (data.success) { setIcNewLabel(''); setIcNewType(''); setIcNewZone(''); loadInterconnects(); }
+                      else alert(data.error || '创建失败');
+                    } catch { alert('创建失败'); }
+                  }} className="px-3 py-1 bg-green-600 text-white rounded text-xs">创建</button>
+                </div>
+                {/* 列表 */}
+                {interconnects.map(ic => (
+                  <div key={ic.id} className="mb-3 border border-gray-200 dark:border-white/10 rounded-lg overflow-hidden">
+                    <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-neutral-800">
+                      {icEditId === ic.id ? <>
+                        <input value={icEditFields.label} onChange={e => setIcEditFields({ ...icEditFields, label: e.target.value })} className="border border-gray-300 dark:border-white/20 rounded px-1.5 py-0.5 text-xs w-28" placeholder="名称" />
+                        <input value={icEditFields.ic_type} onChange={e => setIcEditFields({ ...icEditFields, ic_type: e.target.value })} className="border border-gray-300 dark:border-white/20 rounded px-1.5 py-0.5 text-xs w-20" placeholder="类型" />
+                        <input value={icEditFields.ic_zone} onChange={e => setIcEditFields({ ...icEditFields, ic_zone: e.target.value })} className="border border-gray-300 dark:border-white/20 rounded px-1.5 py-0.5 text-xs w-20" placeholder="区域" />
+                        <button onClick={async () => {
+                          try {
+                            await fetch(`/api/interconnects/${ic.id}`, { method: 'PUT', headers: { ...API_HEADERS(), 'Content-Type': 'application/json' }, body: JSON.stringify(icEditFields) });
+                            setIcEditId(null); loadInterconnects();
+                          } catch { alert('保存失败'); }
+                        }} className="text-xs text-green-600 hover:text-green-800 font-medium">保存</button>
+                        <button onClick={() => setIcEditId(null)} className="text-xs text-gray-400 hover:text-gray-600">取消</button>
+                      </> : <>
+                        <span className="font-medium text-sm">{ic.label}</span>
+                        {ic.ic_type && <span className="text-[10px] px-1.5 py-0.5 bg-indigo-100 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-300 rounded">{ic.ic_type}</span>}
+                        {ic.ic_zone && <span className="text-[10px] px-1.5 py-0.5 bg-amber-100 dark:bg-amber-900/40 text-amber-600 dark:text-amber-300 rounded">{ic.ic_zone}</span>}
+                        <span className="text-xs text-gray-400">({(ic.pins||[]).length}针孔)</span>
+                        <div className="flex-1" />
+                        <button onClick={() => { setIcEditId(ic.id); setIcEditFields({ label: ic.label, ic_type: ic.ic_type || '', ic_zone: ic.ic_zone || '' }); }} className="text-xs text-blue-500 hover:text-blue-700">编辑</button>
+                        <button onClick={async () => {
+                          if (!confirm(`删除互联点 ${ic.label}？`)) return;
+                          await fetch(`/api/interconnects/${ic.id}`, { method: 'DELETE', headers: API_HEADERS() });
+                          loadInterconnects();
+                        }} className="text-xs text-red-500 hover:text-red-700">删除</button>
+                      </>}
+                    </div>
+                    <div className="px-3 py-2">
+                      <div className="flex flex-wrap gap-1 mb-2">
+                        {(ic.pins||[]).map((p: any) => (
+                          <span key={p.id} className="inline-flex items-center gap-1 px-2 py-0.5 bg-gray-100 dark:bg-neutral-800 rounded text-xs">
+                            {p.pin_num}
+                            <button onClick={async () => {
+                              await fetch(`/api/interconnects/pins/${p.id}`, { method: 'DELETE', headers: API_HEADERS() });
+                              loadInterconnects();
+                            }} className="text-gray-400 hover:text-red-500">&times;</button>
+                          </span>
+                        ))}
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <input value={icNewPin[ic.id] || ''} onChange={e => setIcNewPin({...icNewPin, [ic.id]: e.target.value})} placeholder="针孔号" className="border border-gray-300 dark:border-white/20 rounded px-2 py-0.5 text-xs w-24" onKeyDown={async e => {
+                          if (e.key !== 'Enter') return;
+                          const v = (icNewPin[ic.id] || '').trim();
+                          if (!v) return;
+                          await fetch(`/api/interconnects/${ic.id}/pins`, { method: 'POST', headers: { ...API_HEADERS(), 'Content-Type': 'application/json' }, body: JSON.stringify({ pin_num: v }) });
+                          setIcNewPin({...icNewPin, [ic.id]: ''});
+                          loadInterconnects();
+                        }} />
+                        <span className="text-xs text-gray-400">回车添加</span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                {interconnects.length === 0 && <div className="text-center text-gray-400 py-8 text-sm">暂无互联点，请创建或导入</div>}
               </div>
             </div>
           </div>
@@ -5523,7 +5769,7 @@ export default function ProjectDataView() {
                     'ARINC 453': ['A453_Positive', 'A453_Negative'],
                     'CAN Bus': ['CAN_High', 'CAN_Low', 'CAN_Gnd'],
                     'Discrete': ['Positive_+', 'Negative_-'],
-                    'HDMI': ['HDMI_A+', 'HDMI_A-', 'HDMI_B+', 'HDMI_B-'],
+                    'HDMI': ['HDMI_A+', 'HDMI_A-', 'HDMI_B+', 'HDMI_B-', 'HDMI_C+', 'HDMI_C-', 'HDMI_D+', 'HDMI_D-'],
                     'RS-422': ['RS-422_A', 'RS-422_B', 'RS-422_Gnd'],
                     'RS-422（全双工）': ['RS-422_TX_A', 'RS-422_TX_B', 'RS-422_RX_A', 'RS-422_RX_B', 'RS-422_Gnd'],
                     'RS-485': ['RS-485_A', 'RS-485_B', 'RS-485_Gnd'],

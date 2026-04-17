@@ -15,7 +15,7 @@ import {
   SIGNALS_EXCEL_TO_DB,
   validateConnectorCompId,
 } from '../shared/column-schema.js';
-import { SPECIAL_ERN_LIN, isPinFrozen } from '../shared/approval-helper.js';
+import { SPECIAL_ERN_LIN, isPinFrozen, isDeviceFrozen } from '../shared/approval-helper.js';
 
 /** 为新项目插入固有ERN设备（含连接器和针孔） */
 async function insertSpecialERN(db: Database, projectId: number) {
@@ -1036,12 +1036,17 @@ export function projectRoutes(db: Database) {
                   rowFailed = true; break;
                 }
                 const device = await db.get(
-                  `SELECT id, "设备LIN号（DOORS）" as linNo, "设备编号" as devNumDb FROM devices WHERE project_id = ? AND "设备LIN号（DOORS）" = ?`,
+                  `SELECT id, status, "设备LIN号（DOORS）" as linNo, "设备编号" as devNumDb FROM devices WHERE project_id = ? AND "设备LIN号（DOORS）" = ?`,
                   [projectId, linNo]
                 );
                 if (!device) {
                   sheetE2++;
                   sheetErrors2.push(`第${rowNum}行: 端点（${label}）设备LIN号"${linNo}"（设备编号"${devNum}"）在devices中不存在，跳过整行`);
+                  rowFailed = true; break;
+                }
+                if (device.status === 'Frozen') {
+                  sheetE2++;
+                  sheetErrors2.push(`第${rowNum}行: 设备「${device.devNumDb}」已冻结，跳过整行`);
                   rowFailed = true; break;
                 }
                 if (!conn) {

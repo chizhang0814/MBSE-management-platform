@@ -17,6 +17,8 @@ import { sectionConnectorRoutes } from './routes/section-connectors.js';
 import { changeLogRoutes } from './routes/change-logs.js';
 import { employeeRoutes } from './routes/employees.js';
 import { chatRoutes } from './routes/chat.js';
+import { rhiRoutes } from './routes/rhi.js';
+import { interconnectRoutes } from './routes/interconnects.js';
 import { feedbackRoutes } from './routes/feedback.js';
 import { eicdRoutes } from './routes/eicd.js';
 import path from 'path';
@@ -58,6 +60,8 @@ app.use('/api/employees', employeeRoutes(db));
 app.use('/api/chat', chatRoutes(db));
 app.use('/api/feedback', feedbackRoutes());
 app.use('/api/eicd', eicdRoutes(db));
+app.use('/api/rhi', rhiRoutes(db));
+app.use('/api/interconnects', interconnectRoutes(db));
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' });
