@@ -338,19 +338,20 @@ export default function ProjectDataView() {
       '设备供应商件号', '设备供应商名称', '设备部件所属系统（4位ATA）',
       '设备安装位置', '设备DAL', '设备壳体是否金属', '金属壳体表面是否经过特殊处理而不易导电',
       '设备内共地情况', '设备壳体接地方式', '壳体接地是否故障电流路径',
-      '其他接地特殊要求', '设备端连接器或接线柱数量', '是否为选装设备', '设备装机架次',
-      '设备负责人', '设备正常工作电压范围（V）', '设备物理特性', '备注', '最后修改时间',
+      '其他接地特殊要求', '设备端连接器或接线柱数量', '是否为选装设备', '是否有特殊布线需求', '设备装机架次',
+      '设备负责人', '设备等级', '设备正常工作电压范围（V）', '设备物理特性', '备注', '最后修改时间',
     ]},
     { key: 'connectors', name: '设备端元器件表', cols: [
       '设备编号', '设备LIN号（DOORS）', '设备名称', '设备端元器件编号', '设备端元器件名称及类型',
       '设备端元器件件号类型及件号', '设备端元器件供应商名称', '匹配的线束端元器件件号',
+      '匹配的线束线型', '尾附件件号', '触件型号',
       '设备端元器件匹配的元器件是否随设备交付', '备注', '最后修改时间',
     ]},
     { key: 'signals', name: '电气接口数据表', cols: [
       '信号组', '绞线组', 'Unique ID', '连接类型', '协议标识', '线类型',
       '设备（从）', 'LIN号（从）', '连接器（从）', '针孔号（从）', '端接尺寸（从）', '屏蔽类型（从）', '信号名称（从）', '信号定义（从）',
       '设备（到）', 'LIN号（到）', '连接器（到）', '针孔号（到）', '端接尺寸（到）', '屏蔽类型（到）', '信号名称（到）', '信号定义（到）',
-      '推荐导线线规', '推荐导线线型', '独立电源代码', '敷设代码',
+      '导线等级', '推荐导线线规', '推荐导线线型', '独立电源代码', '敷设代码',
       '电磁兼容代码', '余度代码', '功能代码', '接地代码', '极性',
       '信号ATA', '信号架次有效性', '额定电压', '额定电流', '设备正常工作电压范围',
       '是否成品线', '成品线件号', '成品线线规', '成品线类型', '成品线长度',
@@ -3556,6 +3557,7 @@ export default function ProjectDataView() {
                               data-rhi-btn
                               className="absolute left-0 right-0 top-0 flex items-center justify-center z-[1] cursor-pointer hover:opacity-80"
                               style={{
+                                display: 'none', /* TODO: 恢复RHI功能时去掉此行 */
                                 writingMode: 'vertical-rl', textOrientation: 'upright', letterSpacing: '-1px', fontSize: '8px', fontWeight: 700,
                                 borderRadius: '9999px', margin: '2px auto', width: '16px',
                                 ...(rhiStatusMap[gn]?.ic_count > 0 || rhiStatusMap[gn]?.link_count > 0
@@ -4224,6 +4226,7 @@ export default function ProjectDataView() {
             <button
               onClick={() => setShowInterconnectModal(true)}
               className="ml-2 btn-secondary text-xs !px-3 !py-1"
+              style={{ display: 'none' }} /* TODO: 恢复RHI功能时去掉此行 */
             >
               互联点管理
             </button>
@@ -6403,7 +6406,7 @@ export default function ProjectDataView() {
                     const url = URL.createObjectURL(blob);
                     const a = document.createElement('a');
                     a.href = url;
-                    a.download = `signal_pairs_export_${new Date().toISOString().slice(0,10)}.csv`;
+                    a.download = `signal_pairs_export_${new Date().toISOString().slice(0,10)}.xlsx`;
                     a.click();
                     URL.revokeObjectURL(url);
                   } finally {
@@ -6412,7 +6415,7 @@ export default function ProjectDataView() {
                 }}
                 className="px-4 py-1.5 text-sm bg-teal-600 text-white rounded hover:bg-teal-700 disabled:opacity-50"
               >
-                {ataExportLoading ? '导出中...' : `导出CSV（${ataExportSelectedIds.size}台设备）`}
+                {ataExportLoading ? '导出中...' : `导出Excel（${ataExportSelectedIds.size}台设备）`}
               </button>
             </div>
           </div>

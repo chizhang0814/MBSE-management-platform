@@ -1366,6 +1366,7 @@ export function signalRoutes(db: Database) {
   // ── 导出信号端点对 CSV ──────────────────────────────────────
   // POST /api/signals/export-pairs
   // Body: { projectId, deviceIds: number[] }
+  // 导出格式与"下载项目数据"的"电气接口数据表"完全一致
   router.post('/export-pairs', authenticate, async (req: AuthRequest, res) => {
     try {
       const { projectId, deviceIds } = req.body as { projectId: number; deviceIds: number[] };
@@ -1377,139 +1378,184 @@ export function signalRoutes(db: Database) {
 
       // 找出与所选设备有关的所有信号
       const signals = await db.query(
-        `SELECT DISTINCT s.id, s.unique_id, s."连接类型", s."信号ATA", s."信号架次有效性",
-                s."推荐导线线规", s."推荐导线线型",
-                s."独立电源代码", s."敷设代码", s."电磁兼容代码", s."功能代码", s."余度代码",
-                s."接地代码", s."极性", s."额定电压", s."额定电流", s."设备正常工作电压范围",
-                s."是否成品线", s."成品线件号", s."成品线线规", s."成品线类型",
-                s."成品线长度", s."成品线载流量", s."成品线线路压降", s."成品线标识",
-                s."成品线与机上线束对接方式", s."成品线安装责任", s."备注"
+        `SELECT DISTINCT s.*
          FROM signals s
          JOIN signal_endpoints se ON se.signal_id = s.id
-         WHERE s.project_id = ? AND se.device_id IN (${ph})`,
+         WHERE s.project_id = ? AND se.device_id IN (${ph})
+         ORDER BY
+           CASE WHEN s.signal_group IS NOT NULL AND s.signal_group != '' THEN 0 ELSE 1 END,
+           s.signal_group, s.twist_group, s."协议标识", s.unique_id, s.id`,
         [projectId, ...deviceIds]
       );
 
-      // 批量查所有相关信号的端点（一次查询，避免 N+1）
-      const signalIds = signals.map((s: any) => s.id);
-      const epPh = signalIds.map(() => '?').join(',');
-      const allEndpoints = await db.query(
-        `SELECT se.signal_id, se.id, se.device_id, se.pin_id,
-                COALESCE(se."端接尺寸", p.端接尺寸) AS 端接尺寸,
-                p.针孔号,
-                c."设备端元器件编号"
-         FROM signal_endpoints se
-         LEFT JOIN pins p ON se.pin_id = p.id
-         LEFT JOIN connectors c ON p.connector_id = c.id
-         WHERE se.signal_id IN (${epPh})
-         ORDER BY se.signal_id, se.endpoint_index, se.id`,
-        signalIds
-      );
-      const endpointsBySig: Record<number, any[]> = {};
-      for (const ep of allEndpoints) {
-        if (!endpointsBySig[ep.signal_id]) endpointsBySig[ep.signal_id] = [];
-        endpointsBySig[ep.signal_id].push(ep);
-      }
+      const header = [
+        '信号组', '绞线组', 'Unique ID', '连接类型', '协议标识', '线类型',
+        '设备（从）', 'LIN号（从）', '连接器（从）', '针孔号（从）', '端接尺寸（从）', '屏蔽类型（从）', '信号名称（从）', '信号定义（从）',
+        '设备（到）', 'LIN号（到）', '连接器（到）', '针孔号（到）', '端接尺寸（到）', '屏蔽类型（到）', '信号名称（到）', '信号定义（到）',
+        '导线等级', '推荐导线线规', '推荐导线线型', '独立电源代码', '敷设代码',
+        '电磁兼容代码', '余度代码', '功能代码', '接地代码', '极性',
+        '信号ATA', '信号架次有效性', '额定电压', '额定电流', '设备正常工作电压范围',
+        '是否成品线', '成品线件号', '成品线线规', '成品线类型', '成品线长度',
+        '成品线载流量', '成品线线路压降', '成品线标识', '成品线与机上线束对接方式',
+        '成品线安装责任', '备注',
+      ];
 
       const rows: string[][] = [];
 
       for (const sig of signals) {
-        const endpoints = endpointsBySig[sig.id] || [];
+        const endpoints = await db.query(
+          `SELECT se.id as ep_id, se.endpoint_index, se.端接尺寸 as 端接尺寸_ep, se.信号名称 as 信号名称_ep, se.信号定义 as 信号定义_ep,
+                  p.针孔号, p.屏蔽类型, c.设备端元器件编号 as 连接器号, d.设备编号, d."设备LIN号（DOORS）" as lin号, d.设备等级
+           FROM signal_endpoints se
+           JOIN pins p ON se.pin_id = p.id
+           JOIN connectors c ON p.connector_id = c.id
+           JOIN devices d ON c.device_id = d.id
+           WHERE se.signal_id = ?
+           ORDER BY se.endpoint_index`, [sig.id]
+        );
 
-        if (endpoints.length < 2) continue;
+        const edges = await db.query('SELECT * FROM signal_edges WHERE signal_id = ? ORDER BY id', [sig.id]);
 
-        const selectedSet = new Set(deviceIds.map(Number));
+        // 导线等级
+        const levels = endpoints.map((e: any) => e.设备等级).filter((v: any) => v);
+        let wireGrade = '';
+        if (levels.length > 0) {
+          const nums = levels.map((v: string) => parseInt(v));
+          if (nums.every((n: number) => !isNaN(n))) {
+            wireGrade = String(endpoints.length <= 2 ? Math.max(...nums) : Math.min(...nums)) + '级';
+          }
+        }
 
-        // 生成所有满足条件的端点对（至少一个端点属于所选设备，且两端不同）
-        for (let i = 0; i < endpoints.length; i++) {
-          for (let j = i + 1; j < endpoints.length; j++) {
-            const a = endpoints[i];
-            const b = endpoints[j];
-            const aSelected = selectedSet.has(Number(a.device_id));
-            const bSelected = selectedSet.has(Number(b.device_id));
+        const base = [
+          sig.signal_group || '',
+          (sig.signal_group && sig.twist_group) ? sig.signal_group + '-' + sig.twist_group : (sig.twist_group || ''),
+          sig.unique_id || '', sig['连接类型'] || '', sig['协议标识'] || '', sig['线类型'] || '',
+        ];
+        const tail = [
+          wireGrade, sig['推荐导线线规'] || '', sig['推荐导线线型'] || '',
+          sig['独立电源代码'] || '', sig['敷设代码'] || '',
+          sig['电磁兼容代码'] || '', sig['余度代码'] || '', sig['功能代码'] || '', sig['接地代码'] || '', sig['极性'] || '',
+          sig['信号ATA'] || '', sig['信号架次有效性'] || '', sig['额定电压'] || '', sig['额定电流'] || '', sig['设备正常工作电压范围'] || '',
+          sig['是否成品线'] || '', sig['成品线件号'] || '', sig['成品线线规'] || '', sig['成品线类型'] || '', sig['成品线长度'] || '',
+          sig['成品线载流量'] || '', sig['成品线线路压降'] || '', sig['成品线标识'] || '', sig['成品线与机上线束对接方式'] || '',
+          sig['成品线安装责任'] || '', sig['备注'] || '',
+        ];
 
-            if (!aSelected && !bSelected) continue;
+        const epMap = new Map(endpoints.map((e: any) => [e.ep_id, e]));
+        const fmtEp = (ep: any) => [ep.设备编号, ep.lin号 || '', ep.连接器号, ep.针孔号, ep.端接尺寸_ep || '', ep.屏蔽类型 || '', ep.信号名称_ep || '', ep.信号定义_ep || ''];
+        const emptyEp = ['', '', '', '', '', '', '', ''];
 
-            // 决定从/到：所选设备作为从端；若两端都被选中，按 deviceIds 中的索引顺序决定
-            let fromEp, toEp;
-            if (aSelected && !bSelected) {
-              fromEp = a; toEp = b;
-            } else if (!aSelected && bSelected) {
-              fromEp = b; toEp = a;
-            } else {
-              const aIdx = deviceIds.indexOf(Number(a.device_id));
-              const bIdx = deviceIds.indexOf(Number(b.device_id));
-              fromEp = aIdx <= bIdx ? a : b;
-              toEp   = aIdx <= bIdx ? b : a;
-            }
-
-            const 敷设字母 = [
-              sig.独立电源代码 || '',
-              sig.敷设代码 || '',
-              sig.电磁兼容代码 || '',
-              sig.功能代码 || '',
-              sig.余度代码 || '',
-            ].join('-');
-
-            rows.push([
-              sig.unique_id || '',                          // Unique ID
-              sig.连接类型 || '',                            // 连接类型
-              sig.信号ATA || '',                             // 信号ATA
-              sig.信号架次有效性 || '',                       // 信号架次有效性
-              '',                                           // 线束号
-              fromEp['设备端元器件编号'] || '',              // 端元器件编号（从）
-              fromEp['针孔号'] || '',                        // 针孔号（从）
-              '',                                           // 端接代号（从）
-              '',                                           // 导线号
-              sig.推荐导线线型 || '',                        // 导线材料
-              fromEp['端接尺寸'] || sig.推荐导线线规 || '',  // AWG
-              '',                                           // 长度（mm）
-              toEp['设备端元器件编号'] || '',                // 端元器件编号（到）
-              toEp['针孔号'] || '',                          // 针孔号（到）
-              '',                                           // 端接代号（到）
-              敷设字母,                                      // 敷设字母
-              sig.接地代码 || '',                            // 接地代码
-              sig.极性 || '',                                // 极性
-              sig.额定电压 || '',                            // 额定电压
-              sig.额定电流 || '',                            // 额定电流（A）
-              sig.设备正常工作电压范围 || '',                 // 设备正常工作电压范围
-              sig.是否成品线 || '',                          // 是否成品线
-              sig.成品线件号 || '',                          // 成品线件号
-              sig.成品线线规 || '',                          // 成品线线规
-              sig.成品线类型 || '',                          // 成品线类型
-              sig.成品线长度 || '',                          // 成品线长度(MM)
-              sig.成品线载流量 || '',                        // 成品线载流量(A)
-              sig.成品线线路压降 || '',                      // 成品线线路压降
-              sig.成品线标识 || '',                          // 成品线标识
-              sig.成品线与机上线束对接方式 || '',             // 成品线与机上线束对接方式
-              sig.成品线安装责任 || '',                      // 成品线安装责任
-              '',                                           // 线路图图内号
-              sig.备注 || '',                                // 备注
-            ]);
+        if (edges.length > 0) {
+          for (const edge of edges) {
+            const from = epMap.get(edge.from_endpoint_id);
+            const to = epMap.get(edge.to_endpoint_id);
+            if (!from || !to) continue;
+            rows.push([...base, ...fmtEp(from), ...fmtEp(to), ...tail]);
+          }
+        } else if (endpoints.length === 0) {
+          rows.push([...base, ...emptyEp, ...emptyEp, ...tail]);
+        } else {
+          const from = endpoints[0];
+          const toList = endpoints.length >= 2 ? endpoints.slice(1) : [endpoints[0]];
+          for (const to of toList) {
+            rows.push([...base, ...fmtEp(from), ...fmtEp(to as any), ...tail]);
           }
         }
       }
 
-      // 流式写出 CSV（BOM for Excel），逐行发送避免大数据集内存积压
-      const header = [
-        'Unique ID', '连接类型', '信号ATA', '信号架次有效性',
-        '线束号', '端元器件编号（从）', '针孔号（从）', '端接代号（从）',
-        '导线号', '导线材料', 'AWG', '长度（mm）',
-        '端元器件编号（到）', '针孔号（到）', '端接代号（到）',
-        '敷设字母', '接地代码', '极性', '额定电压', '额定电流（A）', '设备正常工作电压范围',
-        '是否成品线', '成品线件号', '成品线线规', '成品线类型',
-        '成品线长度(MM)', '成品线载流量(A)', '成品线线路压降', '成品线标识',
-        '成品线与机上线束对接方式', '成品线安装责任',
-        '线路图图内号', '备注',
-      ];
+      const ExcelJS = await import('exceljs');
+      const workbook = new ExcelJS.default.Workbook();
+      const ws = workbook.addWorksheet('电气接口数据表');
 
-      const escape = (v: string) => `"${String(v).replace(/"/g, '""')}"`;
-      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-      res.setHeader('Content-Disposition', 'attachment; filename="signal_pairs_export.csv"');
-      res.write('\uFEFF' + header.map(escape).join(',') + '\r\n');
+      const headerFont: any = { bold: true, size: 10 };
+      const headerFill: any = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9E1F2' } };
+      const headerBorder: any = { top: { style: 'thin' }, bottom: { style: 'thin' }, left: { style: 'thin' }, right: { style: 'thin' } };
+      const thinBorder: any = { top: { style: 'thin', color: { argb: 'FFD0D0D0' } }, bottom: { style: 'thin', color: { argb: 'FFD0D0D0' } }, left: { style: 'thin', color: { argb: 'FFD0D0D0' } }, right: { style: 'thin', color: { argb: 'FFD0D0D0' } } };
+
+      // 信号分组背景色
+      const groupBgColors: Record<string, string> = {
+        'A_429_':'FFE0E7FF','A_453_':'FFDDD6FE','ANLG_2S_':'FFFED7AA','ANLG_3S_':'FFFED7AA',
+        'CAN_Bus_':'FFFEF3C7','Discrete_2S_':'FFF3F4F6','ETH100_':'FFD1FAE5','ETH1000_':'FFDBEAFE',
+        'HDMI_':'FFFCE7F3','PWR_LV_':'FFFEE2E2','PWR_HV_':'FFFECACA','RS422_F_':'FFEDE9FE',
+        'RS422_':'FFF5F3FF','RS485_':'FFCCFBF1','三相电_':'FFFECACA',
+      };
+
+      // 表头
+      const hRow = ws.addRow(header);
+      hRow.eachCell((cell: any) => { cell.font = headerFont; cell.fill = headerFill; cell.border = headerBorder; cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true }; });
+
+      // 记录每行的信号组（用于合并和背景色）
+      const rowGroups: string[] = [];
+      const dataStartRow = 2;
+
       for (const r of rows) {
-        res.write(r.map(escape).join(',') + '\r\n');
+        const sg = r[0] || ''; // 第一列是信号组
+        rowGroups.push(sg);
+        const dataRow = ws.addRow(r);
+        dataRow.eachCell((cell: any) => { cell.font = { size: 9 }; cell.border = thinBorder; cell.alignment = { vertical: 'middle' }; });
+
+        // 信号分组背景色
+        if (sg) {
+          const prefix = Object.keys(groupBgColors).find(p => sg.startsWith(p));
+          if (prefix) {
+            const groupFill: any = { type: 'pattern', pattern: 'solid', fgColor: { argb: groupBgColors[prefix] } };
+            dataRow.eachCell((cell: any) => { cell.fill = groupFill; });
+          }
+        }
       }
+
+      // 合并单元格辅助
+      const mergeConsecutive = (colIdx: number, rangeStart: number, rangeEnd: number, allowEmpty: boolean) => {
+        if (colIdx === 0 || rangeStart > rangeEnd) return;
+        let mStart = rangeStart, mVal = ws.getCell(mStart, colIdx).value;
+        for (let r = rangeStart + 1; r <= rangeEnd + 1; r++) {
+          const curVal = r <= rangeEnd ? ws.getCell(r, colIdx).value : '___SENTINEL___';
+          if (curVal === mVal) continue;
+          if (r - 1 > mStart && (mVal || allowEmpty)) {
+            ws.mergeCells(mStart, colIdx, r - 1, colIdx);
+            ws.getCell(mStart, colIdx).alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+          }
+          mStart = r; mVal = curVal;
+        }
+      };
+
+      const totalRows = rows.length;
+      const endRow = dataStartRow + totalRows - 1;
+      const groupColIdx = header.indexOf('信号组') + 1;
+      const twistColIdx = header.indexOf('绞线组') + 1;
+      const uidColIdx = header.indexOf('Unique ID') + 1;
+
+      // 合并信号组列
+      if (groupColIdx > 0) mergeConsecutive(groupColIdx, dataStartRow, endRow, false);
+
+      // 合并绞线组列（不跨信号组边界）
+      if (twistColIdx > 0 && groupColIdx > 0 && totalRows > 0) {
+        let gStart = dataStartRow, gVal = rowGroups[0] || '';
+        for (let r = 1; r <= totalRows; r++) {
+          const curG = r < totalRows ? (rowGroups[r] || '') : '___SENTINEL___';
+          if (curG === gVal) continue;
+          if (gVal) mergeConsecutive(twistColIdx, gStart, dataStartRow + r - 1, true);
+          gStart = dataStartRow + r; gVal = curG;
+        }
+      }
+
+      // 合并 Unique ID 列
+      if (uidColIdx > 0) mergeConsecutive(uidColIdx, dataStartRow, endRow, false);
+
+      // 冻结
+      const freezeCol = header.indexOf('连接类型') + 1;
+      ws.views = [{ state: 'frozen' as const, xSplit: freezeCol > 0 ? freezeCol - 1 : 3, ySplit: 1 }];
+
+      // 列宽
+      header.forEach((col, ci) => {
+        const maxLen = Math.max(col.length, ...rows.slice(0, 50).map(r => String(r[ci] ?? '').length));
+        ws.getColumn(ci + 1).width = Math.min(Math.max(maxLen * 1.2 + 2, 8), 35);
+      });
+
+      const buffer = await workbook.xlsx.writeBuffer();
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', 'attachment; filename="signal_pairs_export.xlsx"');
+      res.send(Buffer.from(buffer as ArrayBuffer));
       res.end();
     } catch (error: any) {
       res.status(500).json({ error: error.message });

@@ -304,8 +304,8 @@ export async function loadTableDataFromRelational(db: Database, projectId: numbe
     '设备供应商件号', '设备供应商名称', '设备部件所属系统（4位ATA）',
     '设备安装位置', '设备DAL', '设备壳体是否金属', '金属壳体表面是否经过特殊处理而不易导电',
     '设备内共地情况', '设备壳体接地方式', '壳体接地是否故障电流路径',
-    '其他接地特殊要求', '设备端连接器或接线柱数量', '是否为选装设备', '设备装机架次',
-    '设备负责人', '设备正常工作电压范围（V）', '设备物理特性', '备注', '最后修改时间',
+    '其他接地特殊要求', '设备端连接器或接线柱数量', '是否为选装设备', '是否有特殊布线需求', '设备装机架次',
+    '设备负责人', '设备等级', '设备正常工作电压范围（V）', '设备物理特性', '备注', '最后修改时间',
   ];
 
   // ② 设备端元器件表 → device_component 行（pins JOIN connectors JOIN devices）
@@ -313,7 +313,8 @@ export async function loadTableDataFromRelational(db: Database, projectId: numbe
     `SELECT c.id as _cid, d.设备编号, d."设备LIN号（DOORS）", d.设备中文名称 as 设备名称,
             c.设备端元器件编号, c."设备端元器件名称及类型",
             c."设备端元器件件号类型及件号", c."设备端元器件供应商名称",
-            c."匹配的线束端元器件件号", c."设备端元器件匹配的元器件是否随设备交付",
+            c."匹配的线束端元器件件号", c."匹配的线束线型", c."尾附件件号", c."触件型号",
+            c."设备端元器件匹配的元器件是否随设备交付",
             c.备注, c.updated_at as 最后修改时间, c.created_at as _created_at
      FROM connectors c
      JOIN devices d ON c.device_id = d.id
@@ -324,6 +325,7 @@ export async function loadTableDataFromRelational(db: Database, projectId: numbe
   const compCols = [
     '设备编号', '设备LIN号（DOORS）', '设备名称', '设备端元器件编号', '设备端元器件名称及类型',
     '设备端元器件件号类型及件号', '设备端元器件供应商名称', '匹配的线束端元器件件号',
+    '匹配的线束线型', '尾附件件号', '触件型号',
     '设备端元器件匹配的元器件是否随设备交付', '备注', '最后修改时间',
   ];
 
@@ -343,7 +345,7 @@ export async function loadTableDataFromRelational(db: Database, projectId: numbe
   for (const sig of signalRows) {
     const endpoints = await db.query(
       `SELECT se.id as ep_id, se.endpoint_index, se.端接尺寸 as 端接尺寸_ep, se.信号名称 as 信号名称_ep, se.信号定义 as 信号定义_ep,
-              p.针孔号, p.屏蔽类型, c.设备端元器件编号 as 连接器号, d.设备编号, d."设备LIN号（DOORS）" as lin号
+              p.针孔号, p.屏蔽类型, c.设备端元器件编号 as 连接器号, d.设备编号, d."设备LIN号（DOORS）" as lin号, d.设备等级
        FROM signal_endpoints se
        JOIN pins p ON se.pin_id = p.id
        JOIN connectors c ON p.connector_id = c.id
@@ -366,6 +368,13 @@ export async function loadTableDataFromRelational(db: Database, projectId: numbe
       '连接类型': sig['连接类型'],
       '协议标识': sig['协议标识'] || '',
       '线类型': sig['线类型'] || '',
+      '导线等级': (() => {
+        const levels = endpoints.map((e: any) => e.设备等级).filter((v: any) => v);
+        if (levels.length === 0) return '';
+        const nums = levels.map((v: string) => parseInt(v));
+        if (nums.some((n: number) => isNaN(n))) return '';
+        return String(endpoints.length <= 2 ? Math.max(...nums) : Math.min(...nums)) + '级';
+      })(),
       '推荐导线线规': sig['推荐导线线规'],
       '推荐导线线型': sig['推荐导线线型'],
       '独立电源代码': sig['独立电源代码'],
@@ -433,7 +442,7 @@ export async function loadTableDataFromRelational(db: Database, projectId: numbe
     '信号组', '绞线组', 'Unique ID', '连接类型', '协议标识', '线类型',
     '设备（从）', 'LIN号（从）', '连接器（从）', '针孔号（从）', '端接尺寸（从）', '屏蔽类型（从）', '信号名称（从）', '信号定义（从）',
     '设备（到）', 'LIN号（到）', '连接器（到）', '针孔号（到）', '端接尺寸（到）', '屏蔽类型（到）', '信号名称（到）', '信号定义（到）',
-    '推荐导线线规', '推荐导线线型', '独立电源代码', '敷设代码',
+    '导线等级', '推荐导线线规', '推荐导线线型', '独立电源代码', '敷设代码',
     '电磁兼容代码', '余度代码', '功能代码', '接地代码', '极性',
     '信号ATA', '信号架次有效性', '额定电压', '额定电流', '设备正常工作电压范围',
     '是否成品线', '成品线件号', '成品线线规', '成品线类型', '成品线长度',
